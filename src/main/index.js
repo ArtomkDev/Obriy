@@ -8,9 +8,12 @@ import { EngineService } from './services/EngineService'
 
 const engine = new EngineService()
 
-ipcMain.handle('engine:run', async (_, command, args) => {
+ipcMain.handle('engine:run', async (event, command, args) => {
   try {
-    return await engine.execute(command, args)
+    const sender = event.sender
+    return await engine.execute(command, args, (updateData) => {
+      sender.send('engine:progress', updateData)
+    })
   } catch (error) {
     return { error: error.message }
   }
@@ -27,15 +30,23 @@ ipcMain.handle('dialog:openDirectory', async () => {
 
   const selectedPath = filePaths[0]
   
-  const exePath = path.join(selectedPath, 'GTA5.exe')
-  const rpfPath = path.join(selectedPath, 'x64a.rpf')
+  try {
+    const validationResult = await engine.execute('validate-path', [selectedPath])
 
-  const isValid = fs.existsSync(exePath) && fs.existsSync(rpfPath)
-
-  if (isValid) {
-    return { success: true, path: selectedPath }
-  } else {
-    return { success: false, error: 'Це не папка GTA V! Переконайтесь, що вибрали кореневу папку гри.' }
+    if (validationResult.isValid) {
+      return { 
+        success: true, 
+        path: validationResult.exePath,
+        version: validationResult.version
+      }
+    } else {
+      return { 
+        success: false, 
+        error: validationResult.error || 'Невідома помилка валідації' 
+      }
+    }
+  } catch (e) {
+    return { success: false, error: 'Помилка з\'єднання з Engine сервісом' }
   }
 })
 

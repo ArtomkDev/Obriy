@@ -1,18 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { electronAPI } from '@electron-toolkit/preload'
 
-const api = {
-  selectFolder: () => ipcRenderer.invoke('dialog:openDirectory')
-}
-
-if (process.contextIsolated) {
-  try {
-    contextBridge.exposeInMainWorld('electron', electronAPI)
-    contextBridge.exposeInMainWorld('api', api) // Ми додали це
-  } catch (error) {
-    console.error(error)
+contextBridge.exposeInMainWorld('api', {
+  selectFolder: () => ipcRenderer.invoke('dialog:openDirectory'),
+  installMod: (modId, gamePath) => ipcRenderer.invoke('engine:run', 'install-mod', [modId, gamePath]),
+  onProgress: (callback) => {
+    const subscription = (_event, data) => callback(data)
+    ipcRenderer.on('engine:progress', subscription)
+    return () => ipcRenderer.removeListener('engine:progress', subscription)
   }
-} else {
-  window.electron = electronAPI
-  window.api = api
-}
+})

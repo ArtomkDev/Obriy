@@ -23,9 +23,8 @@ function App() {
     return <SetupScreen onComplete={() => setIsSetupComplete(true)} />
   }
 
-  window.electron.ipcRenderer.invoke('engine:run', 'ping').then(response => {
-  console.log('Engine Response:', response)
-})
+  // 🛑 ВИДАЛЕНО: Старий код window.electron.ipcRenderer...
+  // Він викликав помилку, бо ми замінили window.electron на window.api
 
   return (
     <HashRouter>

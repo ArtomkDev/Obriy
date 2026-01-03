@@ -3,24 +3,39 @@ import { useState } from 'react'
 export default function SetupScreen({ onComplete }) {
   const [path, setPath] = useState('')
   const [error, setError] = useState('')
+  const [gameVersion, setGameVersion] = useState(null)
+  const [isLoading, setIsLoading] = useState(false)
 
   const handleBrowse = async () => {
-    setError('') // Очищаємо попередні помилки
-    const result = await window.api.selectFolder()
-    
-    if (result) {
-      if (result.success) {
-        setPath(result.path)
-      } else {
-        setError(result.error)
-        setPath('')
+    setError('')
+    setGameVersion(null)
+    setIsLoading(true)
+
+    try {
+      const result = await window.api.selectFolder()
+      
+      if (result) {
+        if (result.success) {
+          setPath(result.path)
+          setGameVersion(result.version)
+        } else {
+          setError(result.error)
+          setPath('')
+        }
       }
+    } catch (e) {
+      setError('Помилка виклику API')
+    } finally {
+      setIsLoading(false)
     }
   }
 
   const handleSave = () => {
     if (path) {
       localStorage.setItem('gta_path', path)
+      if (gameVersion) {
+        localStorage.setItem('gta_version', gameVersion)
+      }
       onComplete()
     }
   }
@@ -48,21 +63,29 @@ export default function SetupScreen({ onComplete }) {
               />
               <button 
                 onClick={handleBrowse}
-                className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded transition active:scale-95"
+                disabled={isLoading}
+                className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white px-3 py-2 rounded transition active:scale-95"
               >
-                📂
+                {isLoading ? '⏳' : '📂'}
               </button>
             </div>
+            
             {error && (
               <p className="text-red-500 text-xs mt-2 font-bold animate-pulse">
                 ⚠ {error}
+              </p>
+            )}
+
+            {gameVersion && (
+              <p className="text-green-500 text-xs mt-2 font-bold animate-fade-in">
+                ✓ Знайдено v{gameVersion}
               </p>
             )}
           </div>
 
           <button 
             onClick={handleSave}
-            disabled={!path}
+            disabled={!path || isLoading}
             className="w-full bg-primary hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3 rounded-lg transition shadow-lg shadow-pink-500/20"
           >
             ЗБЕРЕГТИ
