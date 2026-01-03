@@ -13,3 +13,9 @@ D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\refint\Obriy.Core.d
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\Obriy.Core.pdb
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\Obriy.Core.genruntimeconfig.cache
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\ref\Obriy.Core.dll
+D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\Obriy.Core.csproj.AssemblyReference.cache
+D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\HtmlAgilityPack.dll
+D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\RageLib.dll
+D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\RageLib.GTA5.dll
+D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\System.Xml.XPath.XmlDocument.dll
+D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\Obriy.Core.csproj.CopyComplete

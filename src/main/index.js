@@ -2,20 +2,23 @@ import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import fs from 'fs'
-import path from 'path'
 import { EngineService } from './services/EngineService'
 
 const engine = new EngineService()
 
-ipcMain.handle('engine:run', async (event, command, args) => {
+ipcMain.handle('engine:run', async (_, command, data) => {
   try {
-    const sender = event.sender
-    return await engine.execute(command, args, (updateData) => {
-      sender.send('engine:progress', updateData)
-    })
+    // Якщо команда 'install-rpf', ми розкладаємо об'єкт data на аргументи
+    if (command === 'install-rpf') {
+      const { rpfPath, internalPath, sourceFile } = data
+      return await engine.installToRpf(rpfPath, internalPath, sourceFile)
+    }
+    
+    // Для інших команд (якщо будуть)
+    return await engine.execute(command, data)
   } catch (error) {
-    return { error: error.message }
+    console.error('Engine Error:', error)
+    return { status: 'error', error: error.message }
   }
 })
 
@@ -31,22 +34,18 @@ ipcMain.handle('dialog:openDirectory', async () => {
   const selectedPath = filePaths[0]
   
   try {
-    const validationResult = await engine.execute('validate-path', [selectedPath])
+    const validationResult = await engine.validateGamePath(selectedPath)
 
-    if (validationResult.isValid) {
-      return { 
-        success: true, 
-        path: validationResult.exePath,
-        version: validationResult.version
-      }
+    if (validationResult.status === 'success') {
+      return { success: true, path: selectedPath }
     } else {
       return { 
         success: false, 
-        error: validationResult.error || 'Невідома помилка валідації' 
+        error: `Invalid Game Folder. Missing: ${validationResult.missingFile || 'critical files'}` 
       }
     }
-  } catch (e) {
-    return { success: false, error: 'Помилка з\'єднання з Engine сервісом' }
+  } catch (error) {
+    return { success: false, error: 'Engine Validation Error: ' + error.message }
   }
 })
 
