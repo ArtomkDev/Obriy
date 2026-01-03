@@ -23,6 +23,10 @@ function App() {
     return <SetupScreen onComplete={() => setIsSetupComplete(true)} />
   }
 
+  window.electron.ipcRenderer.invoke('engine:run', 'ping').then(response => {
+  console.log('Engine Response:', response)
+})
+
   return (
     <HashRouter>
       <div className="flex h-screen bg-background text-textMain font-sans select-none">
