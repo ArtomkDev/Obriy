@@ -13,7 +13,7 @@ export const modsData = [
       {
         // ⚠️ ВАЖЛИВО: Цей файл має існувати у папці гри. 
         // x64a.rpf зазвичай є у всіх.
-        rpfPath: 'x64fa.rpf', 
+        rpfPath: 'x64f.rpf', 
         
         // Як файл буде називатися всередині архіву
         internalPath: 'my_test_mod22.txt', 
