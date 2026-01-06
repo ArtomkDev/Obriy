@@ -16,7 +16,6 @@ namespace Obriy.Core.Services
             {
                 if (File.Exists(aesKeyFile))
                 {
-                    // Логи пишемо в Error потік, щоб не псувати JSON вивід
                     Console.Error.WriteLine("[RpfEditor] Loading keys from .dat files...");
                     try 
                     {
@@ -26,7 +25,6 @@ namespace Obriy.Core.Services
                         GTA5Keys.PC_NG_DECRYPT_TABLES = CryptoIO.ReadNgTables(Path.Combine(keysPath, "gtav_ng_decrypt_tables.dat"));
                         GTA5Keys.PC_NG_ENCRYPT_TABLES = CryptoIO.ReadNgTables(Path.Combine(keysPath, "gtav_ng_encrypt_tables.dat"));
                         GTA5Keys.PC_NG_ENCRYPT_LUTs = CryptoIO.ReadNgLuts(Path.Combine(keysPath, "gtav_ng_encrypt_luts.dat"));
-                        
                         Console.Error.WriteLine("[RpfEditor] Keys loaded successfully!");
                     }
                     catch (Exception ex)
@@ -50,6 +48,25 @@ namespace Obriy.Core.Services
 
         public void InstallMod(string physicalRpfPath, string internalPath, string replacementFilePath)
         {
+            string normalizedPath = internalPath.Replace('\\', '/');
+            string[] pathParts = normalizedPath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+
+            int nestedRpfIndex = -1;
+            for (int i = 0; i < pathParts.Length - 1; i++)
+            {
+                if (pathParts[i].EndsWith(".rpf", StringComparison.OrdinalIgnoreCase))
+                {
+                    nestedRpfIndex = i;
+                    break;
+                }
+            }
+
+            if (nestedRpfIndex != -1)
+            {
+                HandleNestedRpf(physicalRpfPath, pathParts, nestedRpfIndex, replacementFilePath);
+                return;
+            }
+
             Console.Error.WriteLine($"[RpfEditor] Opening RPF: {physicalRpfPath}");
 
             if (!File.Exists(physicalRpfPath))
@@ -63,10 +80,9 @@ namespace Obriy.Core.Services
             }
             catch (Exception ex)
             {
-                throw new Exception($"Failed to scan RPF structure: {ex.Message}. keys loaded: {GTA5Keys.PC_AES_KEY != null}");
+                throw new Exception($"Failed to scan RPF structure: {ex.Message}");
             }
 
-            string[] pathParts = internalPath.Split(new[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries);
             string fileName = pathParts.Last();
 
             RpfDirectoryEntry currentDir = rpfFile.Root;
@@ -88,9 +104,6 @@ namespace Obriy.Core.Services
 
             try
             {
-                // Для CodeWalker: Спочатку перевіримо, чи файл вже є, і видалимо його (опціонально),
-                // але CreateFile зазвичай просто додає новий запис в кінець архіву, оновлюючи посилання.
-                // Це найбезпечніший метод.
                 RpfFile.CreateFile(currentDir, fileName, newFileBytes);
                 Console.Error.WriteLine("[RpfEditor] Write successful!");
             }
@@ -98,6 +111,56 @@ namespace Obriy.Core.Services
             {
                 throw new Exception($"Error writing to RPF: {ex.Message}");
             }
+        }
+
+        private void HandleNestedRpf(string parentRpfPath, string[] pathParts, int rpfIndex, string sourceFile)
+        {
+            string nestedRpfInternalPath = string.Join("/", pathParts.Take(rpfIndex + 1));
+            string nestedRpfName = pathParts[rpfIndex];
+            string remainingPath = string.Join("/", pathParts.Skip(rpfIndex + 1));
+
+            Console.Error.WriteLine($"[RpfEditor] Detected nested RPF: {nestedRpfName}");
+            
+            string tempRpfPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}_{nestedRpfName}");
+            
+            try
+            {
+                ExtractFileFromRpf(parentRpfPath, nestedRpfInternalPath, tempRpfPath);
+
+                Console.Error.WriteLine($"[RpfEditor] Editing nested RPF...");
+                InstallMod(tempRpfPath, remainingPath, sourceFile);
+
+                Console.Error.WriteLine($"[RpfEditor] Repacking nested RPF back to {parentRpfPath}...");
+                InstallMod(parentRpfPath, nestedRpfInternalPath, tempRpfPath);
+            }
+            finally
+            {
+                if (File.Exists(tempRpfPath))
+                    File.Delete(tempRpfPath);
+            }
+        }
+
+        private void ExtractFileFromRpf(string physicalRpfPath, string internalPath, string outputPath)
+        {
+            RpfFile rpfFile = new RpfFile(physicalRpfPath, physicalRpfPath);
+            rpfFile.ScanStructure(null, null);
+
+            string[] parts = internalPath.Split('/');
+            string fileName = parts.Last();
+
+            RpfDirectoryEntry currentDir = rpfFile.Root;
+            for (int i = 0; i < parts.Length - 1; i++)
+            {
+                var subDir = currentDir.Directories.FirstOrDefault(d => d.Name.Equals(parts[i], StringComparison.OrdinalIgnoreCase));
+                if (subDir == null) throw new Exception($"Path not found during extraction: {parts[i]}");
+                currentDir = subDir;
+            }
+
+            var entry = currentDir.Files.FirstOrDefault(f => f.Name.Equals(fileName, StringComparison.OrdinalIgnoreCase));
+            if (entry == null) throw new Exception($"File not found in RPF: {fileName}");
+
+            byte[] data = rpfFile.ExtractFile(entry);
+            File.WriteAllBytes(outputPath, data);
         }
     }
 }

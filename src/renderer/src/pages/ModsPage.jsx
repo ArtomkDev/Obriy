@@ -1,5 +1,4 @@
 import React, { useState } from 'react'
-// ✅ ВИПРАВЛЕНО: Імпортуємо { modsData } точно так, як вона названа в mods.js
 import { modsData } from '../data/mods'
 
 export default function ModsPage() {
@@ -8,7 +7,7 @@ export default function ModsPage() {
   const [logs, setLogs] = useState('')
 
   const handleInstall = async () => {
-    // 1. Отримуємо шлях до гри
+    // 1. Отримуємо та чистимо шлях до гри
     let gamePath = localStorage.getItem('gta_path')
     
     if (!gamePath) {
@@ -16,68 +15,50 @@ export default function ModsPage() {
       return
     }
 
-    // Виправлення шляху (видалення GTA5.exe)
+    // Видаляємо GTA5.exe з шляху, якщо він там є
     if (gamePath.toLowerCase().endsWith('gta5.exe')) {
        gamePath = gamePath.substring(0, gamePath.length - 8)
-       if (gamePath.endsWith('\\') || gamePath.endsWith('/')) {
-         gamePath = gamePath.slice(0, -1)
-       }
+    }
+    // Видаляємо останній слеш
+    if (gamePath.endsWith('\\') || gamePath.endsWith('/')) {
+       gamePath = gamePath.slice(0, -1)
     }
 
-    // ✅ ВИПРАВЛЕНО: Перевіряємо instructions замість installConfig
     if (!selectedMod.instructions || selectedMod.instructions.length === 0) {
       alert("Цей мод не має інструкцій для встановлення.")
       return
     }
 
     setStatus('installing')
-    setLogs('Початок інсталяції...\n')
+    setLogs('Підготовка до інсталяції...\n')
+    setLogs(prev => prev + `Папка гри: ${gamePath}\n`)
+    setLogs(prev => prev + `Кількість інструкцій: ${selectedMod.instructions.length}\n`)
 
     try {
-      // ✅ ЦИКЛ: Проходимо по всіх інструкціях у моді
-      for (const instruction of selectedMod.instructions) {
-        
-        // Формуємо повний шлях до RPF
-        const fullRpfPath = `${gamePath}\\${instruction.rpfPath}`.replace(/\//g, '\\')
-        
-        setLogs(prev => prev + `------------------\n`)
-        setLogs(prev => prev + `RPF: ${fullRpfPath}\n`)
-        setLogs(prev => prev + `Файл: ${instruction.internalPath}\n`)
+      // 2. ВІДПРАВЛЯЄМО ВЕСЬ ПАКЕТ НА БЕКЕНД
+      // Більше ніяких циклів тут. Бекенд сам розбереться з папками та файлами.
+      const result = await window.api.installMod(gamePath, selectedMod.instructions)
 
-        // Визначаємо джерело (URL або локальний файл для тесту)
-        // Ти використовуєш 'sourceFile' у своєму прикладі даних
-        const source = instruction.sourceFile || instruction.url
+      if (result && (result.status === 'success' || result.success === true)) {
+        setStatus('success')
+        setLogs(prev => prev + '\n✅ Всі операції успішно виконано!\n')
         
-        if (!source) {
-          throw new Error("Не вказано sourceFile в інструкції")
+        // Якщо є деталі про оброблені файли
+        if (result.items) {
+             setLogs(prev => prev + `Облроблено файлів: ${result.items.length}\n`)
         }
-
-        // Викликаємо бекенд
-        const result = await window.api.installMod({
-          rpfPath: fullRpfPath,
-          internalPath: instruction.internalPath,
-          sourceFile: source
-        })
-
-        if (result && (result.status === 'success' || result.success === true)) {
-          setLogs(prev => prev + '✅ OK\n')
-        } else {
-          throw new Error(result.error || result.message || 'Unknown error')
-        }
+      } else {
+        throw new Error(result.error || result.message || 'Unknown error')
       }
-
-      // Якщо цикл пройшов без помилок
-      setStatus('success')
-      setLogs(prev => prev + '\n🎉 Всі файли мода успішно встановлено!')
 
     } catch (e) {
       setStatus('error')
-      setLogs(prev => prev + `\n❌ ПОМИЛКА: ${e.message}`)
+      setLogs(prev => prev + `\n❌ КРИТИЧНА ПОМИЛКА: ${e.message}`)
       console.error(e)
     }
   }
 
-  // --- РЕНДЕР СТОРІНКИ МОДА ---
+  // ... (Решта коду рендеру залишається без змін)
   if (selectedMod) {
     return (
       <div className="animate-fade-in h-full flex flex-col">
@@ -107,7 +88,6 @@ export default function ModsPage() {
                 {selectedMod.description}
               </p>
               
-              {/* Логи */}
               {status !== 'idle' && (
                 <div className="mt-4 bg-black rounded-lg border border-gray-700 p-4 h-48 overflow-y-auto font-mono text-sm shadow-inner">
                   <pre className="text-green-400 whitespace-pre-wrap">{logs}</pre>
@@ -139,13 +119,11 @@ export default function ModsPage() {
     )
   }
 
-  // --- СПИСОК МОДІВ ---
   return (
     <div>
       <h1 className="text-2xl font-bold mb-6 text-white border-l-4 border-blue-500 pl-3">
         Бібліотека Модів
       </h1>
-      
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {modsData.map((mod) => (
           <div 
@@ -159,7 +137,6 @@ export default function ModsPage() {
             >
                 <div className="w-full h-full bg-black/20 group-hover:bg-transparent transition-colors"></div>
             </div>
-            
             <div className="p-5 relative">
               <h3 className="font-bold text-lg mb-2 truncate text-white group-hover:text-blue-400 transition-colors">{mod.title}</h3>
               <p className="text-gray-400 text-sm line-clamp-2 h-10 mb-4">

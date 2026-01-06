@@ -19,17 +19,19 @@ class Program
         {
             string commandName = args[0];
 
-            // Маршрутизація команд
             switch (commandName)
             {
-
                 case "install-rpf": 
-                   var installCmd = new InstallModCommand();
-                   installCmd.Execute(args);
-                   break;
+                    var installCmd = new InstallModCommand();
+                    installCmd.Execute(args);
+                    break;
+
+                case "install-batch": 
+                    var batchCmd = new BatchInstallCommand();
+                    batchCmd.Execute(args);
+                    break;
 
                 case "validate":
-                    // Стара логіка валідації (можна винести в окремий клас ValidateGamePathCommand пізніше)
                     if (args.Length > 1) ValidateGamePath(args[1]);
                     else Console.WriteLine("Error: path argument missing");
                     break;

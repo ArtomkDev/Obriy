@@ -72,19 +72,23 @@ app.whenReady().then(() => {
     }
   })
 
-  // 2. Встановлення мода (Виклик C# Engine)
-  ipcMain.handle('install-mod', async (event, modData) => {
-    console.log('Received install request:', modData)
+  // 2. Встановлення мода (ОНОВЛЕНО для Batch Processing)
+  // Приймає шлях до гри та масив інструкцій
+  ipcMain.handle('install-mod', async (event, gamePath, instructions) => {
+    console.log('Received batch install request')
+    console.log('Game Path:', gamePath)
+    console.log('Instructions count:', instructions?.length)
 
     try {
-      if (!modData.rpfPath || !modData.internalPath || !modData.sourceFile) {
-          throw new Error("Invalid arguments: missing paths")
+      if (!gamePath || !instructions || !Array.isArray(instructions)) {
+          throw new Error("Invalid arguments: missing gamePath or instructions array")
       }
 
-      // Викликаємо функцію з EngineService.js
-      await installMod(modData.rpfPath, modData.internalPath, modData.sourceFile)
+      // Викликаємо оновлений сервіс, який створить маніфест і запустить C#
+      // result повернеться у форматі { status: 'success', items: [...] }
+      const result = await installMod(gamePath, instructions)
       
-      return { success: true }
+      return result 
     } catch (error) {
       console.error('Installation failed:', error)
       return { success: false, error: error.message }

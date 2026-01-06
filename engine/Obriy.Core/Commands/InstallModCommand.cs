@@ -11,25 +11,22 @@ namespace Obriy.Core.Commands
 
         public object Execute(string[] args)
         {
-            // Лог вхідних даних для відладки
-            // args[0] = "install-rpf"
-            
-            if (args.Length < 4)
+            if (args.Length < 3)
             {
-                var err = new { error = "Not enough arguments. Usage: install-rpf <rpf_path> <internal_path> <source_file>" };
+                var err = new { error = "Usage: install-rpf <full_target_path> <source_file>" };
                 Console.WriteLine(JsonSerializer.Serialize(err));
                 return err;
             }
 
-            // Беремо аргументи по порядку (без прапорців --rpf)
-            string rpfPath = args[1];      // D:\SteamLibrary\...\x64a.rpf
-            string internalPath = args[2]; // levels/gta5/props/lev_des/v_minigame.rpf
-            string sourceFile = args[3];   // C:\Windows\System32\notepad.exe (тестовий файл)
+            string fullTargetPath = args[1];
+            string sourceFile = args[2];
 
             try
             {
+                var pathInfo = SplitPath(fullTargetPath);
+                
                 var editor = new RpfEditor();
-                editor.InstallMod(rpfPath, internalPath, sourceFile);
+                editor.InstallMod(pathInfo.PhysicalPath, pathInfo.InternalPath, sourceFile);
                 
                 var success = new { status = "success" };
                 Console.WriteLine(JsonSerializer.Serialize(success)); 
@@ -41,6 +38,28 @@ namespace Obriy.Core.Commands
                 Console.WriteLine(JsonSerializer.Serialize(err));
                 return err;
             }
+        }
+
+        private (string PhysicalPath, string InternalPath) SplitPath(string fullPath)
+        {
+            string currentPath = fullPath;
+            string internalParts = "";
+
+            while (!string.IsNullOrEmpty(currentPath))
+            {
+                if (File.Exists(currentPath))
+                {
+                    return (currentPath, internalParts.TrimStart('/', '\\'));
+                }
+
+                string fileName = Path.GetFileName(currentPath);
+                string directory = Path.GetDirectoryName(currentPath);
+
+                internalParts = Path.Combine(fileName, internalParts);
+                currentPath = directory;
+            }
+
+            throw new FileNotFoundException($"Could not find a valid RPF root in path: {fullPath}");
         }
     }
 }
