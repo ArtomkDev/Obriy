@@ -2,52 +2,9 @@ import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { EngineService } from './services/EngineService'
-
-const engine = new EngineService()
-
-ipcMain.handle('engine:run', async (_, command, data) => {
-  try {
-    // Якщо команда 'install-rpf', ми розкладаємо об'єкт data на аргументи
-    if (command === 'install-rpf') {
-      const { rpfPath, internalPath, sourceFile } = data
-      return await engine.installToRpf(rpfPath, internalPath, sourceFile)
-    }
-    
-    // Для інших команд (якщо будуть)
-    return await engine.execute(command, data)
-  } catch (error) {
-    console.error('Engine Error:', error)
-    return { status: 'error', error: error.message }
-  }
-})
-
-ipcMain.handle('dialog:openDirectory', async () => {
-  const { canceled, filePaths } = await dialog.showOpenDialog({
-    properties: ['openDirectory']
-  })
-
-  if (canceled) {
-    return null
-  } 
-
-  const selectedPath = filePaths[0]
-  
-  try {
-    const validationResult = await engine.validateGamePath(selectedPath)
-
-    if (validationResult.status === 'success') {
-      return { success: true, path: selectedPath }
-    } else {
-      return { 
-        success: false, 
-        error: `Invalid Game Folder. Missing: ${validationResult.missingFile || 'critical files'}` 
-      }
-    }
-  } catch (error) {
-    return { success: false, error: 'Engine Validation Error: ' + error.message }
-  }
-})
+import { installMod } from './services/EngineService' 
+import path from 'path'
+import fs from 'fs' 
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
@@ -85,6 +42,56 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  // --- API HANDLERS ---
+
+  // 1. Вибір та перевірка папки гри
+  ipcMain.handle('dialog:openDirectory', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: 'Оберіть кореневу папку гри GTA V (де лежить GTA5.exe)',
+      buttonLabel: 'Обрати папку гри',
+      properties: ['openDirectory']
+    })
+
+    if (canceled) {
+      return null
+    }
+
+    const selectedPath = filePaths[0]
+    
+    // Перевірка: чи є там файли гри (підтримуємо Steam та Epic)
+    const exePath = path.join(selectedPath, 'GTA5.exe')
+    const altExePath = path.join(selectedPath, 'PlayGTAV.exe') // Для Epic/SocialClub
+    
+    if (fs.existsSync(exePath) || fs.existsSync(altExePath)) {
+        return { success: true, path: selectedPath }
+    } else {
+        return { 
+            success: false, 
+            error: `У папці "${selectedPath}" не знайдено GTA5.exe. Будь ласка, переконайтеся, що ви обрали саме папку з грою.` 
+        }
+    }
+  })
+
+  // 2. Встановлення мода (Виклик C# Engine)
+  ipcMain.handle('install-mod', async (event, modData) => {
+    console.log('Received install request:', modData)
+
+    try {
+      if (!modData.rpfPath || !modData.internalPath || !modData.sourceFile) {
+          throw new Error("Invalid arguments: missing paths")
+      }
+
+      // Викликаємо функцію з EngineService.js
+      await installMod(modData.rpfPath, modData.internalPath, modData.sourceFile)
+      
+      return { success: true }
+    } catch (error) {
+      console.error('Installation failed:', error)
+      return { success: false, error: error.message }
+    }
+  })
+
+  // 3. Тестовий пінг
   ipcMain.on('ping', () => console.log('pong'))
 
   createWindow()

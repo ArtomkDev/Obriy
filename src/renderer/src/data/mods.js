@@ -1,20 +1,28 @@
+// ✅ ДОДАЙ ЦЕЙ ІМПОРТ НА ПОЧАТКУ
+import img1 from '../assets/electron.svg'
+
 export const modsData = [
   {
     id: 1,
-    title: "Новорічні Гірлянди (Legion Square)",
-    description: "Додає атмосферні гірлянди на площу Легіону. Ідеально для зимового вайбу.",
-    image: "https://media.gta5-mods.com/images/legion-square-christmas-party-menyoo/89e528-2.jpg",
-    version: "1.2",
-    author: "ArtemKoval",
-    // Технічна конфігурація для інсталятора
-    installConfig: {
-      // Шлях відносно папки гри
-      targetRpf: "x64a.rpf", 
-      // Шлях всередині архіву (поки працює тільки в корені RPF, як ми робили в C#)
-      internalPath: "levels/gta5/props/lev_des/v_minigame.rpf", // Приклад
-      // У реальному додатку тут буде URL для завантаження, а поки - тестовий локальний файл
-      testSourceFile: "C:\\Windows\\System32\\notepad.exe" // ТІЛЬКИ ДЛЯ ТЕСТУ!
-    }
+    title: 'Test Mod (x64a.rpf)',
+    description: 'Тестовий мод: додає текстовий файл у архів x64a.rpf',
+    image: img1, // Тепер ця змінна існує
+    version: "0.1-beta",
+    author: "Dev",
+    instructions: [
+      {
+        // ⚠️ ВАЖЛИВО: Цей файл має існувати у папці гри. 
+        // x64a.rpf зазвичай є у всіх.
+        rpfPath: 'x64fa.rpf', 
+        
+        // Як файл буде називатися всередині архіву
+        internalPath: 'my_test_mod22.txt', 
+        
+        // ⚠️ ВАЖЛИВО: Цей файл має фізично існувати на твоєму диску для тесту.
+        // Створи файл D:\TestMod\test.txt і напишіть туди щось.
+        sourceFile: 'D:\\TestMod\\test.txt' 
+      }
+    ]
   },
   {
     id: 2,

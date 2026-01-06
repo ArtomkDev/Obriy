@@ -1,10 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
+// Custom APIs for renderer
 const api = {
-  selectFolder: () => ipcRenderer.invoke('dialog:openDirectory'),
-  // Додаємо міст для запуску команд двигуна
-  installMod: (config) => ipcRenderer.invoke('engine:run', 'install-rpf', config)
+  // Додаємо функцію вибору папки
+  openDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),
+  // Функція встановлення мода
+  installMod: (modData) => ipcRenderer.invoke('install-mod', modData)
 }
 
 if (process.contextIsolated) {
