@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "dgSpecHash": "8Ejr2Ig99xiOOatxycAt4BR9rz5scH2/GU6Qnej8LAkdCfIl2JTfWfN9JJAiuoSkssBpIo2n207kM39gk4P4Ig==",
+  "success": true,
+  "projectFilePath": "D:\\GitHub\\ArtomkDev\\Obriy\\engine\\CodeWalker.Core\\CodeWalker.Core.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\artom\\.nuget\\packages\\microsoft.netcore.platforms\\1.1.0\\microsoft.netcore.platforms.1.1.0.nupkg.sha512",
+    "C:\\Users\\artom\\.nuget\\packages\\netstandard.library\\2.0.3\\netstandard.library.2.0.3.nupkg.sha512",
+    "C:\\Users\\artom\\.nuget\\packages\\sharpdx\\4.2.0\\sharpdx.4.2.0.nupkg.sha512",
+    "C:\\Users\\artom\\.nuget\\packages\\sharpdx.mathematics\\4.2.0\\sharpdx.mathematics.4.2.0.nupkg.sha512",
+    "C:\\Users\\artom\\.nuget\\packages\\system.drawing.common\\8.0.0\\system.drawing.common.8.0.0.nupkg.sha512"
+  ],
+  "logs": []
+}

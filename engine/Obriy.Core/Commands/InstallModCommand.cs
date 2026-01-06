@@ -1,47 +1,46 @@
+using Obriy.Core.Services;
 using System;
+using System.IO;
 using System.Text.Json;
-using System.Threading;
 
-namespace Obriy.Core.Commands;
-
-public class InstallModCommand : ICommand
+namespace Obriy.Core.Commands
 {
-    public string Name => "install-mod";
-
-    public object Execute(string[] args)
+    public class InstallModCommand : ICommand
     {
-        if (args.Length < 2) throw new ArgumentException("Mod ID and Game Path required");
+        public string Name => "install-rpf";
 
-        string modId = args[0];
-        string gamePath = args[1];
+        public object Execute(string[] args)
+        {
+            // Лог вхідних даних для відладки
+            // args[0] = "install-rpf"
+            
+            if (args.Length < 4)
+            {
+                var err = new { error = "Not enough arguments. Usage: install-rpf <rpf_path> <internal_path> <source_file>" };
+                Console.WriteLine(JsonSerializer.Serialize(err));
+                return err;
+            }
 
-        SendProgress(0, "Ініціалізація...", "start");
-        Thread.Sleep(500);
+            // Беремо аргументи по порядку (без прапорців --rpf)
+            string rpfPath = args[1];      // D:\SteamLibrary\...\x64a.rpf
+            string internalPath = args[2]; // levels/gta5/props/lev_des/v_minigame.rpf
+            string sourceFile = args[3];   // C:\Windows\System32\notepad.exe (тестовий файл)
 
-        SendProgress(20, "Створення бекапу оригінальних файлів...", "backup");
-        Thread.Sleep(1000);
-
-        SendProgress(45, "Підготовка файлів мода...", "unpack");
-        Thread.Sleep(1000);
-
-        SendProgress(70, "Інтеграція в архіви гри...", "install");
-        Thread.Sleep(1500);
-
-        SendProgress(90, "Очистка тимчасових файлів...", "cleanup");
-        Thread.Sleep(500);
-
-        return new { success = true, modId = modId, message = "Mod installed successfully" };
-    }
-
-    private void SendProgress(int percent, string text, string step)
-    {
-        var progress = new 
-        { 
-            status = "processing", 
-            progress = percent, 
-            message = text,
-            step = step
-        };
-        Console.WriteLine(JsonSerializer.Serialize(progress));
+            try
+            {
+                var editor = new RpfEditor();
+                editor.InstallMod(rpfPath, internalPath, sourceFile);
+                
+                var success = new { status = "success" };
+                Console.WriteLine(JsonSerializer.Serialize(success)); 
+                return success;
+            }
+            catch (Exception ex)
+            {
+                var err = new { error = ex.Message, trace = ex.StackTrace };
+                Console.WriteLine(JsonSerializer.Serialize(err));
+                return err;
+            }
+        }
     }
 }

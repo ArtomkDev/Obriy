@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="RageLib.GTA5" Version="1.1.1" />
+    <ProjectReference Include="..\CodeWalker.Core\CodeWalker.Core.csproj" />
   </ItemGroup>
 
 </Project>

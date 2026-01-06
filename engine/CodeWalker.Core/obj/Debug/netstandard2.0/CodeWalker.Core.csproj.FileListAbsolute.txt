@@ -1,0 +1,15 @@
+D:\GitHub\ArtomkDev\Obriy\engine\CodeWalker.Core\bin\Debug\netstandard2.0\ShadersGen9Conversion.xml
+D:\GitHub\ArtomkDev\Obriy\engine\CodeWalker.Core\bin\Debug\netstandard2.0\strings.txt
+D:\GitHub\ArtomkDev\Obriy\engine\CodeWalker.Core\bin\Debug\netstandard2.0\CodeWalker.Core.deps.json
+D:\GitHub\ArtomkDev\Obriy\engine\CodeWalker.Core\bin\Debug\netstandard2.0\CodeWalker.Core.dll
+D:\GitHub\ArtomkDev\Obriy\engine\CodeWalker.Core\bin\Debug\netstandard2.0\CodeWalker.Core.pdb
+D:\GitHub\ArtomkDev\Obriy\engine\CodeWalker.Core\obj\Debug\netstandard2.0\CodeWalker.Core.csproj.AssemblyReference.cache
+D:\GitHub\ArtomkDev\Obriy\engine\CodeWalker.Core\obj\Debug\netstandard2.0\CodeWalker.Core.Properties.Resources.resources
+D:\GitHub\ArtomkDev\Obriy\engine\CodeWalker.Core\obj\Debug\netstandard2.0\CodeWalker.Core.csproj.GenerateResource.cache
+D:\GitHub\ArtomkDev\Obriy\engine\CodeWalker.Core\obj\Debug\netstandard2.0\CodeWalker.Core.GeneratedMSBuildEditorConfig.editorconfig
+D:\GitHub\ArtomkDev\Obriy\engine\CodeWalker.Core\obj\Debug\netstandard2.0\CodeWalker.Core.AssemblyInfoInputs.cache
+D:\GitHub\ArtomkDev\Obriy\engine\CodeWalker.Core\obj\Debug\netstandard2.0\CodeWalker.Core.AssemblyInfo.cs
+D:\GitHub\ArtomkDev\Obriy\engine\CodeWalker.Core\obj\Debug\netstandard2.0\CodeWalker.Core.csproj.CoreCompileInputs.cache
+D:\GitHub\ArtomkDev\Obriy\engine\CodeWalker.Core\obj\Debug\netstandard2.0\CodeWalker.Core.sourcelink.json
+D:\GitHub\ArtomkDev\Obriy\engine\CodeWalker.Core\obj\Debug\netstandard2.0\CodeWalker.Core.dll
+D:\GitHub\ArtomkDev\Obriy\engine\CodeWalker.Core\obj\Debug\netstandard2.0\CodeWalker.Core.pdb
