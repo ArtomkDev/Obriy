@@ -21,7 +21,6 @@ namespace Obriy.Core.Commands
             if (args.Length < 2)
             {
                 var error = new { error = "Manifest path required" };
-                // Тільки JSON йде в stdout
                 Console.WriteLine(JsonSerializer.Serialize(error));
                 return error;
             }
@@ -41,12 +40,17 @@ namespace Obriy.Core.Commands
                 var items = JsonSerializer.Deserialize<List<BatchItem>>(jsonContent);
                 var editor = new RpfEditor();
 
-                // Логування початку роботи (використовуємо Error.WriteLine, щоб не ламати JSON)
                 Console.Error.WriteLine($"[Batch] Processing {items.Count} items...");
 
-                foreach (var item in items)
+                // Використовуємо for, щоб мати індекс
+                for (int i = 0; i < items.Count; i++)
                 {
-                    // Важливо: Error.WriteLine для логів процесу
+                    var item = items[i];
+
+                    // --- НОВИЙ РЯДОК ДЛЯ ПРОГРЕСУ ---
+                    // Виводить: [Progress]: 1/5
+                    Console.Error.WriteLine($"[Progress]: {i + 1}/{items.Count}");
+                    
                     Console.Error.WriteLine($"[Batch] Installing: {Path.GetFileName(item.sourceFilePath)}");
                     
                     var pathInfo = SplitPath(item.targetPath);
@@ -56,7 +60,6 @@ namespace Obriy.Core.Commands
                 File.Delete(manifestPath);
 
                 var success = new { status = "success", processed = items.Count };
-                // ТІЛЬКИ ЦЕ повідомлення йде через звичайний Console.WriteLine
                 Console.WriteLine(JsonSerializer.Serialize(success));
                 return success;
             }

@@ -23,13 +23,17 @@ export default function ModCard({ mod }) {
   const status = getModStatus(mod.id);
   const progress = getModProgress(mod.id);
 
+  // Обчислюємо поточний відсоток для відображення
+  const activePercent = status === 'downloading' 
+    ? Math.round(progress.download) 
+    : Math.round(progress.install);
+
   const handleCardClick = () => {
     navigate(`/mod/${mod.id}`);
   };
 
   const handleInstallClick = (e) => {
     e.stopPropagation(); 
-    // Дозволяємо клік, якщо встановлено
     if (status === 'idle' || status === 'error' || status === 'success') {
         installMod(mod);
     }
@@ -60,27 +64,32 @@ export default function ModCard({ mod }) {
             </h3>
             
             {status !== 'idle' && (
-                <div className={`text-[10px] font-bold uppercase tracking-widest mt-2 animate-fade-in
+                <div className={`text-[10px] font-bold uppercase tracking-widest mt-2 animate-fade-in flex items-center gap-2
                     ${status === 'downloading' && 'text-blue-400'}
                     ${status === 'installing' && 'text-indigo-400'}
                     ${status === 'success' && 'text-emerald-400'}
                     ${status === 'error' && 'text-rose-400'}
                 `}>
-                    {status === 'downloading' && 'Downloading...'}
-                    {status === 'installing' && 'Installing...'}
-                    {status === 'success' && 'Installed'}
-                    {status === 'error' && 'Failed'}
+                   
+                    <span>
+                      {status === 'downloading' && 'Downloading...'}
+                      {status === 'installing' && 'Installing...'}
+                      {status === 'success' && 'Installed'}
+                      {status === 'error' && 'Failed'}
+                    </span>
+                    
+                     {isProcessing && (
+                        <span className="opacity-60 tabular-nums">{activePercent}%</span>
+                     )}
                 </div>
             )}
         </div>
         
-        {/* ОНОВЛЕНА КНОПКА */}
         <button 
             onClick={handleInstallClick}
-            disabled={isProcessing} // Заблоковано тільки під час процесу
+            disabled={isProcessing}
             className={`shrink-0 w-10 h-10 flex items-center justify-center rounded-lg border backdrop-blur-md transition-all duration-300 shadow-lg
                 ${isInstalled 
-                    // Стиль для встановленого мода (активний, зелений)
                     ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-500 hover:bg-emerald-500 hover:text-black hover:shadow-[0_0_15px_rgba(16,185,129,0.4)]' 
                     : isProcessing
                         ? 'bg-white/5 border-white/10 text-white/30 cursor-wait'

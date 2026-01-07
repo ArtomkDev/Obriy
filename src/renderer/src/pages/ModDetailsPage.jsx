@@ -31,6 +31,8 @@ export default function ModDetailsPage() {
   const status = mod ? getModStatus(mod.id) : 'idle';
   const progress = mod ? getModProgress(mod.id) : { download: 0, install: 0 };
 
+  const activePercent = status === 'downloading' ? Math.round(progress.download) : Math.round(progress.install);
+
   const checkScroll = () => {
     if (galleryRef.current) {
         const { scrollLeft, scrollWidth, clientWidth } = galleryRef.current;
@@ -90,9 +92,7 @@ export default function ModDetailsPage() {
 
   const changeMedia = (index) => setCurrentMediaIndex(index)
 
-  // --- ОНОВЛЕНИЙ ОБРОБНИК КЛІКУ ---
   const handleMainButtonClick = () => {
-      // Дозволяємо 'success', щоб запустити перевстановлення
       if (status === 'idle' || status === 'success') {
           installMod(mod);
       } else if (status === 'error') {
@@ -106,7 +106,6 @@ export default function ModDetailsPage() {
   return (
     <div className="fixed inset-0 z-50 bg-[#09090b] pl-20 flex overflow-hidden animate-fade-in font-sans selection:bg-indigo-500 selection:text-white">
       
-      {/* ЛІВА КОЛОНКА (без змін) */}
       <div className="flex-1 flex flex-col h-full bg-black relative group overflow-hidden">
           <div className="absolute top-6 left-6 z-30">
             <button 
@@ -147,7 +146,6 @@ export default function ModDetailsPage() {
 
           {gallery.length > 1 && (
              <div className="h-[120px] w-full bg-[#09090b]/90 border-t border-white/5 backdrop-blur-md z-20 flex items-center relative shrink-0 group/gallery px-4">
-                 
                  <div className={`absolute left-0 top-0 bottom-0 z-30 transition-all duration-300 ${canScrollLeft ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-full pointer-events-none'}`}>
                      <button onClick={() => handleArrowClick('left')} className="h-full w-20 bg-gradient-to-r from-black via-black/80 to-transparent flex items-center justify-start pl-6">
                         <div className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center border border-white/10 hover:bg-white/20 transition-all hover:scale-110 active:scale-95 shadow-lg">
@@ -207,7 +205,6 @@ export default function ModDetailsPage() {
           )}
       </div>
 
-      {/* ПРАВА КОЛОНКА */}
       <div className="w-[400px] xl:w-[450px] h-full bg-[#121214] border-l border-white/5 flex flex-col relative shadow-2xl z-30 shrink-0">
           <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
               <div className="flex flex-wrap items-center gap-3 mb-6">
@@ -245,17 +242,20 @@ export default function ModDetailsPage() {
               {status !== 'idle' && (
                   <div className="mb-4 flex items-center justify-between bg-black/30 p-3 rounded-lg border border-white/5">
                       <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Status</span>
-                      <span className={`text-[10px] font-bold uppercase tracking-widest 
-                          ${status === 'downloading' ? 'text-blue-500' : ''}
-                          ${status === 'installing' ? 'text-indigo-500' : ''}
-                          ${status === 'error' ? 'text-rose-500' : ''}
-                          ${status === 'success' ? 'text-emerald-500' : ''}
-                      `}>
-                          {status === 'downloading' && 'DOWNLOADING...'}
-                          {status === 'installing' && 'INSTALLING...'}
-                          {status === 'success' && 'INSTALLED'}
-                          {status === 'error' && 'FAILED'}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        {/* Порядок змінено: спочатку статус, потім відсотки */}
+                        <span className={`text-[10px] font-bold uppercase tracking-widest 
+                            ${status === 'downloading' ? 'text-blue-500' : ''}
+                            ${status === 'installing' ? 'text-indigo-500' : ''}
+                            ${status === 'error' ? 'text-rose-500' : ''}
+                            ${status === 'success' ? 'text-emerald-500' : ''}
+                        `}>
+                            {status === 'downloading' && 'DOWNLOADING...'}
+                            {status === 'installing' && 'INSTALLING...'}
+                            {status === 'success' && 'INSTALLED'}
+                            {status === 'error' && 'FAILED'}
+                        </span>
+                      </div>
                   </div>
               )}
 
@@ -269,19 +269,14 @@ export default function ModDetailsPage() {
                   </div>
               )}
 
-              {/* --- ОНОВЛЕНА КНОПКА --- */}
               <button 
                  onClick={handleMainButtonClick}
-                 // Забороняємо клік тільки під час процесу, але дозволяємо коли success
                  disabled={status === 'downloading' || status === 'installing'}
                  className={`
                     w-full h-16 rounded-xl font-black text-sm uppercase tracking-[0.2em] transition-all duration-300 shadow-xl relative overflow-hidden group
                     ${status === 'idle' && 'bg-white text-black hover:bg-indigo-600 hover:text-white hover:shadow-[0_0_40px_rgba(79,70,229,0.3)]'}
                     ${(status === 'downloading' || status === 'installing') && 'bg-zinc-800 text-zinc-500 cursor-wait border border-white/5'}
-                    
-                    /* Стиль для кнопки ПЕРЕВСТАНОВИТИ */
                     ${status === 'success' && 'bg-emerald-500 text-black hover:bg-emerald-400 cursor-pointer hover:shadow-[0_0_40px_rgba(16,185,129,0.4)]'}
-                    
                     ${status === 'error' && 'bg-rose-600 text-white hover:bg-rose-500'}
                  `}
               >
@@ -292,13 +287,13 @@ export default function ModDetailsPage() {
                            <svg className="w-5 h-5 transition-transform group-hover:translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
                         </>
                      )}
-                     {status === 'downloading' && 'DOWNLOADING FILES...'}
-                     {status === 'installing' && 'PROCESSING FILES...'}
                      
-                     {/* --- ТЕКСТ ДЛЯ ПЕРЕВСТАНОВЛЕННЯ --- */}
+                     {/* Порядок у кнопці: спочатку текст, потім відсотки */}
+                     {status === 'downloading' && `DOWNLOADING... ${activePercent}%`}
+                     {status === 'installing' && `INSTALLING... ${activePercent}%`}
+                     
                      {status === 'success' && (
                         <>
-                            {/* Іконка Reload/Refresh */}
                             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                             </svg>

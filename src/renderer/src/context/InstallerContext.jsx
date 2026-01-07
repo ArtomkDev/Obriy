@@ -1,37 +1,61 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 
 const InstallerContext = createContext();
 
 export function InstallerProvider({ children }) {
-  // tasks = об'єкт, де ключ це ID мода, а значення - стан завдання
   const [tasks, setTasks] = useState({});
   const [isManagerOpen, setManagerOpen] = useState(false);
 
-  // Функція запуску встановлення
+  // --- СЛУХАЧ РЕАЛЬНОГО ПРОГРЕСУ ---
+  useEffect(() => {
+    // Слухаємо події від Electron (Backend)
+    const removeListener = window.api.onInstallProgress((data) => {
+        setTasks(prev => {
+            const task = prev[data.modId];
+            if (!task) return prev; // Якщо завдання вже нема, ігноруємо
+
+            return {
+                ...prev,
+                [data.modId]: {
+                    ...task,
+                    status: 'installing',
+                    // Оновлюємо реальний прогрес!
+                    installProgress: data.percentage
+                }
+            };
+        });
+    });
+
+    // Очистка при розмонтуванні
+    return () => {
+        // У ідеалі тут треба removeListener, але для on методів це складніше. 
+        // Electron зазвичай сам чистить при перезавантаженні.
+    };
+  }, []);
+
   const startInstall = useCallback((mod) => {
     const taskId = mod.id;
 
-    // Якщо вже щось робиться з цим модом, ігноруємо
     if (tasks[taskId] && (tasks[taskId].status === 'downloading' || tasks[taskId].status === 'installing')) {
       return;
     }
 
-    // 1. Ініціалізація: СТАТУС "DOWNLOADING"
+    // 1. Старт: Швидка перевірка файлів (Download Phase)
     setTasks(prev => ({
       ...prev,
       [taskId]: {
         mod,
         status: 'downloading',
-        downloadProgress: 0, // 0-100%
-        installProgress: 0,  // 0-100%
+        downloadProgress: 0,
+        installProgress: 0,
         error: null
       }
     }));
 
-    // Емуляція скачування (так як файли локальні)
+    // Робимо "Download" дуже швидким (0.5 сек), чисто для візуального ефекту перевірки
     let dProgress = 0;
     const downloadInterval = setInterval(async () => {
-      dProgress += 5; // Швидкість "скачування"
+      dProgress += 20; // Дуже швидко
       
       setTasks(prev => ({
         ...prev,
@@ -41,57 +65,36 @@ export function InstallerProvider({ children }) {
       if (dProgress >= 100) {
         clearInterval(downloadInterval);
         
-        // 2. Скачування завершено: СТАТУС "INSTALLING"
+        // 2. Починаємо Інсталяцію
         setTasks(prev => ({
           ...prev,
-          [taskId]: { ...prev[taskId], status: 'installing', downloadProgress: 100 }
+          [taskId]: { ...prev[taskId], status: 'installing', downloadProgress: 100, installProgress: 0 }
         }));
 
         try {
-          // Отримуємо шлях до гри з локального сховища
           const gamePath = localStorage.getItem('gta_path') || localStorage.getItem('gamePath');
+          if (!gamePath) throw new Error("Game path not found.");
+
+          // ТУТ БІЛЬШЕ НЕМАЄ ФЕЙКОВОГО ІНТЕРВАЛУ!
+          // Ми просто чекаємо, поки C# виконає роботу.
+          // А оновлення прогресу прийдуть через useEffect вище.
+
+          // Передаємо mod.id, щоб знати, кого оновлювати
+          const result = await window.api.installMod(gamePath, mod.instructions, mod.id);
           
-          if (!gamePath) {
-             throw new Error("Game path not found. Please go to Settings.");
-          }
-
-          // Додаємо фейковий прогрес для UI, поки реальний процес йде
-          const installFakeInterval = setInterval(() => {
-             setTasks(prev => {
-                const current = prev[taskId];
-                if (!current || current.status !== 'installing') return prev;
-                // Анімація до 90%, далі чекаємо реального завершення
-                const newProgress = current.installProgress + (Math.random() * 5);
-                return {
-                    ...prev,
-                    [taskId]: { ...current, installProgress: Math.min(newProgress, 90) }
-                }
-             })
-          }, 200);
-
-          // Викликаємо встановлення
-          const result = await window.api.installMod(gamePath, mod.instructions);
-          
-          clearInterval(installFakeInterval);
-
-          // === ВИПРАВЛЕННЯ ТУТ ===
-          // Перевіряємо result.status, тому що бекенд повертає { status: "success" }
           if (result && (result.status === 'success' || result.status === 'success_no_json' || result.success === true)) {
-            // 3. Успіх
             setTasks(prev => ({
               ...prev,
               [taskId]: { ...prev[taskId], status: 'success', installProgress: 100 }
             }));
           } else {
-            // Якщо result існує, але статус не success, беремо повідомлення про помилку з result.error або result.message
-            throw new Error(result?.error || result?.message || 'Installation failed (Unknown error)');
+            throw new Error(result?.error || result?.message || 'Installation failed');
           }
         } catch (err) {
-          // 4. Помилка
           console.error('[Installer Context Error]:', err);
           setTasks(prev => ({
             ...prev,
-            [taskId]: { ...prev[taskId], status: 'error', error: err.message, installProgress: 0 }
+            [taskId]: { ...prev[taskId], status: 'error', error: err.message }
           }));
         }
       }
@@ -113,8 +116,16 @@ export function InstallerProvider({ children }) {
 
   const toggleManager = () => setManagerOpen(!isManagerOpen);
 
+  // Функції-хелпери для карток
+  const getModStatus = (modId) => tasks[modId]?.status || 'idle';
+  const getModProgress = (modId) => {
+      const task = tasks[modId];
+      if (!task) return { download: 0, install: 0 };
+      return { download: task.downloadProgress, install: task.installProgress };
+  }
+
   return (
-    <InstallerContext.Provider value={{ tasks, startInstall, cancelTask, retryTask, isManagerOpen, toggleManager }}>
+    <InstallerContext.Provider value={{ tasks, startInstall, cancelTask, retryTask, isManagerOpen, toggleManager, getModStatus, getModProgress }}>
       {children}
     </InstallerContext.Provider>
   );

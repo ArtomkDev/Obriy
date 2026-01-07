@@ -74,9 +74,10 @@ app.whenReady().then(() => {
 
   // 2. Встановлення мода (ОНОВЛЕНО для Batch Processing)
   // Приймає шлях до гри та масив інструкцій
-  ipcMain.handle('install-mod', async (event, gamePath, instructions) => {
+  ipcMain.handle('install-mod', async (event, gamePath, instructions, modId) => {
     console.log('Received batch install request')
     console.log('Game Path:', gamePath)
+    console.log('Mod ID:', modId) // <--- Додано лог для перевірки
     console.log('Instructions count:', instructions?.length)
 
     try {
@@ -84,9 +85,10 @@ app.whenReady().then(() => {
           throw new Error("Invalid arguments: missing gamePath or instructions array")
       }
 
-      // Викликаємо оновлений сервіс, який створить маніфест і запустить C#
-      // result повернеться у форматі { status: 'success', items: [...] }
-      const result = await installMod(gamePath, instructions)
+      // === ГОЛОВНА ЗМІНА ТУТ ===
+      // Ми передаємо event.sender (це потік до вікна React)
+      // та modId (щоб React знав, який саме прогрес-бар рухати)
+      const result = await installMod(event.sender, gamePath, instructions, modId)
       
       return result 
     } catch (error) {
@@ -94,6 +96,7 @@ app.whenReady().then(() => {
       return { success: false, error: error.message }
     }
   })
+
 
   // 3. Тестовий пінг
   ipcMain.on('ping', () => console.log('pong'))
