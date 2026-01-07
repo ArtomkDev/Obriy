@@ -48,7 +48,6 @@ export function InstallerProvider({ children }) {
         }));
 
         try {
-          // --- ВИПРАВЛЕННЯ ТУТ ---
           // Отримуємо шлях до гри з локального сховища
           const gamePath = localStorage.getItem('gta_path') || localStorage.getItem('gamePath');
           
@@ -70,30 +69,33 @@ export function InstallerProvider({ children }) {
              })
           }, 200);
 
-          // Передаємо gamePath першим аргументом, а інструкції другим!
+          // Викликаємо встановлення
           const result = await window.api.installMod(gamePath, mod.instructions);
           
           clearInterval(installFakeInterval);
 
-          if (result.success) {
+          // === ВИПРАВЛЕННЯ ТУТ ===
+          // Перевіряємо result.status, тому що бекенд повертає { status: "success" }
+          if (result && (result.status === 'success' || result.status === 'success_no_json' || result.success === true)) {
             // 3. Успіх
             setTasks(prev => ({
               ...prev,
               [taskId]: { ...prev[taskId], status: 'success', installProgress: 100 }
             }));
           } else {
-            throw new Error(result.error || 'Installation failed');
+            // Якщо result існує, але статус не success, беремо повідомлення про помилку з result.error або result.message
+            throw new Error(result?.error || result?.message || 'Installation failed (Unknown error)');
           }
         } catch (err) {
           // 4. Помилка
-          console.error(err);
+          console.error('[Installer Context Error]:', err);
           setTasks(prev => ({
             ...prev,
             [taskId]: { ...prev[taskId], status: 'error', error: err.message, installProgress: 0 }
           }));
         }
       }
-    }, 100); // Швидкість емуляції скачування
+    }, 100); 
 
   }, [tasks]);
 

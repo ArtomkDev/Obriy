@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useModInstaller } from '../hooks/useModInstaller';
+import ProgressBar from './ProgressBar';
 
 // --- ICONS ---
 const DownloadIcon = ({ className }) => (
@@ -9,12 +10,18 @@ const DownloadIcon = ({ className }) => (
   </svg>
 );
 
+const RefreshIcon = ({ className }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className={className}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+  </svg>
+);
+
 export default function ModCard({ mod }) {
   const navigate = useNavigate();
+  const { getModStatus, getModProgress, installMod } = useModInstaller();
   
-  // Отримуємо глобальні функції та статус САМЕ ЦЬОГО мода
-  const { getModStatus, installMod } = useModInstaller();
   const status = getModStatus(mod.id);
+  const progress = getModProgress(mod.id);
 
   const handleCardClick = () => {
     navigate(`/mod/${mod.id}`);
@@ -22,11 +29,14 @@ export default function ModCard({ mod }) {
 
   const handleInstallClick = (e) => {
     e.stopPropagation(); 
-    installMod(mod);
+    // Дозволяємо клік, якщо встановлено
+    if (status === 'idle' || status === 'error' || status === 'success') {
+        installMod(mod);
+    }
   };
 
-  // Визначаємо, чи активний процес (скачування або встановлення)
   const isProcessing = status === 'downloading' || status === 'installing';
+  const isInstalled = status === 'success';
 
   return (
     <div 
@@ -34,7 +44,6 @@ export default function ModCard({ mod }) {
       className="group relative aspect-video rounded-xl overflow-hidden cursor-pointer bg-[#121214] ring-1 ring-white/10 hover:ring-indigo-500/50 transition-all duration-500 hover:shadow-[0_0_20px_rgba(79,70,229,0.2)] hover:scale-[1.01]"
     >
       
-      {/* 1. ФОНОВЕ ЗОБРАЖЕННЯ */}
       <div className="absolute inset-0">
         <img 
           src={mod.image} 
@@ -44,15 +53,12 @@ export default function ModCard({ mod }) {
         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" />
       </div>
 
-      {/* 2. КОНТЕНТ */}
       <div className="absolute inset-0 p-5 flex items-end justify-between z-20">
-        {/* Назва мода */}
         <div className="flex-1 pr-4">
             <h3 className="text-lg font-black text-white uppercase tracking-tighter leading-none drop-shadow-lg line-clamp-2 group-hover:text-indigo-100 transition-colors">
               {mod.title}
             </h3>
             
-            {/* Статус текстом (маленький, над смужкою) */}
             {status !== 'idle' && (
                 <div className={`text-[10px] font-bold uppercase tracking-widest mt-2 animate-fade-in
                     ${status === 'downloading' && 'text-blue-400'}
@@ -68,34 +74,33 @@ export default function ModCard({ mod }) {
             )}
         </div>
         
-        {/* Кнопка "Встановити" (ВИДНО ТІЛЬКИ ЯКЩО IDLE) */}
-        {status === 'idle' && (
-            <button 
-              onClick={handleInstallClick}
-              className="shrink-0 w-10 h-10 flex items-center justify-center rounded-full bg-white/10 hover:bg-indigo-600 border border-white/20 hover:border-indigo-500 text-white backdrop-blur-md transition-all duration-300 hover:scale-110 shadow-lg hover:shadow-indigo-500/50"
-              title="Встановити"
-            >
-               <DownloadIcon className="w-5 h-5" />
-            </button>
-        )}
+        {/* ОНОВЛЕНА КНОПКА */}
+        <button 
+            onClick={handleInstallClick}
+            disabled={isProcessing} // Заблоковано тільки під час процесу
+            className={`shrink-0 w-10 h-10 flex items-center justify-center rounded-lg border backdrop-blur-md transition-all duration-300 shadow-lg
+                ${isInstalled 
+                    // Стиль для встановленого мода (активний, зелений)
+                    ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-500 hover:bg-emerald-500 hover:text-black hover:shadow-[0_0_15px_rgba(16,185,129,0.4)]' 
+                    : isProcessing
+                        ? 'bg-white/5 border-white/10 text-white/30 cursor-wait'
+                        : 'bg-white/10 hover:bg-indigo-600 border-white/20 hover:border-indigo-500 text-white hover:scale-110 hover:shadow-indigo-500/50'
+                }
+            `}
+            title={isInstalled ? "Перевстановити" : "Встановити"}
+        >
+             {isInstalled ? <RefreshIcon className="w-5 h-5" /> : <DownloadIcon className="w-5 h-5" />}
+        </button>
       </div>
 
-      {/* 3. ПРОГРЕС-БАР (Знизу) */}
       {status !== 'idle' && (
-          <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-black/50 z-30">
-              <div 
-                  className={`h-full transition-all duration-500 ease-out
-                      ${status === 'downloading' && 'w-1/2 bg-blue-500 animate-pulse'}
-                      ${status === 'installing' && 'w-full bg-indigo-500 animate-pulse shadow-[0_0_10px_#6366f1]'} 
-                      ${status === 'success' && 'w-full bg-emerald-500 shadow-[0_0_10px_#10b981]'}
-                      ${status === 'error' && 'w-full bg-rose-500'}
-                  `}
+          <div className="absolute bottom-0 left-0 right-0 z-30">
+              <ProgressBar 
+                downloadProgress={progress.download}
+                installProgress={progress.install}
+                status={status}
+                className="h-1.5 rounded-none"
               />
-              
-              {/* Анімація shimmer для активних станів */}
-              {isProcessing && (
-                  <div className="absolute inset-0 bg-white/20 w-full animate-[shimmer_1s_infinite] skew-x-12" />
-              )}
           </div>
       )}
 

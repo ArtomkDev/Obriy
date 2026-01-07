@@ -6,79 +6,65 @@ using System.Text.Json;
 
 namespace Obriy.Core.Commands
 {
+    public class BatchItem
+    {
+        public string targetPath { get; set; }
+        public string sourceFilePath { get; set; }
+    }
+
     public class BatchInstallCommand : ICommand
     {
         public string Name => "install-batch";
 
-        // Клас для десеріалізації JSON
-        public class BatchItem
-        {
-            public string TargetPath { get; set; }
-            public string SourceFilePath { get; set; }
-        }
-
         public object Execute(string[] args)
         {
-            // Очікуємо: install-batch <path_to_manifest.json>
             if (args.Length < 2)
             {
-                var err = new { error = "Usage: install-batch <manifest_json_path>" };
-                Console.WriteLine(JsonSerializer.Serialize(err));
-                return err;
+                var error = new { error = "Manifest path required" };
+                // Тільки JSON йде в stdout
+                Console.WriteLine(JsonSerializer.Serialize(error));
+                return error;
             }
 
             string manifestPath = args[1];
+
             if (!File.Exists(manifestPath))
             {
-                return new { error = "Manifest file not found" };
+                var error = new { error = "Manifest file not found" };
+                Console.WriteLine(JsonSerializer.Serialize(error));
+                return error;
             }
 
             try
             {
                 string jsonContent = File.ReadAllText(manifestPath);
-                // Опції для ігнорування регістру (targetPath vs TargetPath)
-                var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                var items = JsonSerializer.Deserialize<List<BatchItem>>(jsonContent, options);
-
+                var items = JsonSerializer.Deserialize<List<BatchItem>>(jsonContent);
                 var editor = new RpfEditor();
-                var results = new List<object>();
 
+                // Логування початку роботи (використовуємо Error.WriteLine, щоб не ламати JSON)
                 Console.Error.WriteLine($"[Batch] Processing {items.Count} items...");
 
                 foreach (var item in items)
                 {
-                    try 
-                    {
-                        Console.Error.WriteLine($"[Batch] Installing: {Path.GetFileName(item.SourceFilePath)}");
-                        
-                        // Використовуємо ту саму логіку розділення шляху
-                        var pathInfo = SplitPath(item.TargetPath);
-                        
-                        // Викликаємо редактор для кожного файлу
-                        editor.InstallMod(pathInfo.PhysicalPath, pathInfo.InternalPath, item.SourceFilePath);
-                        
-                        results.Add(new { file = item.SourceFilePath, status = "success" });
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.Error.WriteLine($"[Batch] Error with {item.SourceFilePath}: {ex.Message}");
-                        results.Add(new { file = item.SourceFilePath, status = "error", message = ex.Message });
-                        // Ми НЕ зупиняємо весь процес, якщо один файл не записався, але логуємо це
-                    }
+                    // Важливо: Error.WriteLine для логів процесу
+                    Console.Error.WriteLine($"[Batch] Installing: {Path.GetFileName(item.sourceFilePath)}");
+                    
+                    var pathInfo = SplitPath(item.targetPath);
+                    editor.InstallMod(pathInfo.PhysicalPath, pathInfo.InternalPath, item.sourceFilePath);
                 }
 
-                // Видаляємо тимчасовий маніфест
                 File.Delete(manifestPath);
 
-                var finalResult = new { status = "success", items = results };
-                Console.WriteLine(JsonSerializer.Serialize(finalResult));
-                return finalResult;
+                var success = new { status = "success", processed = items.Count };
+                // ТІЛЬКИ ЦЕ повідомлення йде через звичайний Console.WriteLine
+                Console.WriteLine(JsonSerializer.Serialize(success));
+                return success;
             }
             catch (Exception ex)
             {
-                var err = new { error = "Batch critical failure", details = ex.Message };
-                Console.WriteLine(JsonSerializer.Serialize(err));
-                return err;
+                var error = new { error = ex.Message, trace = ex.StackTrace };
+                Console.WriteLine(JsonSerializer.Serialize(error));
+                return error;
             }
         }
 
@@ -101,7 +87,7 @@ namespace Obriy.Core.Commands
                 currentPath = directory;
             }
 
-            throw new FileNotFoundException($"Could not find a valid RPF root in path: {fullPath}");
+            throw new FileNotFoundException($"Valid RPF root not found for: {fullPath}");
         }
     }
 }

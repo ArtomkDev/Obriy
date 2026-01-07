@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import { modsData } from '../data/mods'
 import { useModInstaller } from '../hooks/useModInstaller'
 import CustomPlayer from '../components/CustomPlayer'
+import ProgressBar from '../components/ProgressBar'
 
 export default function ModDetailsPage() {
   const { id } = useParams()
@@ -12,11 +13,9 @@ export default function ModDetailsPage() {
   const [mod, setMod] = useState(null)
   const [loading, setLoading] = useState(true)
   
-  // --- ПІДКЛЮЧЕННЯ ДО ГЛОБАЛЬНОГО ІНСТАЛЕРА ---
-  const { installMod, getModStatus, retryMod } = useModInstaller()
+  const { installMod, getModStatus, retryMod, getModProgress } = useModInstaller()
   const [currentMediaIndex, setCurrentMediaIndex] = useState(0)
   
-  // Стани для стрілок галереї
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
 
@@ -29,10 +28,9 @@ export default function ModDetailsPage() {
     setLoading(false)
   }, [id])
 
-  // Отримуємо статус ПОТОЧНОГО мода
   const status = mod ? getModStatus(mod.id) : 'idle';
+  const progress = mod ? getModProgress(mod.id) : { download: 0, install: 0 };
 
-  // --- ЛОГІКА ПЕРЕВІРКИ СКРОЛУ ---
   const checkScroll = () => {
     if (galleryRef.current) {
         const { scrollLeft, scrollWidth, clientWidth } = galleryRef.current;
@@ -54,7 +52,6 @@ export default function ModDetailsPage() {
     }
   }, [mod, galleryRef.current]);
 
-  // --- ЛОГІКА ЦЕНТРУВАННЯ ---
   useEffect(() => {
     if (galleryRef.current && mod) {
         const container = galleryRef.current;
@@ -93,9 +90,10 @@ export default function ModDetailsPage() {
 
   const changeMedia = (index) => setCurrentMediaIndex(index)
 
-  // Обробник натискання кнопки
+  // --- ОНОВЛЕНИЙ ОБРОБНИК КЛІКУ ---
   const handleMainButtonClick = () => {
-      if (status === 'idle') {
+      // Дозволяємо 'success', щоб запустити перевстановлення
+      if (status === 'idle' || status === 'success') {
           installMod(mod);
       } else if (status === 'error') {
           retryMod(mod);
@@ -108,10 +106,8 @@ export default function ModDetailsPage() {
   return (
     <div className="fixed inset-0 z-50 bg-[#09090b] pl-20 flex overflow-hidden animate-fade-in font-sans selection:bg-indigo-500 selection:text-white">
       
-      {/* ЛІВА КОЛОНКА */}
+      {/* ЛІВА КОЛОНКА (без змін) */}
       <div className="flex-1 flex flex-col h-full bg-black relative group overflow-hidden">
-          
-          {/* Back Button */}
           <div className="absolute top-6 left-6 z-30">
             <button 
                 onClick={() => navigate(-1)} 
@@ -122,7 +118,6 @@ export default function ModDetailsPage() {
             </button>
           </div>
 
-          {/* МЕДІА */}
           <div className="flex-1 w-full relative z-10 bg-black flex items-center justify-center overflow-hidden">
              {currentMedia && (currentMedia.type === 'video' || currentMedia.type === 'video_file') ? (
                  <div className="w-full h-full"> 
@@ -150,7 +145,6 @@ export default function ModDetailsPage() {
              )}
           </div>
 
-          {/* НИЖНЯ ПАНЕЛЬ */}
           {gallery.length > 1 && (
              <div className="h-[120px] w-full bg-[#09090b]/90 border-t border-white/5 backdrop-blur-md z-20 flex items-center relative shrink-0 group/gallery px-4">
                  
@@ -248,7 +242,6 @@ export default function ModDetailsPage() {
           </div>
 
           <div className="p-8 bg-[#121214] border-t border-white/5">
-              {/* Статус бар, якщо активний процес */}
               {status !== 'idle' && (
                   <div className="mb-4 flex items-center justify-between bg-black/30 p-3 rounded-lg border border-white/5">
                       <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Status</span>
@@ -266,14 +259,29 @@ export default function ModDetailsPage() {
                   </div>
               )}
 
+              {(status === 'downloading' || status === 'installing') && (
+                  <div className="mb-4">
+                      <ProgressBar 
+                          downloadProgress={progress.download}
+                          installProgress={progress.install}
+                          status={status}
+                      />
+                  </div>
+              )}
+
+              {/* --- ОНОВЛЕНА КНОПКА --- */}
               <button 
                  onClick={handleMainButtonClick}
-                 disabled={status === 'downloading' || status === 'installing' || status === 'success'}
+                 // Забороняємо клік тільки під час процесу, але дозволяємо коли success
+                 disabled={status === 'downloading' || status === 'installing'}
                  className={`
                     w-full h-16 rounded-xl font-black text-sm uppercase tracking-[0.2em] transition-all duration-300 shadow-xl relative overflow-hidden group
                     ${status === 'idle' && 'bg-white text-black hover:bg-indigo-600 hover:text-white hover:shadow-[0_0_40px_rgba(79,70,229,0.3)]'}
                     ${(status === 'downloading' || status === 'installing') && 'bg-zinc-800 text-zinc-500 cursor-wait border border-white/5'}
-                    ${status === 'success' && 'bg-emerald-500 text-black hover:bg-emerald-400 cursor-default'}
+                    
+                    /* Стиль для кнопки ПЕРЕВСТАНОВИТИ */
+                    ${status === 'success' && 'bg-emerald-500 text-black hover:bg-emerald-400 cursor-pointer hover:shadow-[0_0_40px_rgba(16,185,129,0.4)]'}
+                    
                     ${status === 'error' && 'bg-rose-600 text-white hover:bg-rose-500'}
                  `}
               >
@@ -286,14 +294,20 @@ export default function ModDetailsPage() {
                      )}
                      {status === 'downloading' && 'DOWNLOADING FILES...'}
                      {status === 'installing' && 'PROCESSING FILES...'}
-                     {status === 'success' && 'INSTALLED SUCCESSFULLY'}
+                     
+                     {/* --- ТЕКСТ ДЛЯ ПЕРЕВСТАНОВЛЕННЯ --- */}
+                     {status === 'success' && (
+                        <>
+                            {/* Іконка Reload/Refresh */}
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            REINSTALL MOD
+                        </>
+                     )}
+
                      {status === 'error' && 'RETRY INSTALLATION'}
                  </span>
-                 
-                 {/* Анімація прогрес-бару на кнопці */}
-                 {(status === 'downloading' || status === 'installing') && (
-                     <div className="absolute bottom-0 left-0 h-1 bg-indigo-500 w-full animate-[shimmer_2s_infinite]" />
-                 )}
               </button>
           </div>
       </div>
