@@ -19,7 +19,8 @@ export const modsData = [
     instructions: [
       {
         targetPath: 'TestMod\\common.rpf',
-        sourceFile: 'D:\\Mods\\Billboards'
+        sourceFile: 'D:\\Mods\\Billboards',
+        vanillaFile: 'D:\\Mods\\BillboardsVanilla',
       }
     ]
   },

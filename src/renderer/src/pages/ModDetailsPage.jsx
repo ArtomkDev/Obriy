@@ -245,15 +245,17 @@ export default function ModDetailsPage() {
                       <div className="flex items-center gap-2">
                         {/* Порядок змінено: спочатку статус, потім відсотки */}
                         <span className={`text-[10px] font-bold uppercase tracking-widest 
+                            ${status === 'queued_download' ? 'text-zinc-500' : ''}
                             ${status === 'downloading' ? 'text-blue-500' : ''}
+                            ${status === 'queued' ? 'text-amber-500' : ''}
                             ${status === 'installing' ? 'text-indigo-500' : ''}
-                            ${status === 'error' ? 'text-rose-500' : ''}
                             ${status === 'success' ? 'text-emerald-500' : ''}
                         `}>
-                            {status === 'downloading' && 'DOWNLOADING...'}
-                            {status === 'installing' && 'INSTALLING...'}
-                            {status === 'success' && 'INSTALLED'}
-                            {status === 'error' && 'FAILED'}
+                            {status === 'queued_download' && 'Waiting to download...'}
+                            {status === 'downloading' && 'Downloading...'}
+                            {status === 'queued' && 'Waiting to install...'}
+                            {status === 'installing' && 'Installing...'}
+                            {status === 'success' && 'Installed'}
                         </span>
                       </div>
                   </div>
@@ -288,9 +290,10 @@ export default function ModDetailsPage() {
                         </>
                      )}
                      
-                     {/* Порядок у кнопці: спочатку текст, потім відсотки */}
-                     {status === 'downloading' && `DOWNLOADING... ${activePercent}%`}
-                     {status === 'installing' && `INSTALLING... ${activePercent}%`}
+                    {status === 'queued_download' && 'IN DOWNLOAD QUEUE'}
+                    {status === 'downloading' && `DOWNLOADING... ${activePercent}%`}
+                    {status === 'queued' && 'WAITING TO INSTALL'}
+                    {status === 'installing' && `INSTALLING... ${activePercent}%`}
                      
                      {status === 'success' && (
                         <>
