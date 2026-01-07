@@ -11,10 +11,12 @@ export default function ModDetailsPage() {
   
   const [mod, setMod] = useState(null)
   const [loading, setLoading] = useState(true)
-  const { status, installMod } = useModInstaller()
+  
+  // --- ПІДКЛЮЧЕННЯ ДО ГЛОБАЛЬНОГО ІНСТАЛЕРА ---
+  const { installMod, getModStatus, retryMod } = useModInstaller()
   const [currentMediaIndex, setCurrentMediaIndex] = useState(0)
   
-  // --- СТАНИ ДЛЯ СТРІЛОК ---
+  // Стани для стрілок галереї
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
 
@@ -27,31 +29,30 @@ export default function ModDetailsPage() {
     setLoading(false)
   }, [id])
 
+  // Отримуємо статус ПОТОЧНОГО мода
+  const status = mod ? getModStatus(mod.id) : 'idle';
+
   // --- ЛОГІКА ПЕРЕВІРКИ СКРОЛУ ---
   const checkScroll = () => {
     if (galleryRef.current) {
         const { scrollLeft, scrollWidth, clientWidth } = galleryRef.current;
-        // Чи можна гортати вліво? (відступ більше 0)
         setCanScrollLeft(scrollLeft > 0);
-        // Чи можна гортати вправо? (ширина контенту мінус ширина вікна мінус поточний скрол > 1px похибки)
         setCanScrollRight(scrollWidth - clientWidth - scrollLeft > 1);
     }
   };
 
-  // Слухаємо скрол та зміну розміру вікна
   useEffect(() => {
     const container = galleryRef.current;
     if (container) {
-        checkScroll(); // Перевірка при старті
+        checkScroll();
         container.addEventListener('scroll', checkScroll);
         window.addEventListener('resize', checkScroll);
-        
         return () => {
             container.removeEventListener('scroll', checkScroll);
             window.removeEventListener('resize', checkScroll);
         };
     }
-  }, [mod, galleryRef.current]); // Перевіряємо також коли завантажився мод
+  }, [mod, galleryRef.current]);
 
   // --- ЛОГІКА ЦЕНТРУВАННЯ ---
   useEffect(() => {
@@ -69,7 +70,6 @@ export default function ModDetailsPage() {
                 left: scrollTo,
                 behavior: 'smooth'
             });
-            // Після програмного скролу теж треба оновити стрілки (з невеликою затримкою для анімації)
             setTimeout(checkScroll, 500); 
         }
     }
@@ -92,6 +92,15 @@ export default function ModDetailsPage() {
   const currentMedia = gallery[currentMediaIndex]
 
   const changeMedia = (index) => setCurrentMediaIndex(index)
+
+  // Обробник натискання кнопки
+  const handleMainButtonClick = () => {
+      if (status === 'idle') {
+          installMod(mod);
+      } else if (status === 'error') {
+          retryMod(mod);
+      }
+  }
 
   if (loading) return null
   if (!mod) return <div className="pl-24 pt-10 text-white">MOD NOT FOUND</div>
@@ -145,28 +154,18 @@ export default function ModDetailsPage() {
           {gallery.length > 1 && (
              <div className="h-[120px] w-full bg-[#09090b]/90 border-t border-white/5 backdrop-blur-md z-20 flex items-center relative shrink-0 group/gallery px-4">
                  
-                 {/* ЛІВА КНОПКА (Ховається, якщо !canScrollLeft) */}
                  <div className={`absolute left-0 top-0 bottom-0 z-30 transition-all duration-300 ${canScrollLeft ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-full pointer-events-none'}`}>
-                     <button 
-                        onClick={() => handleArrowClick('left')}
-                        className="h-full w-20 bg-gradient-to-r from-black via-black/80 to-transparent flex items-center justify-start pl-6"
-                     >
+                     <button onClick={() => handleArrowClick('left')} className="h-full w-20 bg-gradient-to-r from-black via-black/80 to-transparent flex items-center justify-start pl-6">
                         <div className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center border border-white/10 hover:bg-white/20 transition-all hover:scale-110 active:scale-95 shadow-lg">
                             <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
                         </div>
                      </button>
                  </div>
 
-                 {/* СПИСОК */}
-                 <div 
-                    ref={galleryRef}
-                    className="flex gap-4 overflow-x-auto h-full items-center w-full scroll-smooth px-6"
-                    style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-                 >
+                 <div ref={galleryRef} className="flex gap-4 overflow-x-auto h-full items-center w-full scroll-smooth px-6" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
                      {gallery.map((item, idx) => {
                         const isActive = idx === currentMediaIndex;
                         const isVideo = item.type === 'video' || item.type === 'video_file';
-                        
                         return (
                         <motion.div 
                             key={idx}
@@ -182,27 +181,19 @@ export default function ModDetailsPage() {
                             transition={{ type: "spring", stiffness: 400, damping: 30 }}
                             style={{ borderStyle: 'solid', borderWidth: '2px' }}
                         >
-                            {/* ЛОГІКА ВІДОБРАЖЕННЯ ВІДЕО-ПРЕВ'Ю */}
                             {isVideo ? (
                                 <div className="w-full h-full relative group">
-                                    {/* Якщо є картинка-прев'ю, показуємо її */}
                                     {item.thumbnail ? (
                                         <img src={item.thumbnail} className="w-full h-full object-cover opacity-80" alt="video thumbnail" />
                                     ) : (
-                                        // Фоллбек, якщо картинки немає - просто темний фон
                                         <div className="w-full h-full bg-zinc-800" />
                                     )}
-                                    
-                                    {/* Іконка Play по центру (завжди зверху) */}
                                     <div className="absolute inset-0 flex items-center justify-center">
                                         <div className="w-8 h-8 rounded-full bg-black/50 flex items-center justify-center backdrop-blur-sm border border-white/20 shadow-lg">
                                             <svg className="w-4 h-4 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
                                         </div>
                                     </div>
-
-                                    {isActive && (
-                                        <div className="absolute bottom-2 right-2 w-2 h-2 bg-indigo-500 rounded-full animate-pulse shadow-[0_0_8px_#6366f1] z-20" />
-                                    )}
+                                    {isActive && <div className="absolute bottom-2 right-2 w-2 h-2 bg-indigo-500 rounded-full animate-pulse shadow-[0_0_8px_#6366f1] z-20" />}
                                 </div>
                             ) : (
                                 <img src={item.source} className="w-full h-full object-cover" alt="" />
@@ -211,23 +202,18 @@ export default function ModDetailsPage() {
                      )})}
                  </div>
 
-                 {/* ПРАВА КНОПКА (Ховається, якщо !canScrollRight) */}
                  <div className={`absolute right-0 top-0 bottom-0 z-30 transition-all duration-300 ${canScrollRight ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-full pointer-events-none'}`}>
-                     <button 
-                        onClick={() => handleArrowClick('right')}
-                        className="h-full w-20 bg-gradient-to-l from-black via-black/80 to-transparent flex items-center justify-end pr-6"
-                     >
+                     <button onClick={() => handleArrowClick('right')} className="h-full w-20 bg-gradient-to-l from-black via-black/80 to-transparent flex items-center justify-end pr-6">
                         <div className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center border border-white/10 hover:bg-white/20 transition-all hover:scale-110 active:scale-95 shadow-lg">
                             <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
                         </div>
                      </button>
                  </div>
-
              </div>
           )}
       </div>
 
-      {/* ПРАВА КОЛОНКА (Без змін) */}
+      {/* ПРАВА КОЛОНКА */}
       <div className="w-[400px] xl:w-[450px] h-full bg-[#121214] border-l border-white/5 flex flex-col relative shadow-2xl z-30 shrink-0">
           <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
               <div className="flex flex-wrap items-center gap-3 mb-6">
@@ -262,24 +248,33 @@ export default function ModDetailsPage() {
           </div>
 
           <div className="p-8 bg-[#121214] border-t border-white/5">
+              {/* Статус бар, якщо активний процес */}
               {status !== 'idle' && (
                   <div className="mb-4 flex items-center justify-between bg-black/30 p-3 rounded-lg border border-white/5">
                       <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Status</span>
-                      <span className={`text-[10px] font-bold uppercase tracking-widest ${status === 'error' ? 'text-rose-500' : 'text-emerald-500'}`}>
-                          {status}
+                      <span className={`text-[10px] font-bold uppercase tracking-widest 
+                          ${status === 'downloading' ? 'text-blue-500' : ''}
+                          ${status === 'installing' ? 'text-indigo-500' : ''}
+                          ${status === 'error' ? 'text-rose-500' : ''}
+                          ${status === 'success' ? 'text-emerald-500' : ''}
+                      `}>
+                          {status === 'downloading' && 'DOWNLOADING...'}
+                          {status === 'installing' && 'INSTALLING...'}
+                          {status === 'success' && 'INSTALLED'}
+                          {status === 'error' && 'FAILED'}
                       </span>
                   </div>
               )}
 
               <button 
-                 onClick={() => installMod(mod)}
-                 disabled={status === 'installing'}
+                 onClick={handleMainButtonClick}
+                 disabled={status === 'downloading' || status === 'installing' || status === 'success'}
                  className={`
                     w-full h-16 rounded-xl font-black text-sm uppercase tracking-[0.2em] transition-all duration-300 shadow-xl relative overflow-hidden group
                     ${status === 'idle' && 'bg-white text-black hover:bg-indigo-600 hover:text-white hover:shadow-[0_0_40px_rgba(79,70,229,0.3)]'}
-                    ${status === 'installing' && 'bg-zinc-800 text-zinc-500 cursor-wait border border-white/5'}
-                    ${status === 'success' && 'bg-emerald-500 text-black hover:bg-emerald-400'}
-                    ${status === 'error' && 'bg-rose-600 text-white'}
+                    ${(status === 'downloading' || status === 'installing') && 'bg-zinc-800 text-zinc-500 cursor-wait border border-white/5'}
+                    ${status === 'success' && 'bg-emerald-500 text-black hover:bg-emerald-400 cursor-default'}
+                    ${status === 'error' && 'bg-rose-600 text-white hover:bg-rose-500'}
                  `}
               >
                  <span className="relative z-10 flex items-center justify-center gap-3">
@@ -289,12 +284,15 @@ export default function ModDetailsPage() {
                            <svg className="w-5 h-5 transition-transform group-hover:translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
                         </>
                      )}
+                     {status === 'downloading' && 'DOWNLOADING FILES...'}
                      {status === 'installing' && 'PROCESSING FILES...'}
                      {status === 'success' && 'INSTALLED SUCCESSFULLY'}
                      {status === 'error' && 'RETRY INSTALLATION'}
                  </span>
-                 {status === 'installing' && (
-                     <div className="absolute bottom-0 left-0 h-1 bg-indigo-500 w-full animate-progress-indeterminate" />
+                 
+                 {/* Анімація прогрес-бару на кнопці */}
+                 {(status === 'downloading' || status === 'installing') && (
+                     <div className="absolute bottom-0 left-0 h-1 bg-indigo-500 w-full animate-[shimmer_2s_infinite]" />
                  )}
               </button>
           </div>

@@ -1,71 +1,31 @@
-import { useState } from 'react'
-
-const getTimestamp = () => {
-  const now = new Date()
-  return now.toLocaleTimeString('uk-UA', { hour12: false }) + '.' + now.getMilliseconds().toString().padStart(3, '0')
-}
+import { useInstaller } from '../context/InstallerContext';
 
 export function useModInstaller() {
-  const [status, setStatus] = useState('idle') // 'idle', 'installing', 'success', 'error'
-  const [logs, setLogs] = useState([])
+  const { tasks, startInstall, cancelTask, retryTask } = useInstaller();
 
-  const addLog = (message, type = 'SYS') => {
-    setLogs(prev => [...prev, { time: getTimestamp(), type, message }])
+  // Функція для отримання статусу конкретного мода
+  const getModStatus = (modId) => {
+      const task = tasks[modId];
+      if (!task) return 'idle'; // Якщо завдання немає - статус idle
+      return task.status; // 'downloading', 'installing', 'success', 'error'
   }
 
-  const installMod = async (mod) => {
-    if (!mod) return
-
-    setStatus('installing')
-    setLogs([]) 
-    addLog("Sequence initiated...", "INIT")
-
-    let gamePath = localStorage.getItem('gamePath') || localStorage.getItem('gta_path')
-
-    if (!gamePath) {
-      setStatus('error')
-      addLog("CONFIG ERROR: Game path undefined.", 'ERR')
-      return
-    }
-
-    // Нормалізація шляху
-    if (gamePath.toLowerCase().endsWith('gta5.exe')) {
-       gamePath = gamePath.substring(0, gamePath.length - 8)
-    }
-    if (gamePath.endsWith('\\') || gamePath.endsWith('/')) {
-       gamePath = gamePath.slice(0, -1)
-    }
-    
-    if (!mod.instructions?.length) {
-      setStatus('error')
-      addLog("MANIFEST ERROR: Instructions array empty.", 'ERR')
-      return
-    }
-
-    addLog(`Target: ${gamePath}`)
-    addLog(`Package: ${mod.title} [v${mod.version}]`)
-
-    try {
-      addLog("Injecting payload via IPC bridge...", "NET")
-      const result = await window.api.installMod(gamePath, mod.instructions) //
-
-      if (result && (result.status === 'success' || result.success === true)) {
-        setStatus('success')
-        addLog("Core returned status: OK", "OK")
-        addLog("Installation finalized.", "DONE")
-      } else {
-        throw new Error(result.error || result.message || 'Unknown error')
-      }
-    } catch (e) {
-      setStatus('error')
-      addLog(`FATAL: ${e.message}`, 'ERR')
-    }
+  // Функція для отримання прогресу (якщо треба детальніше)
+  const getModProgress = (modId) => {
+      const task = tasks[modId];
+      if (!task) return { download: 0, install: 0 };
+      return { 
+          download: task.downloadProgress || 0, 
+          install: task.installProgress || 0 
+      };
   }
 
-  const copyLogs = () => {
-    const textLog = logs.map(l => `[${l.time}] [${l.type}] ${l.message}`).join('\n')
-    navigator.clipboard.writeText(textLog)
+  return {
+    getModStatus,
+    getModProgress,
+    installMod: startInstall,
+    cancelMod: cancelTask,
+    retryMod: retryTask,
+    tasks // Повний список завдань
   }
-
-  return { status, logs, installMod, copyLogs, setStatus }
 }
