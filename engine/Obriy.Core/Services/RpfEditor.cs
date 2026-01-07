@@ -9,40 +9,45 @@ namespace Obriy.Core.Services
     {
         public RpfEditor(string pathToGameFolder = null)
         {
+            // Перевіряємо, чи ключі вже завантажені
+            if (GTA5Keys.PC_AES_KEY != null && GTA5Keys.PC_AES_KEY.Length > 0)
+                return;
+
             string keysPath = AppDomain.CurrentDomain.BaseDirectory;
             string aesKeyFile = Path.Combine(keysPath, "gtav_aes_key.dat");
 
-            if (GTA5Keys.PC_AES_KEY == null)
+            if (File.Exists(aesKeyFile))
             {
-                if (File.Exists(aesKeyFile))
+                Console.Error.WriteLine("[RpfEditor] Loading keys from .dat files...");
+                try 
                 {
-                    Console.Error.WriteLine("[RpfEditor] Loading keys from .dat files...");
-                    try 
-                    {
-                        GTA5Keys.PC_AES_KEY = File.ReadAllBytes(aesKeyFile);
-                        GTA5Keys.PC_LUT = File.ReadAllBytes(Path.Combine(keysPath, "gtav_hash_lut.dat"));
-                        GTA5Keys.PC_NG_KEYS = CryptoIO.ReadNgKeys(Path.Combine(keysPath, "gtav_ng_key.dat"));
-                        GTA5Keys.PC_NG_DECRYPT_TABLES = CryptoIO.ReadNgTables(Path.Combine(keysPath, "gtav_ng_decrypt_tables.dat"));
-                        GTA5Keys.PC_NG_ENCRYPT_TABLES = CryptoIO.ReadNgTables(Path.Combine(keysPath, "gtav_ng_encrypt_tables.dat"));
-                        GTA5Keys.PC_NG_ENCRYPT_LUTs = CryptoIO.ReadNgLuts(Path.Combine(keysPath, "gtav_ng_encrypt_luts.dat"));
-                        Console.Error.WriteLine("[RpfEditor] Keys loaded successfully!");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.Error.WriteLine($"[RpfEditor] Error loading keys: {ex.Message}");
-                        throw;
-                    }
+                    GTA5Keys.PC_AES_KEY = File.ReadAllBytes(aesKeyFile);
+                    
+                    if (GTA5Keys.PC_AES_KEY.Length < 32)
+                        throw new Exception("gtav_aes_key.dat is too small. Check Git LFS.");
+
+                    GTA5Keys.PC_LUT = File.ReadAllBytes(Path.Combine(keysPath, "gtav_hash_lut.dat"));
+                    GTA5Keys.PC_NG_KEYS = CryptoIO.ReadNgKeys(Path.Combine(keysPath, "gtav_ng_key.dat"));
+                    GTA5Keys.PC_NG_DECRYPT_TABLES = CryptoIO.ReadNgTables(Path.Combine(keysPath, "gtav_ng_decrypt_tables.dat"));
+                    GTA5Keys.PC_NG_ENCRYPT_TABLES = CryptoIO.ReadNgTables(Path.Combine(keysPath, "gtav_ng_encrypt_tables.dat"));
+                    GTA5Keys.PC_NG_ENCRYPT_LUTs = CryptoIO.ReadNgLuts(Path.Combine(keysPath, "gtav_ng_encrypt_luts.dat"));
+                    Console.Error.WriteLine("[RpfEditor] Keys loaded successfully!");
                 }
-                else if (!string.IsNullOrEmpty(pathToGameFolder) && File.Exists(Path.Combine(pathToGameFolder, "GTA5.exe")))
+                catch (Exception ex)
                 {
-                    Console.Error.WriteLine("[RpfEditor] .dat keys not found, scanning GTA5.exe...");
-                    byte[] exeData = File.ReadAllBytes(Path.Combine(pathToGameFolder, "GTA5.exe"));
-                    GTA5Keys.GenerateV2(exeData, null);
+                    Console.Error.WriteLine($"[RpfEditor] Error loading keys: {ex.Message}");
+                    throw;
                 }
-                else
-                {
-                    Console.Error.WriteLine("Warning: Keys not found! Encrypted RPFs will fail.");
-                }
+            }
+            else if (!string.IsNullOrEmpty(pathToGameFolder) && File.Exists(Path.Combine(pathToGameFolder, "GTA5.exe")))
+            {
+                Console.Error.WriteLine("[RpfEditor] .dat keys not found, scanning GTA5.exe...");
+                byte[] exeData = File.ReadAllBytes(Path.Combine(pathToGameFolder, "GTA5.exe"));
+                GTA5Keys.GenerateV2(exeData, null);
+            }
+            else
+            {
+                Console.Error.WriteLine("Warning: Keys not found! Encrypted RPFs will fail.");
             }
         }
 
@@ -74,13 +79,15 @@ namespace Obriy.Core.Services
 
             RpfFile rpfFile = new RpfFile(physicalRpfPath, physicalRpfPath);
 
-            try 
+            // Використовуємо безпечне сканування з логуванням помилок
+            rpfFile.ScanStructure(
+                status => { },
+                error => Console.Error.WriteLine($"[CodeWalker Error] {error}")
+            );
+
+            if (rpfFile.Root == null)
             {
-                rpfFile.ScanStructure(null, null);
-            }
-            catch (Exception ex)
-            {
-                throw new Exception($"Failed to scan RPF structure: {ex.Message}");
+                throw new Exception($"Failed to scan RPF: {physicalRpfPath}. LastError: {rpfFile.LastError}. See stderr for details.");
             }
 
             string fileName = pathParts.Last();
@@ -116,34 +123,50 @@ namespace Obriy.Core.Services
         private void HandleNestedRpf(string parentRpfPath, string[] pathParts, int rpfIndex, string sourceFile)
         {
             string nestedRpfInternalPath = string.Join("/", pathParts.Take(rpfIndex + 1));
-            string nestedRpfName = pathParts[rpfIndex];
+            string nestedRpfName = pathParts[rpfIndex]; // Наприклад: weapons.rpf
             string remainingPath = string.Join("/", pathParts.Skip(rpfIndex + 1));
 
             Console.Error.WriteLine($"[RpfEditor] Detected nested RPF: {nestedRpfName}");
             
-            string tempRpfPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}_{nestedRpfName}");
+            // FIX: Створюємо тимчасову папку з GUID, але зберігаємо оригінальне ім'я файлу.
+            // Це критично для NG Decryption, яке залежить від імені файлу!
+            string tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+            string tempRpfPath = Path.Combine(tempDir, nestedRpfName);
             
             try
             {
+                Directory.CreateDirectory(tempDir);
+
                 ExtractFileFromRpf(parentRpfPath, nestedRpfInternalPath, tempRpfPath);
 
+                FileInfo tempInfo = new FileInfo(tempRpfPath);
+                if (tempInfo.Length == 0)
+                    throw new Exception($"Extracted nested RPF {nestedRpfName} is empty. Extraction failed.");
+
                 Console.Error.WriteLine($"[RpfEditor] Editing nested RPF...");
+                
+                // Рекурсивно редагуємо витягнутий RPF
                 InstallMod(tempRpfPath, remainingPath, sourceFile);
 
                 Console.Error.WriteLine($"[RpfEditor] Repacking nested RPF back to {parentRpfPath}...");
+                // Записуємо змінений файл назад
                 InstallMod(parentRpfPath, nestedRpfInternalPath, tempRpfPath);
             }
             finally
             {
-                if (File.Exists(tempRpfPath))
-                    File.Delete(tempRpfPath);
+                // Прибираємо за собою всю папку
+                if (Directory.Exists(tempDir))
+                    Directory.Delete(tempDir, true);
             }
         }
 
         private void ExtractFileFromRpf(string physicalRpfPath, string internalPath, string outputPath)
         {
             RpfFile rpfFile = new RpfFile(physicalRpfPath, physicalRpfPath);
-            rpfFile.ScanStructure(null, null);
+            
+            rpfFile.ScanStructure(null, err => Console.Error.WriteLine($"[Extract Error] {err}"));
+
+            if (rpfFile.Root == null) throw new Exception($"Cannot open RPF for extraction: {physicalRpfPath}");
 
             string[] parts = internalPath.Split('/');
             string fileName = parts.Last();
@@ -160,6 +183,8 @@ namespace Obriy.Core.Services
             if (entry == null) throw new Exception($"File not found in RPF: {fileName}");
 
             byte[] data = rpfFile.ExtractFile(entry);
+            if (data == null) throw new Exception($"Failed to extract bytes for {fileName} (data was null).");
+
             File.WriteAllBytes(outputPath, data);
         }
     }

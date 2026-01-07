@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("CodeWalker.Core")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+3caaa3ee21c8089adf0af8c2fcfdaa301e9cbb2d")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+9bcb1bf122fb2dd55e2e51aff8b73934f340b881")]
 [assembly: System.Reflection.AssemblyProductAttribute("CodeWalker.Core")]
 [assembly: System.Reflection.AssemblyTitleAttribute("CodeWalker.Core")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

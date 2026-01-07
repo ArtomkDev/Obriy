@@ -1,16 +1,15 @@
 import { useInstaller } from '../context/InstallerContext';
 
 export function useModInstaller() {
-  const { tasks, startInstall, cancelTask, retryTask } = useInstaller();
+  // 1. ЗМІНА: Дістаємо startUninstall з контексту (вам потрібно додати це в ContextProvider)
+  const { tasks, startInstall, startUninstall, cancelTask, retryTask } = useInstaller();
 
-  // Функція для отримання статусу конкретного мода
   const getModStatus = (modId) => {
       const task = tasks[modId];
-      if (!task) return 'idle'; // Якщо завдання немає - статус idle
-      return task.status; // 'downloading', 'installing', 'success', 'error'
+      if (!task) return 'idle'; 
+      return task.status; // 'downloading', 'installing', 'uninstalling', 'success', 'error'
   }
 
-  // Функція для отримання прогресу (якщо треба детальніше)
   const getModProgress = (modId) => {
       const task = tasks[modId];
       if (!task) return { download: 0, install: 0 };
@@ -24,8 +23,9 @@ export function useModInstaller() {
     getModStatus,
     getModProgress,
     installMod: startInstall,
+    uninstallMod: startUninstall, // 2. ЗМІНА: Експортуємо функцію видалення
     cancelMod: cancelTask,
     retryMod: retryTask,
-    tasks // Повний список завдань
+    tasks 
   }
 }

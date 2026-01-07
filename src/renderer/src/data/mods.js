@@ -27,8 +27,8 @@ export const modsData = [
   // --- 2. ORIGINAL MOD ---
   {
     id: 2,
-    title: 'Mega Gallery Pack',
-    description: 'Цей мод має багато медіа.',
+    title: 'CARABIN1',
+    description: 'Караба',
     image: img1,
     version: '2.0',
     author: 'GalleryMaster',
@@ -36,6 +36,13 @@ export const modsData = [
       { type: 'video_file', source: gtaVideo },
       { type: 'image', source: img1 },
       { type: 'image', source: img1 }
+    ],
+    instructions: [
+      {
+        targetPath: 'update\\x64\\dlcpacks\\patchday8ng\\dlc.rpf\\x64\\models\\cdimages\\weapons.rpf',
+        sourceFile: 'D:\\Mods\\Gun',
+        vanillaFile: 'D:\\Mods\\GunV',
+      }
     ]
   },
   // --- 3. ORIGINAL MOD ---
@@ -83,9 +90,9 @@ export const modsData = [
 
   {
     id: 4,
-    title: 'NaturalVision Evolved (Beta)',
+    title: 'CARABA1_2',
     description:
-      'Глобальна модифікація графіки, яка повністю змінює освітлення, погоду та текстури. Робить гру фотореалістичною.',
+      'караба1_2',
     image: 'https://cdn2.unrealengine.com/gtav--46-3840x2160-b2bb82f50c5b.jpg',
     version: 'Gold',
     author: 'Razed',
@@ -105,7 +112,13 @@ export const modsData = [
           'https://img.gta5-mods.com/q75/images/snoopy-s-reshade-preset-for-nve/c30fbb-image_2023-04-20_091915417.png'
       }
     ],
-    instructions: [] // Пусті інструкції
+    instructions: [
+      {
+        targetPath: 'update\\x64\\dlcpacks\\patchday8ng\\dlc.rpf\\x64\\models\\cdimages\\weapons.rpf',
+        sourceFile: 'D:\\Mods\\Gun1',
+        vanillaFile: 'D:\\Mods\\GunV',
+      }
+    ]
   },
   {
     id: 5,

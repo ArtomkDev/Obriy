@@ -2,7 +2,8 @@ import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { installMod } from './services/EngineService' 
+// 1. ЗМІНА: Імпортуємо також uninstallMod
+import { installMod, uninstallMod } from './services/EngineService' 
 import path from 'path'
 import fs from 'fs' 
 
@@ -44,7 +45,6 @@ app.whenReady().then(() => {
 
   // --- API HANDLERS ---
 
-  // 1. Вибір та перевірка папки гри
   ipcMain.handle('dialog:openDirectory', async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog({
       title: 'Оберіть кореневу папку гри GTA V (де лежить GTA5.exe)',
@@ -58,9 +58,8 @@ app.whenReady().then(() => {
 
     const selectedPath = filePaths[0]
     
-    // Перевірка: чи є там файли гри (підтримуємо Steam та Epic)
     const exePath = path.join(selectedPath, 'GTA5.exe')
-    const altExePath = path.join(selectedPath, 'PlayGTAV.exe') // Для Epic/SocialClub
+    const altExePath = path.join(selectedPath, 'PlayGTAV.exe') 
     
     if (fs.existsSync(exePath) || fs.existsSync(altExePath)) {
         return { success: true, path: selectedPath }
@@ -72,24 +71,16 @@ app.whenReady().then(() => {
     }
   })
 
-  // 2. Встановлення мода (ОНОВЛЕНО для Batch Processing)
-  // Приймає шлях до гри та масив інструкцій
+  // 2. Встановлення мода
   ipcMain.handle('install-mod', async (event, gamePath, instructions, modId) => {
-    console.log('Received batch install request')
-    console.log('Game Path:', gamePath)
-    console.log('Mod ID:', modId) // <--- Додано лог для перевірки
-    console.log('Instructions count:', instructions?.length)
+    console.log('[Main] Received install request for Mod ID:', modId)
 
     try {
       if (!gamePath || !instructions || !Array.isArray(instructions)) {
           throw new Error("Invalid arguments: missing gamePath or instructions array")
       }
-
-      // === ГОЛОВНА ЗМІНА ТУТ ===
-      // Ми передаємо event.sender (це потік до вікна React)
-      // та modId (щоб React знав, який саме прогрес-бар рухати)
+      // Виклик функції інсталяції
       const result = await installMod(event.sender, gamePath, instructions, modId)
-      
       return result 
     } catch (error) {
       console.error('Installation failed:', error)
@@ -97,8 +88,23 @@ app.whenReady().then(() => {
     }
   })
 
+  // 3. ЗМІНА: Видалення мода (новий хендлер)
+  ipcMain.handle('uninstall-mod', async (event, gamePath, instructions, modId) => {
+    console.log('[Main] Received uninstall request for Mod ID:', modId)
 
-  // 3. Тестовий пінг
+    try {
+        if (!gamePath || !instructions || !Array.isArray(instructions)) {
+            throw new Error("Invalid arguments: missing gamePath or instructions array")
+        }
+        // Виклик функції видалення (використовує vanillaFile)
+        const result = await uninstallMod(event.sender, gamePath, instructions, modId)
+        return result
+    } catch (error) {
+        console.error('Uninstallation failed:', error)
+        return { success: false, error: error.message }
+    }
+  })
+
   ipcMain.on('ping', () => console.log('pong'))
 
   createWindow()
