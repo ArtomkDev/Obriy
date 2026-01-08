@@ -1,48 +1,30 @@
 import React, { useState, useEffect } from 'react'
 import { useInstaller } from '../context/InstallerContext'
-import { useNavigate } from 'react-router-dom'
-import electronLogo from '../assets/electron.svg'
-import WindowControls from './WindowControls'
+import { motion, AnimatePresence } from 'framer-motion'
 
 const SetupScreen = () => {
   const { gamePath, setGamePath } = useInstaller()
   const [isValid, setIsValid] = useState(false)
   const [isChecking, setIsChecking] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
-  
-  const navigate = useNavigate()
 
   useEffect(() => {
-    if (gamePath) {
-      setIsValid(true)
-    }
+    if (gamePath) setIsValid(true)
   }, [gamePath])
 
   const handleSelectLocation = async () => {
     setErrorMessage('')
     setIsChecking(true)
-
     try {
       const result = await window.api.selectGameDirectory()
-
-      if (result.canceled) {
-        setIsChecking(false)
-        return
-      }
-
       if (result.success) {
         setGamePath(result.path)
-        if (result.version) {
-            localStorage.setItem('gta_version', result.version)
-        }
         setIsValid(true)
-      } else {
-        setErrorMessage(result.error)
-        setIsValid(false)
+      } else if (!result.canceled) {
+        setErrorMessage(result.error || 'Invalid directory')
       }
     } catch (error) {
-      setErrorMessage('Failed to communicate with core system')
-      console.error(error)
+      setErrorMessage('Communication error')
     } finally {
       setIsChecking(false)
     }
@@ -50,74 +32,61 @@ const SetupScreen = () => {
 
   const handleContinue = () => {
     if (isValid) {
-      navigate('/mods')
+      window.electron.ipcRenderer.send('setup-complete')
     }
   }
 
   return (
-    // Додано relative
-    <div className="flex flex-col items-center justify-center h-full w-full bg-slate-900 text-white p-10 relative">
-      
-      {/* --- DRAG BAR --- */}
-      <div className="absolute top-0 left-0 w-full h-8 z-40 drag" />
-
-      {/* Window Controls */}
-      <div className="absolute top-6 right-6 z-50">
-        <WindowControls />
-      </div>
-
-      <div className="max-w-md w-full bg-slate-800 rounded-xl shadow-2xl p-8 border border-slate-700">
-        <div className="flex flex-col items-center mb-8">
-          <img src={electronLogo} alt="Logo" className="w-20 h-20 mb-4 animate-spin-slow" />
-          <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500">
-            Welcome to Obriy
-          </h1>
-          <p className="text-slate-400 mt-2 text-center">
-            To begin, please select your Grand Theft Auto V installation directory.
-          </p>
-        </div>
-
-        <div className="space-y-6">
-          <div className="flex flex-col space-y-2">
-            <label className="text-sm font-medium text-slate-300">Game Directory</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={gamePath || ''}
-                readOnly
-                placeholder="No directory selected"
-                className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500 transition-colors"
-              />
-              <button
-                onClick={handleSelectLocation}
-                disabled={isChecking}
-                className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors border border-slate-600 no-drag"
-              >
-                Browse
-              </button>
-            </div>
-            
-            {errorMessage && <span className="text-red-500 text-xs">{errorMessage}</span>}
-            
-            {isValid && !errorMessage && (
-              <span className="text-emerald-400 text-xs">Successfully verified game executable</span>
+    <div className="h-screen w-screen bg-[#1e1f22] text-white flex flex-col items-center justify-center p-8 select-none relative overflow-hidden font-sans border border-white/5">
+      <div className="absolute top-0 left-0 w-full h-12 drag z-10" />
+      <div className="relative mb-8 z-20">
+        <motion.div 
+          animate={isValid ? { scale: [1, 1.05, 1] } : {}}
+          transition={{ repeat: Infinity, duration: 4 }}
+          className={`w-24 h-24 rounded-3xl flex items-center justify-center shadow-2xl transition-all duration-700 ${
+            isValid ? 'bg-emerald-500 shadow-emerald-500/20' : 'bg-indigo-500 shadow-indigo-500/20'
+          }`}
+        >
+          <svg className="w-12 h-12 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            {isValid ? (
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+            ) : (
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
             )}
-          </div>
-
-          <div className="pt-4 border-t border-slate-700">
-            <button
-              onClick={handleContinue}
-              disabled={!isValid || isChecking}
-              className={`w-full py-3 rounded-lg font-bold text-sm transition-all duration-200 no-drag ${
-                isValid
-                  ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/50'
-                  : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-              }`}
+          </svg>
+        </motion.div>
+      </div>
+      <div className="text-center mb-8 z-20">
+        <h1 className="text-xs font-black uppercase tracking-[0.2em] text-gray-500 mb-2">Initial Setup</h1>
+        <div className="h-6">
+          <AnimatePresence mode="wait">
+            <motion.p 
+              key={errorMessage || isValid}
+              initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}
+              className={`text-[12px] ${errorMessage ? 'text-rose-400' : 'text-gray-400'}`}
             >
-              {isChecking ? 'Verifying...' : 'Continue'}
-            </button>
-          </div>
+              {errorMessage || (isValid ? 'Directory verified' : 'Select GTA V folder')}
+            </motion.p>
+          </AnimatePresence>
         </div>
+      </div>
+      <div className="w-full space-y-3 z-20 no-drag">
+        {!isValid ? (
+          <button
+            onClick={handleSelectLocation}
+            disabled={isChecking}
+            className="w-full py-3 bg-[#2b2d31] hover:bg-[#35373c] text-white text-[11px] font-bold uppercase rounded-xl transition-all border border-white/5 active:scale-95 disabled:opacity-50"
+          >
+            {isChecking ? 'Verifying...' : 'Locate GTA V'}
+          </button>
+        ) : (
+          <button
+            onClick={handleContinue}
+            className="w-full py-3 bg-indigo-500 hover:bg-indigo-600 text-white text-[11px] font-bold uppercase rounded-xl shadow-xl shadow-indigo-500/20 transition-all active:scale-95"
+          >
+            Start Launcher
+          </button>
+        )}
       </div>
     </div>
   )

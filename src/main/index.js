@@ -6,28 +6,105 @@ import { installMod, uninstallMod, validateGamePath } from './services/EngineSer
 import updaterPkg from 'electron-updater'
 import path from 'path'
 import log from 'electron-log'
-import Store from 'electron-store' // 1. Імпорт Store
+import Store from 'electron-store'
 
 const { autoUpdater } = updaterPkg
-const store = new Store() // 2. Ініціалізація Store
+const store = new Store()
 
-// Налаштування логера
+let updaterWindow
+let setupWindow
+let mainWindow
+
 autoUpdater.logger = log
 autoUpdater.logger.transports.file.level = 'info'
-log.info('App starting...')
 
-// FIX ДЛЯ CLOUDFLARE CACHING
 autoUpdater.requestHeaders = {
   'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0'
 }
 
+autoUpdater.autoInstallOnAppQuit = true
+
+function createUpdaterWindow() {
+  if (updaterWindow) return updaterWindow
+
+  updaterWindow = new BrowserWindow({
+    width: 300,
+    height: 350,
+    show: false,
+    frame: false,
+    resizable: false,
+    backgroundColor: '#1e1f22',
+    center: true,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      contextIsolation: true
+    }
+  })
+
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    updaterWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/#/updater`)
+  } else {
+    updaterWindow.loadFile(join(__dirname, '../renderer/index.html'), { hash: 'updater' })
+  }
+
+  updaterWindow.on('ready-to-show', () => {
+    updaterWindow.show()
+    if (mainWindow && mainWindow.isVisible()) mainWindow.hide()
+  })
+
+  updaterWindow.on('closed', () => {
+    updaterWindow = null
+  })
+
+  return updaterWindow
+}
+
+function createSetupWindow() {
+  if (setupWindow) return setupWindow
+
+  setupWindow = new BrowserWindow({
+    width: 300,
+    height: 350,
+    show: false,
+    frame: false,
+    resizable: false,
+    backgroundColor: '#1e1f22',
+    center: true,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      contextIsolation: true
+    }
+  })
+
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    setupWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/#/setup`)
+  } else {
+    setupWindow.loadFile(join(__dirname, '../renderer/index.html'), { hash: 'setup' })
+  }
+
+  setupWindow.on('ready-to-show', () => {
+    setupWindow.show()
+  })
+
+  setupWindow.on('closed', () => {
+    setupWindow = null
+  })
+
+  return setupWindow
+}
+
 function createWindow() {
-  const mainWindow = new BrowserWindow({
+  if (mainWindow) return mainWindow
+
+  mainWindow = new BrowserWindow({
     width: 900,
     height: 670,
     show: false,
     frame: false,
     autoHideMenuBar: true,
+    backgroundColor: '#0F0F0F',
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -35,12 +112,6 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false
     }
-  })
-
-  mainWindow.webContents.openDevTools({ mode: 'detach' })
-
-  mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -64,33 +135,50 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  const mainWindow = createWindow()
+  const savedPath = store.get('gamePath')
 
-  ipcMain.on('minimize-app', () => mainWindow.minimize())
+  if (!savedPath) {
+    createSetupWindow()
+  } else {
+    createWindow()
+    mainWindow.once('ready-to-show', () => {
+      if (!updaterWindow) mainWindow.show()
+    })
+  }
+
+  ipcMain.on('minimize-app', () => {
+    const win = BrowserWindow.getFocusedWindow()
+    if (win) win.minimize()
+  })
+
   ipcMain.on('maximize-app', () => {
-    if (mainWindow.isMaximized()) mainWindow.unmaximize()
-    else mainWindow.maximize()
-  })
-  ipcMain.on('close-app', () => mainWindow.close())
-
-  // --- 3. ОБРОБНИКИ STORE (Збереження налаштувань) ---
-  ipcMain.handle('store:get', (event, key) => {
-    return store.get(key)
+    const win = mainWindow
+    if (win && win.isMaximized()) win.unmaximize()
+    else if (win) win.maximize()
   })
 
+  ipcMain.on('close-app', () => app.quit())
+
+  ipcMain.on('setup-complete', () => {
+    createWindow()
+    mainWindow.once('ready-to-show', () => {
+      if (setupWindow) setupWindow.close()
+      mainWindow.show()
+    })
+  })
+
+  ipcMain.handle('store:get', (event, key) => store.get(key))
   ipcMain.handle('store:set', (event, key, value) => {
     store.set(key, value)
     return true
   })
-
   ipcMain.handle('store:delete', (event, key) => {
     store.delete(key)
     return true
   })
-  // ----------------------------------------------------
 
   ipcMain.on('restart-app', () => {
-    autoUpdater.quitAndInstall()
+    autoUpdater.quitAndInstall(true, true)
   })
 
   ipcMain.handle('dialog:selectGameDirectory', async () => {
@@ -100,28 +188,16 @@ app.whenReady().then(() => {
       properties: ['openDirectory']
     })
 
-    if (canceled || filePaths.length === 0) {
-      return { canceled: true }
-    }
+    if (canceled || filePaths.length === 0) return { canceled: true }
 
     const selectedPath = filePaths[0]
-    
     try {
-      const validationResult = await validateGamePath(selectedPath)
-      
-      if (validationResult.isValid) {
-        const finalPath = validationResult.exePath ? path.dirname(validationResult.exePath) : selectedPath
-        return { 
-          success: true, 
-          path: finalPath,
-          version: validationResult.version
-        }
-      } else {
-        return { 
-          success: false, 
-          error: validationResult.error || 'Invalid game directory' 
-        }
+      const result = await validateGamePath(selectedPath)
+      if (result.isValid) {
+        const finalPath = result.exePath ? path.dirname(result.exePath) : selectedPath
+        return { success: true, path: finalPath, version: result.version }
       }
+      return { success: false, error: result.error || 'Invalid directory' }
     } catch (error) {
       return { success: false, error: error.message }
     }
@@ -129,9 +205,6 @@ app.whenReady().then(() => {
 
   ipcMain.handle('install-mod', async (event, gamePath, instructions, modId) => {
     try {
-      if (!gamePath || !instructions || !Array.isArray(instructions)) {
-        throw new Error('Invalid arguments: missing gamePath or instructions array')
-      }
       return await installMod(event.sender, gamePath, instructions, modId)
     } catch (error) {
       return { success: false, error: error.message }
@@ -140,85 +213,86 @@ app.whenReady().then(() => {
 
   ipcMain.handle('uninstall-mod', async (event, gamePath, instructions, modId) => {
     try {
-      if (!gamePath || !instructions || !Array.isArray(instructions)) {
-        throw new Error('Invalid arguments: missing gamePath or instructions array')
-      }
       return await uninstallMod(event.sender, gamePath, instructions, modId)
     } catch (error) {
       return { success: false, error: error.message }
     }
   })
 
-  ipcMain.handle('get-app-version', () => {
-    return app.getVersion()
-  })
+  ipcMain.handle('get-app-version', () => app.getVersion())
 
   if (!is.dev) {
     autoUpdater.setFeedURL({
       provider: 'generic',
       url: 'https://pub-e5ae8897a3144503936456b92082d266.r2.dev/'
-    });
-
-    autoUpdater.checkForUpdatesAndNotify().catch(err => {
-         log.error('Failed to check for updates:', err);
-    });
+    })
+    autoUpdater.checkForUpdatesAndNotify()
   }
 
-  app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      const path = store.get('gamePath')
+      if (path) createWindow()
+      else createSetupWindow()
+    }
   })
 })
 
-// --- PODII AUTO UPDATER ---
-
 autoUpdater.on('checking-for-update', () => {
-  log.info('Checking for update...')
+  createUpdaterWindow()
 })
 
 autoUpdater.on('update-available', (info) => {
-  log.info('Update available:', info)
-  const windows = BrowserWindow.getAllWindows()
-  if (windows.length > 0) {
-    windows[0].webContents.send('update-status', { status: 'available' })
+  if (updaterWindow) {
+    updaterWindow.webContents.send('update-status', { status: 'available' })
   }
 })
 
-autoUpdater.on('update-not-available', (info) => {
-  log.info('Update not available:', info)
+autoUpdater.on('update-not-available', () => {
+  if (updaterWindow) updaterWindow.close()
+  const savedPath = store.get('gamePath')
+  if (savedPath) {
+    createWindow()
+    mainWindow.once('ready-to-show', () => mainWindow.show())
+  } else if (!setupWindow) {
+    createSetupWindow()
+  }
 })
 
 autoUpdater.on('error', (err) => {
-  log.error('Error in auto-updater:', err)
-  const windows = BrowserWindow.getAllWindows()
-  if (windows.length > 0) {
-    windows[0].webContents.send('update-status', { status: 'error', error: err.message })
+  if (updaterWindow) {
+    updaterWindow.webContents.send('update-status', { status: 'error', error: err.message })
+    setTimeout(() => {
+      if (updaterWindow) updaterWindow.close()
+      const savedPath = store.get('gamePath')
+      if (savedPath) {
+        createWindow()
+        mainWindow.once('ready-to-show', () => mainWindow.show())
+      } else if (!setupWindow) {
+        createSetupWindow()
+      }
+    }, 3000)
   }
 })
 
 autoUpdater.on('download-progress', (progressObj) => {
-  let log_message = "Download speed: " + progressObj.bytesPerSecond;
-  log_message = log_message + ' - Downloaded ' + progressObj.percent + '%';
-  log.info(log_message);
-  
-  const windows = BrowserWindow.getAllWindows()
-  if (windows.length > 0) {
-    windows[0].webContents.send('update-status', { 
-        status: 'downloading', 
-        progress: progressObj.percent 
+  if (updaterWindow) {
+    updaterWindow.webContents.send('update-status', { 
+      status: 'downloading', 
+      progress: progressObj.percent 
     })
   }
 })
 
-autoUpdater.on('update-downloaded', (info) => {
-  log.info('Update downloaded')
-  const windows = BrowserWindow.getAllWindows()
-  if (windows.length > 0) {
-    windows[0].webContents.send('update-status', { status: 'downloaded' })
+autoUpdater.on('update-downloaded', () => {
+  if (updaterWindow) {
+    updaterWindow.webContents.send('update-status', { status: 'downloaded' })
   }
+  setTimeout(() => {
+    autoUpdater.quitAndInstall(true, true)
+  }, 1500)
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
+  if (process.platform !== 'darwin') app.quit()
 })
