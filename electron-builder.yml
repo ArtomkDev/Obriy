@@ -1,42 +1,62 @@
-appId: com.electron.app
-productName: gta-launcher
+appId: com.obriy.launcher
+productName: Obriy Launcher
 directories:
-  buildResources: build
+  buildResources: resources
+  output: dist
+
 files:
-  - '!**/.vscode/*'
-  - '!src/*'
-  - '!electron.vite.config.{js,ts,mjs,cjs}'
-  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
-  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+  - "!**/.vscode/*"
+  - "!src/*"
+  - "!electron.vite.config.{js,ts,mjs,cjs}"
+  - "!{.eslint*,prettier*}"
+  - "!README.md"
+  # ВАЖЛИВО: Виключаємо engine з основного архіву, бо ми копіюємо його окремо
+  - "!engine/**" 
+  - out/**/*
+
+# ВАЖЛИВО: Ця секція копіює готовий білд C# прямо в папку resources/engine
+extraResources:
+  - from: "engine/Obriy.Core/bin/Release/net8.0"
+    to: "engine"
+    filter:
+      - "**/*"
+
+# asarUnpack більше не потрібен для engine, бо ми використовуємо extraResources
 asarUnpack:
   - resources/**
+
 win:
-  executableName: gta-launcher
+  executableName: Obriy
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+
 nsis:
-  artifactName: ${name}-${version}-setup.${ext}
-  shortcutName: ${productName}
-  uninstallDisplayName: ${productName}
-  createDesktopShortcut: always
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  shortcutName: Obriy
+  deleteAppDataOnUninstall: true
+
 mac:
+  icon: build/icon.icns
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
-  extendInfo:
-    - NSCameraUsageDescription: Application requests access to the device's camera.
-    - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
-    - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
-    - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
-  notarize: false
-dmg:
-  artifactName: ${name}-${version}.${ext}
+
 linux:
+  icon: build/icon.png
   target:
     - AppImage
-    - snap
-    - deb
-  maintainer: electronjs.org
-  category: Utility
-appImage:
-  artifactName: ${name}-${version}.${ext}
-npmRebuild: false
+
 publish:
-  provider: generic
-  url: https://example.com/auto-updates
+  provider: s3
+  bucket: obriy-releases
+  endpoint: https://9c0ee90289ee05c64c60332339e7f8ff.r2.cloudflarestorage.com
+  region: auto

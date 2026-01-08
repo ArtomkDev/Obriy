@@ -36,3 +36,13 @@ Grand Theft Auto V/
 gtavideo.mp4
 gtaimg.jpg
 gtavideoimg.jpg
+
+
+node_modules
+dist
+dist-electron
+out
+release
+build
+.env
+.DS_Store

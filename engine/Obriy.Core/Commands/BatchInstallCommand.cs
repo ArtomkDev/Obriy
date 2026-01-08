@@ -18,14 +18,17 @@ namespace Obriy.Core.Commands
 
         public object Execute(string[] args)
         {
-            if (args.Length < 2)
+            // ВИПРАВЛЕННЯ 1: Тепер ми отримуємо тільки аргументи, без назви команди.
+            // Тому перевіряємо, чи є хоча б 1 елемент (шлях до маніфесту).
+            if (args.Length < 1)
             {
                 var error = new { error = "Manifest path required" };
                 Console.WriteLine(JsonSerializer.Serialize(error));
                 return error;
             }
 
-            string manifestPath = args[1];
+            // ВИПРАВЛЕННЯ 2: Беремо шлях з нульового індексу
+            string manifestPath = args[0];
 
             if (!File.Exists(manifestPath))
             {
@@ -42,22 +45,20 @@ namespace Obriy.Core.Commands
 
                 Console.Error.WriteLine($"[Batch] Processing {items.Count} items...");
 
-                // Використовуємо for, щоб мати індекс
                 for (int i = 0; i < items.Count; i++)
                 {
                     var item = items[i];
 
-                    // --- НОВИЙ РЯДОК ДЛЯ ПРОГРЕСУ ---
-                    // Виводить: [Progress]: 1/5
+                    // Лог прогресу для Electron
                     Console.Error.WriteLine($"[Progress]: {i + 1}/{items.Count}");
-                    
                     Console.Error.WriteLine($"[Batch] Installing: {Path.GetFileName(item.sourceFilePath)}");
                     
                     var pathInfo = SplitPath(item.targetPath);
                     editor.InstallMod(pathInfo.PhysicalPath, pathInfo.InternalPath, item.sourceFilePath);
                 }
 
-                File.Delete(manifestPath);
+                // Видаляємо тимчасовий файл маніфесту після успішного виконання
+                try { File.Delete(manifestPath); } catch { }
 
                 var success = new { status = "success", processed = items.Count };
                 Console.WriteLine(JsonSerializer.Serialize(success));
@@ -85,6 +86,12 @@ namespace Obriy.Core.Commands
 
                 string fileName = Path.GetFileName(currentPath);
                 string directory = Path.GetDirectoryName(currentPath);
+
+                // Запобіжник від нескінченного циклу, якщо дійшли до кореня диска
+                if (string.IsNullOrEmpty(directory) || directory == currentPath)
+                {
+                    break;
+                }
 
                 internalParts = Path.Combine(fileName, internalParts);
                 currentPath = directory;

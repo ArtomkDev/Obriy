@@ -4,11 +4,7 @@ import ModCard from '../components/ModCard'
 
 export default function ModsPage() {
   return (
-    // 1. w-full: Займай всю ширину
-    // 2. min-h-screen: Займай всю висоту
-    // 3. pl-28: Відступ зліва 112px (безпечна зона для Sidebar, щоб не налізало)
-    // 4. pr-8: Відступ справа, щоб було симетрично
-    <div className="w-full min-h-screen pl-28 pr-8 py-8 animate-fade-in">
+    <div className="w-full min-h-screen animate-fade-in pr-4"> {/* pr-4 щоб скролбар не перекривав */}
       
       {/* Заголовок */}
       <div className="flex items-center justify-between mb-8">
@@ -21,13 +17,10 @@ export default function ModsPage() {
         </div>
       </div>
 
-      {/* СІТКА (GRID)
+      {/* ПОВЕРНУТО СТАРУ СІТКУ:
          grid-cols-[repeat(auto-fill,minmax(320px,1fr))]
-         
-         Це означає:
-         1. minmax(320px, 1fr): Картка не може бути меншою за 320px.
-         2. auto-fill: Браузер сам порахує: "Ага, у мене ширина 2500px, значить влізе 7 карток".
-         3. 1fr: Весь вільний простір рівномірно розподілиться між картками.
+         Це змусить картки заповнювати всю ширину екрану, 
+         але зберігати свій нормальний розмір (3, 4 або 5 в ряд).
       */}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-6">
         {modsData.map((mod) => (

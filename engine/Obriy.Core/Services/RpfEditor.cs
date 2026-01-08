@@ -13,12 +13,21 @@ namespace Obriy.Core.Services
             if (GTA5Keys.PC_AES_KEY != null && GTA5Keys.PC_AES_KEY.Length > 0)
                 return;
 
-            string keysPath = AppDomain.CurrentDomain.BaseDirectory;
+            string basePath = AppDomain.CurrentDomain.BaseDirectory;
+            // ЗМІНА: Додаємо "keys" до шляху
+            string keysPath = Path.Combine(basePath, "keys"); 
             string aesKeyFile = Path.Combine(keysPath, "gtav_aes_key.dat");
+
+            // Якщо папки keys немає в білді, пробуємо шукати в корені (для зворотної сумісності)
+            if (!File.Exists(aesKeyFile))
+            {
+                keysPath = basePath;
+                aesKeyFile = Path.Combine(keysPath, "gtav_aes_key.dat");
+            }
 
             if (File.Exists(aesKeyFile))
             {
-                Console.Error.WriteLine("[RpfEditor] Loading keys from .dat files...");
+                Console.Error.WriteLine($"[RpfEditor] Loading keys from: {keysPath}");
                 try 
                 {
                     GTA5Keys.PC_AES_KEY = File.ReadAllBytes(aesKeyFile);
@@ -47,7 +56,7 @@ namespace Obriy.Core.Services
             }
             else
             {
-                Console.Error.WriteLine("Warning: Keys not found! Encrypted RPFs will fail.");
+                Console.Error.WriteLine($"Warning: Keys not found at {keysPath}! Encrypted RPFs will fail.");
             }
         }
 

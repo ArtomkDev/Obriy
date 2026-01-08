@@ -4,21 +4,23 @@ import { app } from 'electron'
 import fs from 'fs'
 import os from 'os'
 
-// Допоміжна функція для генерації списку файлів
+// 1. Отримання правильного шляху до EXE
+function getEnginePath() {
+  return !app.isPackaged
+    ? path.join(process.cwd(), 'engine/Obriy.Core/bin/Debug/net8.0/Obriy.Core.exe') // DEV шлях
+    : path.join(process.resourcesPath, 'engine/Obriy.Core.exe') // PROD шлях
+}
+
+// 2. Підготовка списку файлів
 function prepareBatchItems(instructionSet, gameRootPath, isUninstall) {
     let batchItems = [];
 
     instructionSet.forEach(instr => {
-        // Вибираємо джерело: для видалення беремо vanillaFile, для встановлення — sourceFile
         const sourcePath = isUninstall ? instr.vanillaFile : instr.sourceFile;
         
         if (!sourcePath) {
-            if (isUninstall) {
-                console.warn(`[Engine] Skipping instruction: 'vanillaFile' is missing for ${instr.targetPath}`);
-                return; // Або throw error, якщо це критично
-            } else {
-                throw new Error(`Source file path missing in instruction for ${instr.targetPath}`);
-            }
+            if (isUninstall) return;
+            throw new Error(`Source file path missing in instruction for ${instr.targetPath}`);
         }
 
         if (!fs.existsSync(sourcePath)) {
@@ -27,7 +29,6 @@ function prepareBatchItems(instructionSet, gameRootPath, isUninstall) {
 
         const stats = fs.statSync(sourcePath);
 
-        // Рекурсивний обхід, якщо це папка
         if (stats.isDirectory()) {
             const files = fs.readdirSync(sourcePath);
             files.forEach(file => {
@@ -50,14 +51,12 @@ function prepareBatchItems(instructionSet, gameRootPath, isUninstall) {
     return batchItems;
 }
 
-// Універсальна функція запуску двигуна
+// 3. Запуск двигуна (Install/Uninstall)
 function runEngine(batchItems, eventSender, modId, actionType = 'install') {
     return new Promise((resolve, reject) => {
-        const isDev = !app.isPackaged
-        
-        const enginePath = isDev
-          ? path.join(process.cwd(), 'engine/Obriy.Core/bin/Debug/net8.0/Obriy.Core.exe')
-          : path.join(process.resourcesPath, 'engine/Obriy.Core.exe')
+        const enginePath = getEnginePath()
+        // ВАЖЛИВО: Отримуємо папку, де лежить exe, щоб задати робочу директорію
+        const workingDirectory = path.dirname(enginePath); 
 
         if (batchItems.length === 0) {
             resolve({ status: 'warning', message: 'No files found to process.' });
@@ -67,22 +66,25 @@ function runEngine(batchItems, eventSender, modId, actionType = 'install') {
         const tempManifestPath = path.join(os.tmpdir(), `obriy_batch_${Date.now()}.json`)
         fs.writeFileSync(tempManifestPath, JSON.stringify(batchItems, null, 2))
 
-        console.log(`[Engine] Launching (${actionType}): ${enginePath} with manifest: ${tempManifestPath}`);
+        console.log(`[Engine] Launching (${actionType}): ${enginePath}`);
+        console.log(`[Engine] Working Directory: ${workingDirectory}`);
 
-        const child = spawn(enginePath, ['install-batch', tempManifestPath])
+        // ВАЖЛИВО: Додаємо опцію cwd (Current Working Directory)
+        const child = spawn(enginePath, ['install-batch', tempManifestPath], {
+            cwd: workingDirectory 
+        })
 
         let outputData = ''
         let errorData = ''
 
         child.stdout.on('data', (data) => { 
-            const str = data.toString();
-            outputData += str;
+            outputData += data.toString();
         })
 
         child.stderr.on('data', (data) => { 
             const str = data.toString();
             errorData += str;
-            console.error('[Engine Log]:', str) 
+            // console.error('[Engine Log]:', str) 
 
             const match = str.match(/\[Progress\]: (\d+)\/(\d+)/);
             
@@ -91,7 +93,6 @@ function runEngine(batchItems, eventSender, modId, actionType = 'install') {
                 const total = parseInt(match[2]);
                 const percentage = (current / total) * 100;
 
-                // Відправляємо подію з типом дії (install або uninstall)
                 try {
                     eventSender.send('task-progress', { 
                         modId: modId, 
@@ -114,7 +115,6 @@ function runEngine(batchItems, eventSender, modId, actionType = 'install') {
                 
                 if (lastCloseBrace !== -1) {
                     potentialJson = potentialJson.substring(0, lastCloseBrace + 1);
-                    console.log('[Engine] Parsing JSON result');
                     const result = JSON.parse(potentialJson);
                     
                     if (result.error) {
@@ -144,11 +144,60 @@ function runEngine(batchItems, eventSender, modId, actionType = 'install') {
     })
 }
 
-// Експорт функцій для основного процесу
+// 4. Валідація шляху
+export const validateGamePath = async (gamePath) => {
+  return new Promise((resolve, reject) => {
+    const enginePath = getEnginePath()
+    const workingDirectory = path.dirname(enginePath);
+
+    if (!fs.existsSync(enginePath)) {
+        console.error(`[Engine] Executable not found at: ${enginePath}`);
+        resolve({ isValid: false, error: 'Core engine files missing. Please reinstall Obriy.' });
+        return;
+    }
+
+    // ВАЖЛИВО: Тут теж додаємо cwd
+    const child = spawn(enginePath, ['validate-path', gamePath], {
+        cwd: workingDirectory
+    })
+
+    let output = ''
+    let errorOutput = ''
+
+    child.stdout.on('data', (data) => {
+      output += data.toString()
+    })
+
+    child.stderr.on('data', (data) => {
+      errorOutput += data.toString()
+    })
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        try {
+            const result = JSON.parse(output);
+            resolve(result);
+        } catch {
+            resolve({ isValid: false, error: errorOutput || 'Engine process failed' });
+        }
+        return
+      }
+
+      try {
+        const match = output.match(/\{.*\}/);
+        const jsonStr = match ? match[0] : output;
+        const result = JSON.parse(jsonStr)
+        resolve(result)
+      } catch (e) {
+        resolve({ isValid: false, error: 'Invalid response from engine' })
+      }
+    })
+  })
+}
 
 export function installMod(eventSender, gameRootPath, instructionSet, modId) {
     try {
-        const batchItems = prepareBatchItems(instructionSet, gameRootPath, false); // false = install
+        const batchItems = prepareBatchItems(instructionSet, gameRootPath, false);
         return runEngine(batchItems, eventSender, modId, 'install');
     } catch (err) {
         return Promise.reject(err);
@@ -157,7 +206,7 @@ export function installMod(eventSender, gameRootPath, instructionSet, modId) {
 
 export function uninstallMod(eventSender, gameRootPath, instructionSet, modId) {
     try {
-        const batchItems = prepareBatchItems(instructionSet, gameRootPath, true); // true = uninstall (use vanillaFile)
+        const batchItems = prepareBatchItems(instructionSet, gameRootPath, true);
         return runEngine(batchItems, eventSender, modId, 'uninstall');
     } catch (err) {
         return Promise.reject(err);

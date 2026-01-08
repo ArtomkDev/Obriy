@@ -1,45 +1,72 @@
-import { HashRouter, Routes, Route } from 'react-router-dom'
-import { useState, useEffect } from 'react'
-import SetupScreen from './components/SetupScreen'
+import React from 'react'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
+import SetupScreen from './components/SetupScreen'
 import ModsPage from './pages/ModsPage'
-import ModDetailsPage from './pages/ModDetailsPage'
 import SettingsPage from './pages/SettingsPage'
+import ModDetailsPage from './pages/ModDetailsPage'
+import { useInstaller } from './context/InstallerContext'
+import WindowControls from './components/WindowControls'
+
+const MainLayout = ({ children, noPadding = false }) => {
+  return (
+    // Додано relative для позиціонування drag-бару
+    <div className="flex h-screen bg-background text-white overflow-hidden selection:bg-indigo-500 selection:text-white font-sans relative">
+      
+      {/* --- DRAG BAR --- */}
+      {/* Ця невидима смужка висотою 32px дозволяє тягати вікно */}
+      <div className="absolute top-0 left-0 w-full h-8 z-40 drag" />
+
+      <Sidebar />
+      
+      <div className="flex-1 flex flex-col min-w-0 bg-slate-900 relative">
+        <div className="absolute top-6 right-6 z-50">
+            <WindowControls />
+        </div>
+
+        <div className={`flex-1 overflow-auto custom-scrollbar ${noPadding ? '' : 'p-8 pt-10 w-full'}`}>
+          {children}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const ProtectedRoute = ({ children, noPadding }) => {
+  const { gamePath } = useInstaller()
+  
+  if (!gamePath) {
+    return <Navigate to="/setup" replace />
+  }
+  
+  return <MainLayout noPadding={noPadding}>{children}</MainLayout>
+}
 
 function App() {
-  const [gamePath, setGamePath] = useState(() => {
-    return localStorage.getItem('gamePath') || localStorage.getItem('gta_path') || null
-  })
-
-  useEffect(() => {
-    if (gamePath) {
-      localStorage.setItem('gamePath', gamePath)
-    }
-  }, [gamePath])
-
-  if (!gamePath) {
-    return <SetupScreen onPathSet={setGamePath} />
-  }
-
   return (
-    <HashRouter>
-      <div className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-200 font-sans selection:bg-indigo-500 selection:text-white">
-        <Sidebar />
-        
-        <main className="flex-1 h-full overflow-y-auto relative custom-scrollbar">
-          {/* Фон (Gradient) */}
-          <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 to-purple-500/5 pointer-events-none" />
-    
-          <div className="relative z-10 w-full min-h-full">
-            <Routes>
-              <Route path="/" element={<ModsPage />} />
-              <Route path="/mod/:id" element={<ModDetailsPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-            </Routes>
-          </div>
-        </main>
-      </div>
-    </HashRouter>
+    <Routes>
+      <Route path="/setup" element={<SetupScreen />} />
+
+      <Route path="/mods" element={
+        <ProtectedRoute>
+          <ModsPage />
+        </ProtectedRoute>
+      } />
+      
+      <Route path="/settings" element={
+        <ProtectedRoute>
+          <SettingsPage />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/mods/:id" element={
+        <ProtectedRoute noPadding={true}>
+          <ModDetailsPage />
+        </ProtectedRoute>
+      } />
+
+      <Route path="*" element={<Navigate to="/mods" replace />} />
+    </Routes>
   )
 }
 

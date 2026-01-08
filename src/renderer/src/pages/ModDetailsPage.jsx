@@ -2,9 +2,10 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { modsData } from '../data/mods'
-import { useModInstaller } from '../hooks/useModInstaller'
+import { useInstaller } from '../context/InstallerContext'
 import CustomPlayer from '../components/CustomPlayer'
 import ProgressBar from '../components/ProgressBar'
+// WindowControls більше не імпортуємо тут, вони в App.jsx
 
 export default function ModDetailsPage() {
   const { id } = useParams()
@@ -13,10 +14,9 @@ export default function ModDetailsPage() {
   const [mod, setMod] = useState(null)
   const [loading, setLoading] = useState(true)
   
-  // 1. Додаємо uninstallMod з хука
-  const { installMod, uninstallMod, getModStatus, retryMod, getModProgress } = useModInstaller()
-  const [currentMediaIndex, setCurrentMediaIndex] = useState(0)
+  const { startInstall, startUninstall, getModStatus, retryTask, getModProgress } = useInstaller()
   
+  const [currentMediaIndex, setCurrentMediaIndex] = useState(0)
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
 
@@ -31,7 +31,6 @@ export default function ModDetailsPage() {
 
   const status = mod ? getModStatus(mod.id) : 'idle';
   const progress = mod ? getModProgress(mod.id) : { download: 0, install: 0 };
-
   const activePercent = status === 'downloading' ? Math.round(progress.download) : Math.round(progress.install);
 
   const checkScroll = () => {
@@ -95,30 +94,29 @@ export default function ModDetailsPage() {
 
   const handleMainButtonClick = () => {
       if (status === 'idle' || status === 'success') {
-          installMod(mod);
+          startInstall(mod);
       } else if (status === 'error') {
-          retryMod(mod);
+          retryTask(mod);
       }
   }
 
-  // Обробник видалення
   const handleUninstallClick = () => {
-      uninstallMod(mod);
+      startUninstall(mod);
   }
 
   if (loading) return null
-  if (!mod) return <div className="pl-24 pt-10 text-white">MOD NOT FOUND</div>
+  if (!mod) return <div className="p-10 text-white">MOD NOT FOUND</div>
 
-  // Перевірка, чи йде якийсь процес
   const isProcessing = ['downloading', 'installing', 'uninstalling', 'queued', 'queued_download', 'queued_uninstall'].includes(status);
 
   return (
-    <div className="fixed inset-0 z-50 bg-[#09090b] pl-20 flex overflow-hidden animate-fade-in font-sans selection:bg-indigo-500 selection:text-white">
+    // Прибрали absolute WindowControls звідси
+    <div className="w-full h-full bg-[#09090b] flex overflow-hidden animate-fade-in font-sans relative">
       
       <div className="flex-1 flex flex-col h-full bg-black relative group overflow-hidden">
           <div className="absolute top-6 left-6 z-30">
             <button 
-                onClick={() => navigate(-1)} 
+                onClick={() => navigate('/mods')} 
                 className="flex items-center gap-2 bg-black/40 backdrop-blur-md border border-white/10 px-4 py-2 rounded-full text-white/70 hover:text-white hover:bg-black/60 transition-all shadow-lg group/back"
             >
                 <svg className="w-4 h-4 transition-transform group-hover/back:-translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
@@ -215,7 +213,7 @@ export default function ModDetailsPage() {
       </div>
 
       <div className="w-[400px] xl:w-[450px] h-full bg-[#121214] border-l border-white/5 flex flex-col relative shadow-2xl z-30 shrink-0">
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-8 pt-16"> {/* pt-16 щоб не налізало на кнопки (хоча вони тепер в Layout, але тут відступ все одно потрібен візуально) */}
               <div className="flex flex-wrap items-center gap-3 mb-6">
                  <div className="px-2 py-1 bg-indigo-500/10 border border-indigo-500/20 rounded text-[10px] font-bold uppercase tracking-widest text-indigo-400">
                     v{mod.version || '1.0'}
@@ -283,7 +281,6 @@ export default function ModDetailsPage() {
               )}
 
               <div className="flex flex-col gap-3">
-                  {/* Основна кнопка (Install / Reinstall / Retry) */}
                   <button 
                      onClick={handleMainButtonClick}
                      disabled={isProcessing}
@@ -303,29 +300,27 @@ export default function ModDetailsPage() {
                            </>
                          )}
                          
-                        {status === 'queued_download' && 'IN DOWNLOAD QUEUE'}
-                        {status === 'downloading' && `DOWNLOADING... ${activePercent}%`}
-                        {status === 'queued' && 'WAITING TO INSTALL'}
-                        {status === 'installing' && `INSTALLING... ${activePercent}%`}
-                        
-                        {/* Статуси видалення */}
-                        {status === 'queued_uninstall' && 'IN UNINSTALL QUEUE'}
-                        {status === 'uninstalling' && `UNINSTALLING... ${activePercent}%`}
+                         {status === 'queued_download' && 'IN DOWNLOAD QUEUE'}
+                         {status === 'downloading' && `DOWNLOADING... ${activePercent}%`}
+                         {status === 'queued' && 'WAITING TO INSTALL'}
+                         {status === 'installing' && `INSTALLING... ${activePercent}%`}
                          
-                        {status === 'success' && (
+                         {status === 'queued_uninstall' && 'IN UNINSTALL QUEUE'}
+                         {status === 'uninstalling' && `UNINSTALLING... ${activePercent}%`}
+                          
+                         {status === 'success' && (
                            <>
                                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                                </svg>
                                REINSTALL MOD
                            </>
-                        )}
+                         )}
 
-                        {status === 'error' && 'RETRY INSTALLATION'}
+                         {status === 'error' && 'RETRY INSTALLATION'}
                      </span>
                   </button>
 
-                  {/* ДОДАНО: Кнопка видалення (з'являється тільки якщо успішно встановлено) */}
                   {status === 'success' && (
                       <button 
                           onClick={handleUninstallClick}

@@ -1,6 +1,9 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useModInstaller } from '../hooks/useModInstaller';
+import { useModInstaller } from '../hooks/useModInstaller'; // Переконайтеся, що хук імпортується правильно, або використовуйте useInstaller з контексту
+// Якщо useModInstaller це те саме що useInstaller, то ок. 
+// Але зазвичай ми використовували: import { useInstaller } from '../context/InstallerContext'
+import { useInstaller } from '../context/InstallerContext'; 
 import ProgressBar from './ProgressBar';
 
 // --- ICONS ---
@@ -18,7 +21,8 @@ const RefreshIcon = ({ className }) => (
 
 export default function ModCard({ mod }) {
   const navigate = useNavigate();
-  const { getModStatus, getModProgress, installMod } = useModInstaller();
+  // Використовуємо контекст, який ми створили раніше
+  const { getModStatus, getModProgress, startInstall } = useInstaller(); 
   
   const status = getModStatus(mod.id);
   const progress = getModProgress(mod.id);
@@ -29,17 +33,19 @@ export default function ModCard({ mod }) {
     : Math.round(progress.install);
 
   const handleCardClick = () => {
-    navigate(`/mod/${mod.id}`);
+    // ВИПРАВЛЕННЯ ТУТ: /mods/ замість /mod/
+    navigate(`/mods/${mod.id}`);
   };
 
   const handleInstallClick = (e) => {
     e.stopPropagation(); 
     if (status === 'idle' || status === 'error' || status === 'success') {
-        installMod(mod);
+        // Використовуємо метод з контексту (startInstall замість installMod, якщо ви не перейменовували його)
+        startInstall(mod);
     }
   };
 
-  const isProcessing = status === 'downloading' || status === 'installing';
+  const isProcessing = status === 'downloading' || status === 'installing' || status === 'uninstalling';
   const isInstalled = status === 'success';
 
   return (
@@ -70,10 +76,11 @@ export default function ModCard({ mod }) {
                     ${status === 'success' && 'text-emerald-400'}
                     ${status === 'error' && 'text-rose-400'}
                 `}>
-                   
+                    
                     <span>
                       {status === 'downloading' && 'Downloading...'}
                       {status === 'installing' && 'Installing...'}
+                      {status === 'uninstalling' && 'Uninstalling...'}
                       {status === 'success' && 'Installed'}
                       {status === 'error' && 'Failed'}
                     </span>
@@ -98,7 +105,7 @@ export default function ModCard({ mod }) {
             `}
             title={isInstalled ? "Перевстановити" : "Встановити"}
         >
-             {isInstalled ? <RefreshIcon className="w-5 h-5" /> : <DownloadIcon className="w-5 h-5" />}
+              {isInstalled ? <RefreshIcon className="w-5 h-5" /> : <DownloadIcon className="w-5 h-5" />}
         </button>
       </div>
 

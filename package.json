@@ -1,10 +1,11 @@
 {
-  "name": "gta-launcher",
-  "version": "1.0.0",
-  "description": "An Electron application with React",
+  "name": "obriy",
+  "productName": "Obriy Launcher",
+  "version": "0.1.4",
+  "description": "Obriy - GTA V Mod Manager & Launcher",
   "main": "./out/main/index.js",
-  "author": "example.com",
-  "homepage": "https://electron-vite.org",
+  "author": "Obriy Team",
+  "homepage": "https://obriy.app",
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",
@@ -20,8 +21,9 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "electron-log": "^5.4.3",
     "electron-store": "^11.0.2",
-    "electron-updater": "^6.3.9",
+    "electron-updater": "^6.7.3",
     "framer-motion": "^12.24.7",
     "react-player": "^3.4.0",
     "react-router-dom": "^7.11.0"

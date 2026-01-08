@@ -1,97 +1,126 @@
-import { useState } from 'react'
+import React, { useState, useEffect } from 'react'
+import { useInstaller } from '../context/InstallerContext'
+import { useNavigate } from 'react-router-dom'
+import electronLogo from '../assets/electron.svg'
+import WindowControls from './WindowControls'
 
-export default function SetupScreen({ onComplete }) {
-  const [path, setPath] = useState('')
-  const [error, setError] = useState('')
-  const [gameVersion, setGameVersion] = useState(null)
-  const [isLoading, setIsLoading] = useState(false)
+const SetupScreen = () => {
+  const { gamePath, setGamePath } = useInstaller()
+  const [isValid, setIsValid] = useState(false)
+  const [isChecking, setIsChecking] = useState(false)
+  const [errorMessage, setErrorMessage] = useState('')
+  
+  const navigate = useNavigate()
 
-  const handleBrowse = async () => {
-    setError('')
-    setGameVersion(null)
-    setIsLoading(true)
+  useEffect(() => {
+    if (gamePath) {
+      setIsValid(true)
+    }
+  }, [gamePath])
+
+  const handleSelectLocation = async () => {
+    setErrorMessage('')
+    setIsChecking(true)
 
     try {
-      const result = await window.api.selectFolder()
-      
-      if (result) {
-        if (result.success) {
-          setPath(result.path)
-          setGameVersion(result.version)
-        } else {
-          setError(result.error)
-          setPath('')
-        }
+      const result = await window.api.selectGameDirectory()
+
+      if (result.canceled) {
+        setIsChecking(false)
+        return
       }
-    } catch (e) {
-      setError('Помилка виклику API')
+
+      if (result.success) {
+        setGamePath(result.path)
+        if (result.version) {
+            localStorage.setItem('gta_version', result.version)
+        }
+        setIsValid(true)
+      } else {
+        setErrorMessage(result.error)
+        setIsValid(false)
+      }
+    } catch (error) {
+      setErrorMessage('Failed to communicate with core system')
+      console.error(error)
     } finally {
-      setIsLoading(false)
+      setIsChecking(false)
     }
   }
 
-  const handleSave = () => {
-    if (path) {
-      localStorage.setItem('gta_path', path)
-      if (gameVersion) {
-        localStorage.setItem('gta_version', gameVersion)
-      }
-      onComplete()
+  const handleContinue = () => {
+    if (isValid) {
+      navigate('/mods')
     }
   }
 
   return (
-    <div className="h-screen w-screen bg-background flex items-center justify-center p-4">
-      <div className="bg-surface p-8 rounded-2xl shadow-2xl max-w-md w-full border border-gray-800 animate-fade-in">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-extrabold text-white mb-2">
-            GTA <span className="text-primary">LAUNCHER</span>
+    // Додано relative
+    <div className="flex flex-col items-center justify-center h-full w-full bg-slate-900 text-white p-10 relative">
+      
+      {/* --- DRAG BAR --- */}
+      <div className="absolute top-0 left-0 w-full h-8 z-40 drag" />
+
+      {/* Window Controls */}
+      <div className="absolute top-6 right-6 z-50">
+        <WindowControls />
+      </div>
+
+      <div className="max-w-md w-full bg-slate-800 rounded-xl shadow-2xl p-8 border border-slate-700">
+        <div className="flex flex-col items-center mb-8">
+          <img src={electronLogo} alt="Logo" className="w-20 h-20 mb-4 animate-spin-slow" />
+          <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500">
+            Welcome to Obriy
           </h1>
-          <p className="text-textSec">Вкажіть шлях до ліцензійної GTA V Legacy</p>
+          <p className="text-slate-400 mt-2 text-center">
+            To begin, please select your Grand Theft Auto V installation directory.
+          </p>
         </div>
 
-        <div className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Шлях до папки</label>
+        <div className="space-y-6">
+          <div className="flex flex-col space-y-2">
+            <label className="text-sm font-medium text-slate-300">Game Directory</label>
             <div className="flex gap-2">
-              <input 
-                type="text" 
-                value={path}
+              <input
+                type="text"
+                value={gamePath || ''}
                 readOnly
-                placeholder="Натисніть папку для вибору..."
-                className={`flex-1 bg-background border ${error ? 'border-red-500' : 'border-gray-700'} rounded px-3 py-2 text-white focus:outline-none transition cursor-not-allowed opacity-70`}
+                placeholder="No directory selected"
+                className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500 transition-colors"
               />
-              <button 
-                onClick={handleBrowse}
-                disabled={isLoading}
-                className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white px-3 py-2 rounded transition active:scale-95"
+              <button
+                onClick={handleSelectLocation}
+                disabled={isChecking}
+                className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors border border-slate-600 no-drag"
               >
-                {isLoading ? '⏳' : '📂'}
+                Browse
               </button>
             </div>
             
-            {error && (
-              <p className="text-red-500 text-xs mt-2 font-bold animate-pulse">
-                ⚠ {error}
-              </p>
-            )}
-
-            {gameVersion && (
-              <p className="text-green-500 text-xs mt-2 font-bold animate-fade-in">
-                ✓ Знайдено v{gameVersion}
-              </p>
+            {errorMessage && <span className="text-red-500 text-xs">{errorMessage}</span>}
+            
+            {isValid && !errorMessage && (
+              <span className="text-emerald-400 text-xs">Successfully verified game executable</span>
             )}
           </div>
 
-          <button 
-            onClick={handleSave}
-            disabled={!path || isLoading}
-            className="w-full bg-primary hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3 rounded-lg transition shadow-lg shadow-pink-500/20"
-          >
-            ЗБЕРЕГТИ
-          </button>
+          <div className="pt-4 border-t border-slate-700">
+            <button
+              onClick={handleContinue}
+              disabled={!isValid || isChecking}
+              className={`w-full py-3 rounded-lg font-bold text-sm transition-all duration-200 no-drag ${
+                isValid
+                  ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/50'
+                  : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+              }`}
+            >
+              {isChecking ? 'Verifying...' : 'Continue'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
   )
 }
+
+export default SetupScreen
