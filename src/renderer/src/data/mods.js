@@ -3,13 +3,13 @@ import img2 from '../assets/gtaimg.jpg'
 import gtaVideo from '../assets/gtavideo.mp4'
 import gtaVideoImg from '../assets/gtavideoimg.jpg'
 
-export const modsData = [
+export const mods = [
   // --- 1. ORIGINAL MOD ---
   {
     id: 1,
     title: 'Test Mod (update.rpf)',
     description: 'Тестовий мод: додає файл у папку common всередині update.rpf.',
-    image: gtaVideoImg,
+    thumbnail: gtaVideoImg, // ВИПРАВЛЕНО: image -> thumbnail
     version: '0.1-beta',
     author: 'Dev',
     media: [
@@ -29,7 +29,7 @@ export const modsData = [
     id: 2,
     title: 'CARABIN1',
     description: 'Караба',
-    image: img1,
+    thumbnail: img1,
     version: '2.0',
     author: 'GalleryMaster',
     media: [
@@ -49,7 +49,7 @@ export const modsData = [
   {
     id: 3,
     title: 'Billboards Pack',
-    image: img2,
+    thumbnail: img2,
     version: '1.2',
     author: 'Designer',
     media: [
@@ -86,14 +86,13 @@ export const modsData = [
     ]
   },
 
-  // --- НОВІ МОДИ ДЛЯ ПРИКЛАДУ (БЕЗ ІНСТРУКЦІЙ) ---
+  // --- НОВІ МОДИ (Картинки через URL теж працюватимуть) ---
 
   {
     id: 4,
     title: 'CARABA1_2',
-    description:
-      'караба1_2',
-    image: 'https://cdn2.unrealengine.com/gtav--46-3840x2160-b2bb82f50c5b.jpg',
+    description: 'караба1_2',
+    thumbnail: 'https://cdn2.unrealengine.com/gtav--46-3840x2160-b2bb82f50c5b.jpg',
     version: 'Gold',
     author: 'Razed',
     media: [
@@ -108,8 +107,7 @@ export const modsData = [
       },
       {
         type: 'image',
-        source:
-          'https://img.gta5-mods.com/q75/images/snoopy-s-reshade-preset-for-nve/c30fbb-image_2023-04-20_091915417.png'
+        source: 'https://img.gta5-mods.com/q75/images/snoopy-s-reshade-preset-for-nve/c30fbb-image_2023-04-20_091915417.png'
       }
     ],
     instructions: [
@@ -123,9 +121,8 @@ export const modsData = [
   {
     id: 5,
     title: 'Lamborghini Aventador SVJ',
-    description:
-      'Високоякісна модель Lamborghini Aventador SVJ. Підтримка тюнінгу, реалістичний хендлінг та 4K текстури салону.',
-    image: 'https://www.gta-modding.com/area/uploads/1549.jpg',
+    description: 'Високоякісна модель Lamborghini Aventador SVJ. Підтримка тюнінгу, реалістичний хендлінг та 4K текстури салону.',
+    thumbnail: 'https://www.gta-modding.com/area/uploads/1549.jpg',
     version: '1.5',
     author: 'Gta5KoRn',
     media: [
@@ -133,8 +130,7 @@ export const modsData = [
       { type: 'image', source: img2 },
       {
         type: 'image',
-        source:
-          'https://files.libertycity.ru/posts/2023-05/thumbs/1682952879_grand-theft-auto-v-screenshot.jpg'
+        source: 'https://files.libertycity.ru/posts/2023-05/thumbs/1682952879_grand-theft-auto-v-screenshot.jpg'
       }
     ],
     instructions: []
@@ -142,9 +138,8 @@ export const modsData = [
   {
     id: 6,
     title: 'Realistic Weapon Sounds',
-    description:
-      'Повна заміна звуків зброї на більш гучні та реалістичні. Записано з реальних прототипів.',
-    image: 'https://i.rutab.net/upload/2025/05/insider/35745a67df32fb172ae36d837df9d4ee.webp',
+    description: 'Повна заміна звуків зброї на більш гучні та реалістичні. Записано з реальних прототипів.',
+    thumbnail: 'https://i.rutab.net/upload/2025/05/insider/35745a67df32fb172ae36d837df9d4ee.webp',
     version: '4.2',
     author: 'SoundMaster',
     media: [
@@ -159,17 +154,14 @@ export const modsData = [
   {
     id: 7,
     title: 'GTA VI UI Concept',
-    description:
-      'Змінює інтерфейс (HUD), карту та меню паузи на стиль із витоків GTA VI. Сучасний мінімалізм.',
-    image:
-      'https://img.gta5-mods.com/q75/images/snoopy-s-reshade-preset-for-nve/c30fbb-image_2023-04-20_091915417.png',
+    description: 'Змінює інтерфейс (HUD), карту та меню паузи на стиль із витоків GTA VI. Сучасний мінімалізм.',
+    thumbnail: 'https://img.gta5-mods.com/q75/images/snoopy-s-reshade-preset-for-nve/c30fbb-image_2023-04-20_091915417.png',
     version: '0.9',
     author: 'UI_God',
     media: [
       {
         type: 'image',
-        source:
-          'https://img.gta5-mods.com/q75/images/snoopy-s-reshade-preset-for-nve/c30fbb-image_2023-04-20_091915417.png'
+        source: 'https://img.gta5-mods.com/q75/images/snoopy-s-reshade-preset-for-nve/c30fbb-image_2023-04-20_091915417.png'
       },
       { type: 'image', source: img1 }
     ],
@@ -178,23 +170,19 @@ export const modsData = [
   {
     id: 8,
     title: 'Zombie Apocalypse Z',
-    description:
-      'Перетворює Лос-Сантос на зону відчуження. Зомбі бродять вулицями, електрика вимкнена, виживання ускладнене.',
-    image:
-      'https://files.libertycity.ru/posts/2023-05/thumbs/1682952879_grand-theft-auto-v-screenshot.jpg',
+    description: 'Перетворює Лос-Сантос на зону відчуження. Зомбі бродять вулицями, електрика вимкнена, виживання ускладнене.',
+    thumbnail: 'https://files.libertycity.ru/posts/2023-05/thumbs/1682952879_grand-theft-auto-v-screenshot.jpg',
     version: '2.1',
     author: 'Survivalist',
     media: [
       {
         type: 'video_file',
         source: gtaVideo,
-        thumbnail:
-          'https://files.libertycity.ru/posts/2023-05/thumbs/1682952879_grand-theft-auto-v-screenshot.jpg'
+        thumbnail: 'https://files.libertycity.ru/posts/2023-05/thumbs/1682952879_grand-theft-auto-v-screenshot.jpg'
       },
       {
         type: 'image',
-        source:
-          'https://files.libertycity.ru/posts/2023-05/thumbs/1682952879_grand-theft-auto-v-screenshot.jpg'
+        source: 'https://files.libertycity.ru/posts/2023-05/thumbs/1682952879_grand-theft-auto-v-screenshot.jpg'
       },
       { type: 'image', source: 'https://cdn2.unrealengine.com/gtav--46-3840x2160-b2bb82f50c5b.jpg' }
     ],
@@ -203,9 +191,8 @@ export const modsData = [
   {
     id: 9,
     title: '4K Satellite Map',
-    description:
-      'Деталізована супутникова карта для меню паузи та радару. Висока чіткість зображення.',
-    image: img1,
+    description: 'Деталізована супутникова карта для меню паузи та радару. Висока чіткість зображення.',
+    thumbnail: img1,
     version: '1.0',
     author: 'Mapper',
     media: [
@@ -217,9 +204,8 @@ export const modsData = [
   {
     id: 10,
     title: 'Better Handling V',
-    description:
-      'Покращена фізика керування автомобілями. Машини відчуваються важчими, заноси стають контрольованими.',
-    image: 'https://www.gta-modding.com/area/uploads/1549.jpg',
+    description: 'Покращена фізика керування автомобілями. Машини відчуваються важчими, заноси стають контрольованими.',
+    thumbnail: 'https://www.gta-modding.com/area/uploads/1549.jpg',
     version: 'Final',
     author: 'DriveMechanic',
     media: [

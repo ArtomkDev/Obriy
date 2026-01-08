@@ -8,15 +8,9 @@ export default function CustomPlayer({ url, thumbnail, isLocal = true }) {
   const blockTimeout = useRef(null)
 
   // --- СТАН ---
-  const [volume, setVolume] = useState(() => {
-    const savedVol = localStorage.getItem('obriy-player-volume')
-    return savedVol !== null ? parseFloat(savedVol) : 0.5
-  })
-
-  const [isMuted, setIsMuted] = useState(() => {
-    const savedMute = localStorage.getItem('obriy-player-muted')
-    return savedMute === 'true'
-  })
+  const [volume, setVolume] = useState(0.5)
+  const [isMuted, setIsMuted] = useState(false)
+  const [settingsLoaded, setSettingsLoaded] = useState(false) // Прапорець завантаження налаштувань
 
   const [isPlaying, setIsPlaying] = useState(true)
   
@@ -30,26 +24,51 @@ export default function CustomPlayer({ url, thumbnail, isLocal = true }) {
 
   // --- ЕФЕКТИ ---
 
+  // 1. Завантаження налаштувань зі Store при старті
   useEffect(() => {
-    // 1. Скидаємо всі стани "активності" при зміні відео
+    if (window.api) {
+        Promise.all([
+            window.api.getStoreValue('player_volume'),
+            window.api.getStoreValue('player_muted')
+        ]).then(([vol, muted]) => {
+            if (vol !== undefined && vol !== null) setVolume(parseFloat(vol));
+            if (muted !== undefined && muted !== null) setIsMuted(muted);
+            setSettingsLoaded(true);
+        }).catch(err => {
+            console.error("Failed to load player settings:", err);
+            setSettingsLoaded(true);
+        });
+    } else {
+        setSettingsLoaded(true);
+    }
+  }, []);
+
+  // Допоміжна функція збереження
+  const saveVolumeSettings = (vol, muted) => {
+      if (window.api) {
+          window.api.setStoreValue('player_volume', vol);
+          window.api.setStoreValue('player_muted', muted);
+      }
+  };
+
+  useEffect(() => {
+    // Скидаємо всі стани "активності" при зміні відео
     setUserActivity(false)
     setIsHovered(false)
     setProgress(0)
     setCurrentTime(0)
     setIsPlaying(true) // Припускаємо, що відео грає (autoPlay)
 
-    // 2. БЛОКУВАННЯ: Ігноруємо мишку 1.2 секунди після завантаження
+    // БЛОКУВАННЯ: Ігноруємо мишку 1.2 секунди після завантаження
     interactionsBlocked.current = true
     if (blockTimeout.current) clearTimeout(blockTimeout.current)
     
     blockTimeout.current = setTimeout(() => {
         interactionsBlocked.current = false
-        // Якщо мишка все ще над відео, перевіримо це пізніше,
-        // але не вмикаємо інтерфейс різко.
     }, 1200)
 
-    // 3. Завантаження налаштувань
-    if (videoRef.current) {
+    // Завантаження відео та застосування налаштувань (тільки коли вони готові)
+    if (videoRef.current && settingsLoaded) {
         videoRef.current.load()
         videoRef.current.volume = volume
         videoRef.current.muted = isMuted
@@ -66,7 +85,7 @@ export default function CustomPlayer({ url, thumbnail, isLocal = true }) {
     return () => {
         if (blockTimeout.current) clearTimeout(blockTimeout.current)
     }
-  }, [url])
+  }, [url, settingsLoaded]) // Додано settingsLoaded як залежність
 
   // --- ПОДІЇ ВІДЕО ---
   
@@ -138,8 +157,8 @@ export default function CustomPlayer({ url, thumbnail, isLocal = true }) {
     const shouldMute = newVol === 0
     setIsMuted(shouldMute)
 
-    localStorage.setItem('obriy-player-volume', newVol)
-    localStorage.setItem('obriy-player-muted', shouldMute)
+    // Зберігаємо в файл конфігу замість localStorage
+    saveVolumeSettings(newVol, shouldMute)
 
     if (videoRef.current) {
         videoRef.current.volume = newVol
@@ -152,7 +171,7 @@ export default function CustomPlayer({ url, thumbnail, isLocal = true }) {
     const newMuted = !isMuted
     setIsMuted(newMuted)
     
-    localStorage.setItem('obriy-player-muted', newMuted)
+    saveVolumeSettings(volume, newMuted)
 
     if (videoRef.current) {
         videoRef.current.muted = newMuted
@@ -161,7 +180,7 @@ export default function CustomPlayer({ url, thumbnail, isLocal = true }) {
     if (!newMuted && volume === 0) {
         const defaultVol = 0.5
         setVolume(defaultVol)
-        localStorage.setItem('obriy-player-volume', defaultVol)
+        saveVolumeSettings(defaultVol, false)
         if (videoRef.current) videoRef.current.volume = defaultVol
     }
   }
@@ -180,7 +199,7 @@ export default function CustomPlayer({ url, thumbnail, isLocal = true }) {
 
   return (
     <div 
-      className="relative w-full h-full bg-black group overflow-hidden rounded-xl border border-white/10 shadow-2xl select-none flex items-center justify-center"
+      className="relative w-full h-full bg-black group overflow-hidden shadow-2xl select-none flex items-center justify-center"
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
     >

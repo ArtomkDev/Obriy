@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+// Імпортуємо хук, щоб оновлювати шлях глобально для всього додатку
+import { useInstaller } from '../context/InstallerContext'
 
 export default function SettingsPage() {
   const [gamePath, setGamePath] = useState('')
@@ -9,21 +11,29 @@ export default function SettingsPage() {
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
 
-  useEffect(() => {
-    const savedPath = localStorage.getItem('gta_path')
-    const savedGameVersion = localStorage.getItem('gta_version')
-    if (savedPath) setGamePath(savedPath)
-    if (savedGameVersion) setGameVersion(savedGameVersion)
+  // Отримуємо функцію оновлення глобального шляху з контексту
+  const { setGamePath: setGlobalGamePath } = useInstaller()
 
-    const fetchAppVersion = async () => {
+  useEffect(() => {
+    const loadSettings = async () => {
+        if (!window.api) return
+
         try {
+            // 1. Читаємо налаштування з файлу (electron-store)
+            const savedPath = await window.api.getStoreValue('gta_path')
+            const savedGameVersion = await window.api.getStoreValue('gta_version')
+            
+            if (savedPath) setGamePath(savedPath)
+            if (savedGameVersion) setGameVersion(savedGameVersion)
+
+            // 2. Отримуємо версію програми
             const ver = await window.api.getAppVersion()
             setAppVersion(ver)
         } catch (e) {
-            console.error("Failed to get app version", e)
+            console.error("Failed to load settings", e)
         }
     }
-    fetchAppVersion()
+    loadSettings()
   }, [])
 
   const handleBrowse = async () => {
@@ -50,12 +60,24 @@ export default function SettingsPage() {
     }
   }
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (gamePath && !error) {
-      localStorage.setItem('gta_path', gamePath)
-      if (gameVersion) localStorage.setItem('gta_version', gameVersion)
-      setIsSaved(true)
-      setTimeout(() => setIsSaved(false), 2000)
+      try {
+          // 1. Оновлюємо глобальний шлях через Context 
+          // (це автоматично збереже 'gta_path' у файл через логіку в InstallerContext)
+          setGlobalGamePath(gamePath)
+
+          // 2. Версію гри зберігаємо вручну, бо її немає в контексті
+          if (window.api && gameVersion) {
+              await window.api.setStoreValue('gta_version', gameVersion)
+          }
+
+          setIsSaved(true)
+          setTimeout(() => setIsSaved(false), 2000)
+      } catch (err) {
+          console.error("Failed to save settings:", err)
+          setError("Failed to save settings")
+      }
     }
   }
 
@@ -125,7 +147,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* --- ВЕРСІЯ ПРОГРАМИ (ПРОСТИЙ ТЕКСТ ЗНИЗУ) --- */}
+      {/* --- ВЕРСІЯ ПРОГРАМИ --- */}
       <div className="mt-8 flex justify-center pb-4">
         <span className="text-xs text-zinc-600 font-mono">
             v.{appVersion || '...'}

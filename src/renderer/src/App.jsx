@@ -10,23 +10,41 @@ import WindowControls from './components/WindowControls'
 
 const MainLayout = ({ children, noPadding = false }) => {
   return (
-    // Додано relative для позиціонування drag-бару
-    <div className="flex h-screen bg-background text-white overflow-hidden selection:bg-indigo-500 selection:text-white font-sans relative">
+    // 1. ЗАГАЛЬНИЙ ФОН (Колір Sidebar'а)
+    // bg-[#0F0F0F] - це той самий темний колір, що був у меню
+    <div className="flex h-screen bg-[#0F0F0F] text-white overflow-hidden selection:bg-indigo-500 selection:text-white font-sans">
       
-      {/* --- DRAG BAR --- */}
-      {/* Ця невидима смужка висотою 32px дозволяє тягати вікно */}
-      <div className="absolute top-0 left-0 w-full h-8 z-40 drag" />
-
+      {/* 2. SIDEBAR (Він тепер прозорий або зливається з фоном) */}
       <Sidebar />
       
-      <div className="flex-1 flex flex-col min-w-0 bg-slate-900 relative">
-        <div className="absolute top-6 right-6 z-50">
-            <WindowControls />
+      {/* 3. ПРАВА ЧАСТИНА */}
+      <div className="flex-1 flex flex-col min-w-0 relative">
+        
+        {/* --- ВЕРХНЯ ШАПКА (TOP BAR) --- */}
+        {/* Вона залишається на темному фоні загального контейнера */}
+        <div className="h-12 flex items-center justify-end px-4 shrink-0 drag">
+             {/* WindowControls тепер просто частина цієї шапки */}
+             <div className="no-drag z-50">
+                <WindowControls />
+             </div>
         </div>
 
-        <div className={`flex-1 overflow-auto custom-scrollbar ${noPadding ? '' : 'p-8 pt-10 w-full'}`}>
-          {children}
+        {/* --- КОНТЕНТНА ЧАСТИНА (ОКРЕМИЙ ЛИСТ) --- */}
+        {/* bg-slate-900 (або інший колір контенту) + rounded-tl-3xl (заокруглення) */}
+        <div className={`
+            flex-1 
+            bg-[#1a1b1e] /* Трохи світліший за меню, щоб виділятися */
+            rounded-tl-3xl 
+            overflow-hidden 
+            relative 
+            shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)] /* Легкий відблиск зверху */
+        `}>
+             {/* Внутрішній скрол-контейнер */}
+             <div className={`h-full w-full overflow-y-auto custom-scrollbar ${noPadding ? '' : 'p-8'}`}>
+                {children}
+             </div>
         </div>
+
       </div>
     </div>
   )

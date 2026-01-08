@@ -5,14 +5,21 @@ import icon from '../../resources/icon.png?asset'
 import { installMod, uninstallMod, validateGamePath } from './services/EngineService'
 import updaterPkg from 'electron-updater'
 import path from 'path'
-import log from 'electron-log' // 1. Імпорт логера
+import log from 'electron-log'
+import Store from 'electron-store' // 1. Імпорт Store
 
 const { autoUpdater } = updaterPkg
+const store = new Store() // 2. Ініціалізація Store
 
-// 2. Налаштування логера для автооновлення
+// Налаштування логера
 autoUpdater.logger = log
 autoUpdater.logger.transports.file.level = 'info'
 log.info('App starting...')
+
+// FIX ДЛЯ CLOUDFLARE CACHING
+autoUpdater.requestHeaders = {
+  'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0'
+}
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
@@ -30,7 +37,6 @@ function createWindow() {
     }
   })
 
-  // Відкриває DevTools (можна закоментувати для релізу, якщо заважає)
   mainWindow.webContents.openDevTools({ mode: 'detach' })
 
   mainWindow.on('ready-to-show', () => {
@@ -67,7 +73,22 @@ app.whenReady().then(() => {
   })
   ipcMain.on('close-app', () => mainWindow.close())
 
-  // 3. ДОДАНО: Обробник для перезапуску програми після оновлення
+  // --- 3. ОБРОБНИКИ STORE (Збереження налаштувань) ---
+  ipcMain.handle('store:get', (event, key) => {
+    return store.get(key)
+  })
+
+  ipcMain.handle('store:set', (event, key, value) => {
+    store.set(key, value)
+    return true
+  })
+
+  ipcMain.handle('store:delete', (event, key) => {
+    store.delete(key)
+    return true
+  })
+  // ----------------------------------------------------
+
   ipcMain.on('restart-app', () => {
     autoUpdater.quitAndInstall()
   })
@@ -90,7 +111,6 @@ app.whenReady().then(() => {
       
       if (validationResult.isValid) {
         const finalPath = validationResult.exePath ? path.dirname(validationResult.exePath) : selectedPath
-        
         return { 
           success: true, 
           path: finalPath,
@@ -133,9 +153,15 @@ app.whenReady().then(() => {
     return app.getVersion()
   })
 
-  // Перевірка оновлень (тільки в продакшені)
   if (!is.dev) {
-    autoUpdater.checkForUpdatesAndNotify()
+    autoUpdater.setFeedURL({
+      provider: 'generic',
+      url: 'https://pub-e5ae8897a3144503936456b92082d266.r2.dev/'
+    });
+
+    autoUpdater.checkForUpdatesAndNotify().catch(err => {
+         log.error('Failed to check for updates:', err);
+    });
   }
 
   app.on('activate', function () {
@@ -165,7 +191,6 @@ autoUpdater.on('error', (err) => {
   log.error('Error in auto-updater:', err)
   const windows = BrowserWindow.getAllWindows()
   if (windows.length > 0) {
-    // Можна відправити помилку на фронтенд, щоб показати юзеру
     windows[0].webContents.send('update-status', { status: 'error', error: err.message })
   }
 })

@@ -3,16 +3,36 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 const InstallerContext = createContext();
 
 export function InstallerProvider({ children }) {
-  // Додаємо стан для шляху гри
-  const [gamePath, setGamePathState] = useState(localStorage.getItem('gta_path') || '');
+  // 1. Стан для шляху (початково пустий)
+  const [gamePath, setGamePathState] = useState('');
+  const [isPathLoaded, setIsPathLoaded] = useState(false); // Прапорець, що ми вже перевірили файл налаштувань
 
-  // Обгортка для автоматичного збереження в localStorage при зміні шляху
+  // 2. ЗАВАНТАЖЕННЯ: При старті читаємо шлях з файлу конфігу (electron-store)
+  useEffect(() => {
+    if (window.api) {
+      window.api.getStoreValue('gta_path')
+        .then((savedPath) => {
+          if (savedPath) {
+            setGamePathState(savedPath);
+          }
+        })
+        .catch(err => console.error("Failed to load game path:", err))
+        .finally(() => setIsPathLoaded(true));
+    } else {
+      setIsPathLoaded(true);
+    }
+  }, []);
+
+  // 3. ЗБЕРЕЖЕННЯ: Оновлюємо стан і пишемо в файл
   const setGamePath = (path) => {
       setGamePathState(path);
-      if (path) {
-          localStorage.setItem('gta_path', path);
-      } else {
-          localStorage.removeItem('gta_path');
+      
+      if (window.api) {
+          if (path) {
+              window.api.setStoreValue('gta_path', path);
+          } else {
+              window.api.deleteStoreValue('gta_path');
+          }
       }
   };
 
@@ -123,11 +143,11 @@ export function InstallerProvider({ children }) {
     }));
 
     try {
-      // Використовуємо актуальний gamePath зі стану
-      const currentPath = gamePath || localStorage.getItem('gta_path');
+      // 4. ВИПРАВЛЕНО: Беремо шлях тільки зі State (він вже завантажений з Store)
+      const currentPath = gamePath; 
       
       if (!currentPath) {
-          throw new Error("Game path is not selected");
+          throw new Error("Game path is not selected or not loaded yet");
       }
 
       let result;
@@ -227,8 +247,9 @@ export function InstallerProvider({ children }) {
 
   return (
     <InstallerContext.Provider value={{ 
-      gamePath,       // ДОДАНО
-      setGamePath,    // ДОДАНО
+      gamePath,       
+      setGamePath,    
+      isPathLoaded, // Можна використати для показу лоадера
       tasks, 
       startInstall, 
       startUninstall, 

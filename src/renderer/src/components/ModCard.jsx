@@ -1,12 +1,8 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useModInstaller } from '../hooks/useModInstaller'; // Переконайтеся, що хук імпортується правильно, або використовуйте useInstaller з контексту
-// Якщо useModInstaller це те саме що useInstaller, то ок. 
-// Але зазвичай ми використовували: import { useInstaller } from '../context/InstallerContext'
 import { useInstaller } from '../context/InstallerContext'; 
 import ProgressBar from './ProgressBar';
 
-// --- ICONS ---
 const DownloadIcon = ({ className }) => (
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className}>
     <path fillRule="evenodd" d="M12 2.25a.75.75 0 0 1 .75.75v11.69l3.22-3.22a.75.75 0 1 1 1.06 1.06l-4.5 4.5a.75.75 0 0 1-1.06 0l-4.5-4.5a.75.75 0 1 1 1.06-1.06l3.22 3.22V3a.75.75 0 0 1 .75-.75Zm-9 13.5a.75.75 0 0 1 .75.75v2.25a1.5 1.5 0 0 0 1.5 1.5h13.5a1.5 1.5 0 0 0 1.5-1.5V16.5a.75.75 0 0 1 1.5 0v2.25a3 3 0 0 1-3 3H5.25a3 3 0 0 1-3-3V16.5a.75.75 0 0 1 .75-.75Z" clipRule="evenodd" />
@@ -21,31 +17,27 @@ const RefreshIcon = ({ className }) => (
 
 export default function ModCard({ mod }) {
   const navigate = useNavigate();
-  // Використовуємо контекст, який ми створили раніше
   const { getModStatus, getModProgress, startInstall } = useInstaller(); 
   
   const status = getModStatus(mod.id);
   const progress = getModProgress(mod.id);
 
-  // Обчислюємо поточний відсоток для відображення
   const activePercent = status === 'downloading' 
     ? Math.round(progress.download) 
     : Math.round(progress.install);
 
   const handleCardClick = () => {
-    // ВИПРАВЛЕННЯ ТУТ: /mods/ замість /mod/
     navigate(`/mods/${mod.id}`);
   };
 
   const handleInstallClick = (e) => {
     e.stopPropagation(); 
     if (status === 'idle' || status === 'error' || status === 'success') {
-        // Використовуємо метод з контексту (startInstall замість installMod, якщо ви не перейменовували його)
         startInstall(mod);
     }
   };
 
-  const isProcessing = status === 'downloading' || status === 'installing' || status === 'uninstalling';
+  const isProcessing = ['downloading', 'installing', 'uninstalling', 'queued', 'queued_download'].includes(status);
   const isInstalled = status === 'success';
 
   return (
@@ -56,7 +48,7 @@ export default function ModCard({ mod }) {
       
       <div className="absolute inset-0">
         <img 
-          src={mod.image} 
+          src={mod.thumbnail} 
           alt={mod.title} 
           className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 opacity-70 group-hover:opacity-90"
         />
@@ -78,14 +70,16 @@ export default function ModCard({ mod }) {
                 `}>
                     
                     <span>
+                      {status === 'queued_download' && 'Waiting...'}
                       {status === 'downloading' && 'Downloading...'}
+                      {status === 'queued' && 'In Queue...'}
                       {status === 'installing' && 'Installing...'}
                       {status === 'uninstalling' && 'Uninstalling...'}
                       {status === 'success' && 'Installed'}
                       {status === 'error' && 'Failed'}
                     </span>
                     
-                     {isProcessing && (
+                     {isProcessing && (status !== 'queued' && status !== 'queued_download') && (
                         <span className="opacity-60 tabular-nums">{activePercent}%</span>
                      )}
                 </div>
@@ -115,7 +109,7 @@ export default function ModCard({ mod }) {
                 downloadProgress={progress.download}
                 installProgress={progress.install}
                 status={status}
-                className="h-1.5 rounded-none"
+                className="h-1.5 rounded-none bg-black/20"
               />
           </div>
       )}

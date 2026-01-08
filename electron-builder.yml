@@ -10,18 +10,15 @@ files:
   - "!electron.vite.config.{js,ts,mjs,cjs}"
   - "!{.eslint*,prettier*}"
   - "!README.md"
-  # ВАЖЛИВО: Виключаємо engine з основного архіву, бо ми копіюємо його окремо
   - "!engine/**" 
   - out/**/*
 
-# ВАЖЛИВО: Ця секція копіює готовий білд C# прямо в папку resources/engine
 extraResources:
   - from: "engine/Obriy.Core/bin/Release/net8.0"
     to: "engine"
     filter:
       - "**/*"
 
-# asarUnpack більше не потрібен для engine, бо ми використовуємо extraResources
 asarUnpack:
   - resources/**
 

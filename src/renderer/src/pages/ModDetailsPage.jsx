@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { modsData } from '../data/mods'
+import { mods } from '../data/mods' // Правильний імпорт
 import { useInstaller } from '../context/InstallerContext'
 import CustomPlayer from '../components/CustomPlayer'
 import ProgressBar from '../components/ProgressBar'
-// WindowControls більше не імпортуємо тут, вони в App.jsx
 
 export default function ModDetailsPage() {
   const { id } = useParams()
@@ -24,8 +23,11 @@ export default function ModDetailsPage() {
   
   useEffect(() => {
     setLoading(true)
-    const foundMod = modsData.find(m => m.id.toString() === id)
-    if (foundMod) setMod(foundMod)
+    // Шукаємо мод по ID
+    const foundMod = mods.find((m) => m.id.toString() === id)
+    if (foundMod) {
+        setMod(foundMod)
+    }
     setLoading(false)
   }, [id])
 
@@ -87,7 +89,8 @@ export default function ModDetailsPage() {
       setCurrentMediaIndex(newIndex);
   }
 
-  const gallery = mod ? (mod.media || [{ type: 'image', source: mod.image }]) : []
+  // Якщо медіа немає, використовуємо головну картинку (thumbnail) як єдиний елемент
+  const gallery = mod ? (mod.media || [{ type: 'image', source: mod.thumbnail }]) : []
   const currentMedia = gallery[currentMediaIndex]
 
   const changeMedia = (index) => setCurrentMediaIndex(index)
@@ -110,8 +113,7 @@ export default function ModDetailsPage() {
   const isProcessing = ['downloading', 'installing', 'uninstalling', 'queued', 'queued_download', 'queued_uninstall'].includes(status);
 
   return (
-    // Прибрали absolute WindowControls звідси
-    <div className="w-full h-full bg-[#09090b] flex overflow-hidden animate-fade-in font-sans relative">
+    <div className="w-full h-full bg-[#09090b] flex overflow-hidden animate-fade-in font-sans relative rounded-tl-3xl">
       
       <div className="flex-1 flex flex-col h-full bg-black relative group overflow-hidden">
           <div className="absolute top-6 left-6 z-30">
@@ -129,16 +131,18 @@ export default function ModDetailsPage() {
                  <div className="w-full h-full"> 
                     <CustomPlayer 
                         url={currentMedia.source} 
-                        thumbnail={mod.image}
+                        thumbnail={mod.thumbnail} // ВИПРАВЛЕНО: thumbnail замість image
                         isLocal={currentMedia.type === 'video_file'}
                     />
                  </div>
              ) : (
                  <div className="w-full h-full relative">
+                    {/* Розмитий фон */}
                     <div 
                         className="absolute inset-0 bg-cover bg-center blur-3xl opacity-30 scale-110"
                         style={{ backgroundImage: `url(${currentMedia?.source})` }}
                     />
+                    {/* Основна картинка */}
                     <motion.div 
                         key={currentMedia?.source}
                         initial={{ opacity: 0, scale: 0.95 }}
@@ -213,7 +217,7 @@ export default function ModDetailsPage() {
       </div>
 
       <div className="w-[400px] xl:w-[450px] h-full bg-[#121214] border-l border-white/5 flex flex-col relative shadow-2xl z-30 shrink-0">
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-8 pt-16"> {/* pt-16 щоб не налізало на кнопки (хоча вони тепер в Layout, але тут відступ все одно потрібен візуально) */}
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-8 pt-16">
               <div className="flex flex-wrap items-center gap-3 mb-6">
                  <div className="px-2 py-1 bg-indigo-500/10 border border-indigo-500/20 rounded text-[10px] font-bold uppercase tracking-widest text-indigo-400">
                     v{mod.version || '1.0'}
