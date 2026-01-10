@@ -1,92 +1,105 @@
-import React, { useState, useEffect } from 'react'
-import { useInstaller } from '../context/InstallerContext'
-import { motion, AnimatePresence } from 'framer-motion'
+import React, { useState } from 'react'
+import { VscFolderOpened, VscCheck, VscError } from 'react-icons/vsc'
 
 const SetupScreen = () => {
-  const { gamePath, setGamePath } = useInstaller()
-  const [isValid, setIsValid] = useState(false)
-  const [isChecking, setIsChecking] = useState(false)
-  const [errorMessage, setErrorMessage] = useState('')
+  const [path, setPath] = useState('')
+  const [isValidating, setIsValidating] = useState(false)
+  const [error, setError] = useState(null)
 
-  useEffect(() => {
-    if (gamePath) setIsValid(true)
-  }, [gamePath])
-
-  const handleSelectLocation = async () => {
-    setErrorMessage('')
-    setIsChecking(true)
+  const handleSelectPath = async () => {
+    setIsValidating(true)
+    setError(null)
+    
     try {
       const result = await window.api.selectGameDirectory()
-      if (result.success) {
-        setGamePath(result.path)
-        setIsValid(true)
-      } else if (!result.canceled) {
-        setErrorMessage(result.error || 'Invalid directory')
+      
+      if (result.canceled) {
+        setIsValidating(false)
+        return
       }
-    } catch (error) {
-      setErrorMessage('Communication error')
+
+      if (result.success) {
+        setPath(result.path)
+        await window.api.setStoreValue('gta_path', result.path)
+      } else {
+        setError(result.error)
+      }
+    } catch (err) {
+      setError('Не вдалося перевірити шлях')
     } finally {
-      setIsChecking(false)
+      setIsValidating(false)
     }
   }
 
   const handleContinue = () => {
-    if (isValid) {
+    if (path) {
       window.electron.ipcRenderer.send('setup-complete')
     }
   }
 
   return (
-    <div className="h-screen w-screen bg-[#1e1f22] text-white flex flex-col items-center justify-center p-8 select-none relative overflow-hidden font-sans border border-white/5">
-      <div className="absolute top-0 left-0 w-full h-12 drag z-10" />
-      <div className="relative mb-8 z-20">
-        <motion.div 
-          animate={isValid ? { scale: [1, 1.05, 1] } : {}}
-          transition={{ repeat: Infinity, duration: 4 }}
-          className={`w-24 h-24 rounded-3xl flex items-center justify-center shadow-2xl transition-all duration-700 ${
-            isValid ? 'bg-emerald-500 shadow-emerald-500/20' : 'bg-indigo-500 shadow-indigo-500/20'
-          }`}
-        >
-          <svg className="w-12 h-12 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            {isValid ? (
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-            ) : (
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-            )}
-          </svg>
-        </motion.div>
-      </div>
-      <div className="text-center mb-8 z-20">
-        <h1 className="text-xs font-black uppercase tracking-[0.2em] text-gray-500 mb-2">Initial Setup</h1>
-        <div className="h-6">
-          <AnimatePresence mode="wait">
-            <motion.p 
-              key={errorMessage || isValid}
-              initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}
-              className={`text-[12px] ${errorMessage ? 'text-rose-400' : 'text-gray-400'}`}
-            >
-              {errorMessage || (isValid ? 'Directory verified' : 'Select GTA V folder')}
-            </motion.p>
-          </AnimatePresence>
+    <div className="flex flex-col h-full">
+      <div className="flex-1 flex flex-col justify-center items-center gap-8">
+        <div className="text-center space-y-3">
+          <h1 className="text-2xl font-bold text-white">Налаштування гри</h1>
+          <p className="text-sm text-gray-400 leading-relaxed max-w-[320px]">
+            Для роботи лаунчера необхідно вказати шлях до встановленої версії <span className="text-indigo-400">Grand Theft Auto V</span>
+          </p>
+        </div>
+
+        <div className="w-full max-w-sm space-y-4">
+          <button
+            onClick={handleSelectPath}
+            disabled={isValidating}
+            className={`
+              group w-full relative overflow-hidden rounded-xl border transition-all duration-200
+              ${path 
+                ? 'bg-[#1a1b1e] border-green-500/50 hover:border-green-500' 
+                : 'bg-[#25262b] border-white/5 hover:border-white/10 hover:bg-[#2c2e33]'
+              }
+              p-4 flex items-center gap-4 text-left
+            `}
+          >
+            <div className={`
+              p-3 rounded-lg transition-colors
+              ${path ? 'bg-green-500/10 text-green-400' : 'bg-indigo-500/10 text-indigo-400 group-hover:bg-indigo-500/20'}
+            `}>
+              {path ? <VscCheck size={20} /> : <VscFolderOpened size={20} />}
+            </div>
+            
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-0.5">
+                {path ? 'Обрана папка' : 'Дія'}
+              </p>
+              <p className="text-sm text-gray-200 truncate font-medium">
+                {path || 'Обрати папку з грою'}
+              </p>
+            </div>
+          </button>
+
+          {error && (
+            <div className="flex items-center gap-2 text-xs text-red-400 bg-red-500/10 p-3 rounded-lg border border-red-500/20">
+              <VscError size={14} className="shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
         </div>
       </div>
-      <div className="w-full space-y-3 z-20 no-drag">
-        {!isValid ? (
-          <button
-            onClick={handleSelectLocation}
-            disabled={isChecking}
-            className="w-full py-3 bg-[#2b2d31] hover:bg-[#35373c] text-white text-[11px] font-bold uppercase rounded-xl transition-all border border-white/5 active:scale-95 disabled:opacity-50"
-          >
-            {isChecking ? 'Verifying...' : 'Locate GTA V'}
-          </button>
-        ) : (
-          <button
-            onClick={handleContinue}
-            className="w-full py-3 bg-indigo-500 hover:bg-indigo-600 text-white text-[11px] font-bold uppercase rounded-xl shadow-xl shadow-indigo-500/20 transition-all active:scale-95"
-          >
-            Start Launcher
-          </button>
-        )}
+
+      <div className="mt-auto pt-6 border-t border-white/5">
+        <button
+          onClick={handleContinue}
+          disabled={!path}
+          className={`
+            w-full py-3.5 px-6 rounded-xl font-medium text-sm transition-all duration-200
+            ${path 
+              ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-900/20 cursor-pointer transform hover:-translate-y-0.5' 
+              : 'bg-[#25262b] text-gray-600 cursor-not-allowed'
+            }
+          `}
+        >
+          Продовжити
+        </button>
       </div>
     </div>
   )

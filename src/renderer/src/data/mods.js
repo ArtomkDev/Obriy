@@ -20,7 +20,7 @@ export const mods = [
       {
         targetPath: 'TestMod\\common.rpf',
         sourceFile: 'D:\\Mods\\Billboards',
-        vanillaFile: 'D:\\Mods\\BillboardsVanilla',
+        vanillaFile: 'D:\\Mods\\BillboardsVanilla'
       }
     ]
   },
@@ -39,9 +39,10 @@ export const mods = [
     ],
     instructions: [
       {
-        targetPath: 'update\\x64\\dlcpacks\\patchday8ng\\dlc.rpf\\x64\\models\\cdimages\\weapons.rpf',
+        targetPath:
+          'update\\x64\\dlcpacks\\patchday8ng\\dlc.rpf\\x64\\models\\cdimages\\weapons.rpf',
         sourceFile: 'D:\\Mods\\Gun',
-        vanillaFile: 'D:\\Mods\\GunV',
+        vanillaFile: 'D:\\Mods\\GunV'
       }
     ]
   },
@@ -107,21 +108,24 @@ export const mods = [
       },
       {
         type: 'image',
-        source: 'https://img.gta5-mods.com/q75/images/snoopy-s-reshade-preset-for-nve/c30fbb-image_2023-04-20_091915417.png'
+        source:
+          'https://img.gta5-mods.com/q75/images/snoopy-s-reshade-preset-for-nve/c30fbb-image_2023-04-20_091915417.png'
       }
     ],
     instructions: [
       {
-        targetPath: 'update\\x64\\dlcpacks\\patchday8ng\\dlc.rpf\\x64\\models\\cdimages\\weapons.rpf',
+        targetPath:
+          'update\\x64\\dlcpacks\\patchday8ng\\dlc.rpf\\x64\\models\\cdimages\\weapons.rpf',
         sourceFile: 'D:\\Mods\\Gun1',
-        vanillaFile: 'D:\\Mods\\GunV',
+        vanillaFile: 'D:\\Mods\\GunV'
       }
     ]
   },
   {
     id: 5,
     title: 'Lamborghini Aventador SVJ',
-    description: 'Високоякісна модель Lamborghini Aventador SVJ. Підтримка тюнінгу, реалістичний хендлінг та 4K текстури салону.',
+    description:
+      'Високоякісна модель Lamborghini Aventador SVJ. Підтримка тюнінгу, реалістичний хендлінг та 4K текстури салону.',
     thumbnail: 'https://www.gta-modding.com/area/uploads/1549.jpg',
     version: '1.5',
     author: 'Gta5KoRn',
@@ -130,7 +134,8 @@ export const mods = [
       { type: 'image', source: img2 },
       {
         type: 'image',
-        source: 'https://files.libertycity.ru/posts/2023-05/thumbs/1682952879_grand-theft-auto-v-screenshot.jpg'
+        source:
+          'https://files.libertycity.ru/posts/2023-05/thumbs/1682952879_grand-theft-auto-v-screenshot.jpg'
       }
     ],
     instructions: []
@@ -138,7 +143,8 @@ export const mods = [
   {
     id: 6,
     title: 'Realistic Weapon Sounds',
-    description: 'Повна заміна звуків зброї на більш гучні та реалістичні. Записано з реальних прототипів.',
+    description:
+      'Повна заміна звуків зброї на більш гучні та реалістичні. Записано з реальних прототипів.',
     thumbnail: 'https://i.rutab.net/upload/2025/05/insider/35745a67df32fb172ae36d837df9d4ee.webp',
     version: '4.2',
     author: 'SoundMaster',
@@ -154,14 +160,17 @@ export const mods = [
   {
     id: 7,
     title: 'GTA VI UI Concept',
-    description: 'Змінює інтерфейс (HUD), карту та меню паузи на стиль із витоків GTA VI. Сучасний мінімалізм.',
-    thumbnail: 'https://img.gta5-mods.com/q75/images/snoopy-s-reshade-preset-for-nve/c30fbb-image_2023-04-20_091915417.png',
+    description:
+      'Змінює інтерфейс (HUD), карту та меню паузи на стиль із витоків GTA VI. Сучасний мінімалізм.',
+    thumbnail:
+      'https://img.gta5-mods.com/q75/images/snoopy-s-reshade-preset-for-nve/c30fbb-image_2023-04-20_091915417.png',
     version: '0.9',
     author: 'UI_God',
     media: [
       {
         type: 'image',
-        source: 'https://img.gta5-mods.com/q75/images/snoopy-s-reshade-preset-for-nve/c30fbb-image_2023-04-20_091915417.png'
+        source:
+          'https://img.gta5-mods.com/q75/images/snoopy-s-reshade-preset-for-nve/c30fbb-image_2023-04-20_091915417.png'
       },
       { type: 'image', source: img1 }
     ],
@@ -170,19 +179,23 @@ export const mods = [
   {
     id: 8,
     title: 'Zombie Apocalypse Z',
-    description: 'Перетворює Лос-Сантос на зону відчуження. Зомбі бродять вулицями, електрика вимкнена, виживання ускладнене.',
-    thumbnail: 'https://files.libertycity.ru/posts/2023-05/thumbs/1682952879_grand-theft-auto-v-screenshot.jpg',
+    description:
+      'Перетворює Лос-Сантос на зону відчуження. Зомбі бродять вулицями, електрика вимкнена, виживання ускладнене.',
+    thumbnail:
+      'https://files.libertycity.ru/posts/2023-05/thumbs/1682952879_grand-theft-auto-v-screenshot.jpg',
     version: '2.1',
     author: 'Survivalist',
     media: [
       {
         type: 'video_file',
         source: gtaVideo,
-        thumbnail: 'https://files.libertycity.ru/posts/2023-05/thumbs/1682952879_grand-theft-auto-v-screenshot.jpg'
+        thumbnail:
+          'https://files.libertycity.ru/posts/2023-05/thumbs/1682952879_grand-theft-auto-v-screenshot.jpg'
       },
       {
         type: 'image',
-        source: 'https://files.libertycity.ru/posts/2023-05/thumbs/1682952879_grand-theft-auto-v-screenshot.jpg'
+        source:
+          'https://files.libertycity.ru/posts/2023-05/thumbs/1682952879_grand-theft-auto-v-screenshot.jpg'
       },
       { type: 'image', source: 'https://cdn2.unrealengine.com/gtav--46-3840x2160-b2bb82f50c5b.jpg' }
     ],
@@ -191,7 +204,8 @@ export const mods = [
   {
     id: 9,
     title: '4K Satellite Map',
-    description: 'Деталізована супутникова карта для меню паузи та радару. Висока чіткість зображення.',
+    description:
+      'Деталізована супутникова карта для меню паузи та радару. Висока чіткість зображення.',
     thumbnail: img1,
     version: '1.0',
     author: 'Mapper',
@@ -203,19 +217,52 @@ export const mods = [
   },
   {
     id: 10,
-    title: 'Better Handling V',
-    description: 'Покращена фізика керування автомобілями. Машини відчуваються важчими, заноси стають контрольованими.',
-    thumbnail: 'https://www.gta-modding.com/area/uploads/1549.jpg',
-    version: 'Final',
-    author: 'DriveMechanic',
-    media: [
-      { type: 'video_file', source: gtaVideo },
-      { type: 'image', source: 'https://www.gta-modding.com/area/uploads/1549.jpg' },
-      {
-        type: 'image',
-        source: 'https://i.rutab.net/upload/2025/05/insider/35745a67df32fb172ae36d837df9d4ee.webp'
-      }
-    ],
-    instructions: []
+    title: 'Better Handling & Weapons Pack',
+    instructionId: 'complexWeaponReplacement',
+    // Групуємо файли за призначенням
+    fileGroups: {
+      carbine: [
+        'w_ar_carabinerifle.ydr',
+        'w_ar_carabinerifle.ytd',
+        'w_ar_carabinerifle_mag1.ydr',
+        'w_ar_carabinerifle_mag1.ytd'
+      ],
+      stk: [
+        'w_ar_stk.ydr',
+        'w_ar_stk.ytd',
+        'w_ar_stk_mag1.ydr',
+        'w_ar_stk_mag1.ytd'
+      ]
+    },
+    contentUrl: 'cloud://mod213/'
   }
 ]
+
+export const instructionsRegistry = {
+  complexWeaponReplacement: {
+    onInstall: [
+      {
+        type: 'copy',
+        from: 'MOD_CONTENT_URL/carbina.rpf', 
+        to: 'update/x64/dlcpacks/patchday8ng/dlc.rpf/x64/models/cdimages/weapons.rpf/'
+      },
+      {
+        type: 'copy',
+        from: 'MOD_CONTENT_URL/stk_assets/', 
+        to: 'update/x64/dlcpacks/patchday8ng/dlc.rpf/x64/models/cdimages/fgtag.rpf/'
+      }
+    ],
+    onUninstall: [
+      {
+        type: 'restore',
+        useGroup: 'carbine', // Беремо список файлів карабіна
+        to: 'update/x64/dlcpacks/patchday8ng/dlc.rpf/x64/models/cdimages/weapons.rpf/'
+      },
+      {
+        type: 'restore',
+        useGroup: 'stk', // Беремо список файлів STK
+        to: 'update/x64/dlcpacks/patchday8ng/dlc.rpf/x64/models/cdimages/fgtag.rpf/'
+      }
+    ]
+  }
+}

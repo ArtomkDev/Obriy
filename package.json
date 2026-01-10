@@ -25,6 +25,7 @@
     "electron-store": "^8.1.0",
     "electron-updater": "^6.7.3",
     "framer-motion": "^12.24.7",
+    "react-icons": "^5.5.0",
     "react-player": "^3.4.0",
     "react-router-dom": "^7.11.0"
   },

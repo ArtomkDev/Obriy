@@ -17,45 +17,44 @@ let mainWindow
 
 autoUpdater.logger = log
 autoUpdater.logger.transports.file.level = 'info'
-
 autoUpdater.requestHeaders = {
   'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0'
 }
-
 autoUpdater.autoInstallOnAppQuit = true
+
+const SERVICE_WINDOW_CONFIG = {
+  width: 480,
+  height: 550,
+  show: false,
+  frame: false,
+  resizable: false,
+  maximizable: false,
+  fullscreenable: false,
+  alwaysOnTop: true,
+  backgroundColor: '#1a1b1e',
+  center: true,
+  webPreferences: {
+    preload: join(__dirname, '../preload/index.js'),
+    sandbox: false,
+    contextIsolation: true
+  }
+}
 
 function createUpdaterWindow() {
   if (updaterWindow) return updaterWindow
 
   updaterWindow = new BrowserWindow({
-    width: 300,
-    height: 350,
-    show: false,
-    frame: false,
-    resizable: false,
-    backgroundColor: '#1e1f22',
-    center: true,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
-      contextIsolation: true
-    }
+    ...SERVICE_WINDOW_CONFIG,
+    title: 'Obriy Updater'
   })
 
-  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    updaterWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/#/updater`)
-  } else {
-    updaterWindow.loadFile(join(__dirname, '../renderer/index.html'), { hash: 'updater' })
-  }
+  const url = is.dev && process.env['ELECTRON_RENDERER_URL'] 
+    ? `${process.env['ELECTRON_RENDERER_URL']}#/updater`
+    : `file://${join(__dirname, '../renderer/index.html')}#/updater`
 
-  updaterWindow.on('ready-to-show', () => {
-    updaterWindow.show()
-    if (mainWindow && mainWindow.isVisible()) mainWindow.hide()
-  })
-
-  updaterWindow.on('closed', () => {
-    updaterWindow = null
-  })
+  updaterWindow.loadURL(url)
+  updaterWindow.on('ready-to-show', () => updaterWindow.show())
+  updaterWindow.on('closed', () => { updaterWindow = null })
 
   return updaterWindow
 }
@@ -64,53 +63,39 @@ function createSetupWindow() {
   if (setupWindow) return setupWindow
 
   setupWindow = new BrowserWindow({
-    width: 300,
-    height: 350,
-    show: false,
-    frame: false,
-    resizable: false,
-    backgroundColor: '#1e1f22',
-    center: true,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
-      contextIsolation: true
-    }
+    ...SERVICE_WINDOW_CONFIG,
+    title: 'Obriy Setup'
   })
 
-  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    setupWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/#/setup`)
-  } else {
-    setupWindow.loadFile(join(__dirname, '../renderer/index.html'), { hash: 'setup' })
-  }
+  const url = is.dev && process.env['ELECTRON_RENDERER_URL'] 
+    ? `${process.env['ELECTRON_RENDERER_URL']}#/setup`
+    : `file://${join(__dirname, '../renderer/index.html')}#/setup`
 
-  setupWindow.on('ready-to-show', () => {
-    setupWindow.show()
-  })
-
-  setupWindow.on('closed', () => {
-    setupWindow = null
-  })
+  setupWindow.loadURL(url)
+  setupWindow.on('ready-to-show', () => setupWindow.show())
+  setupWindow.on('closed', () => { setupWindow = null })
 
   return setupWindow
 }
 
-function createWindow() {
+function createMainWindow() {
   if (mainWindow) return mainWindow
 
   mainWindow = new BrowserWindow({
-    width: 900,
-    height: 670,
+    width: 1280,
+    height: 720,
+    minWidth: 900,
+    minHeight: 600,
     show: false,
-    frame: false,
     autoHideMenuBar: true,
+    frame: false,
+    resizable: true,
     backgroundColor: '#0F0F0F',
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
-      contextIsolation: true,
-      nodeIntegration: false
+      contextIsolation: true
     }
   })
 
@@ -125,6 +110,8 @@ function createWindow() {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 
+  mainWindow.on('closed', () => { mainWindow = null })
+
   return mainWindow
 }
 
@@ -135,15 +122,21 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  const savedPath = store.get('gamePath')
+  const savedPath = store.get('gta_path')
 
-  if (!savedPath) {
-    createSetupWindow()
-  } else {
-    createWindow()
-    mainWindow.once('ready-to-show', () => {
-      if (!updaterWindow) mainWindow.show()
+  if (!is.dev) {
+    autoUpdater.setFeedURL({
+      provider: 'generic',
+      url: 'https://pub-e5ae8897a3144503936456b92082d266.r2.dev/'
     })
+    createUpdaterWindow()
+    autoUpdater.checkForUpdatesAndNotify()
+  } else {
+    if (savedPath) {
+      createMainWindow().once('ready-to-show', () => mainWindow.show())
+    } else {
+      createSetupWindow()
+    }
   }
 
   ipcMain.on('minimize-app', () => {
@@ -152,19 +145,24 @@ app.whenReady().then(() => {
   })
 
   ipcMain.on('maximize-app', () => {
-    const win = mainWindow
-    if (win && win.isMaximized()) win.unmaximize()
-    else if (win) win.maximize()
+    const win = BrowserWindow.getFocusedWindow()
+    if (win && win.isResizable()) {
+      if (win.isMaximized()) win.unmaximize()
+      else win.maximize()
+    }
   })
 
-  ipcMain.on('close-app', () => app.quit())
+  ipcMain.on('close-app', () => {
+    const win = BrowserWindow.getFocusedWindow()
+    if (win) win.close()
+  })
 
   ipcMain.on('setup-complete', () => {
-    createWindow()
-    mainWindow.once('ready-to-show', () => {
-      if (setupWindow) setupWindow.close()
-      mainWindow.show()
-    })
+    if (setupWindow) {
+      setupWindow.close()
+      setupWindow = null
+    }
+    createMainWindow().once('ready-to-show', () => mainWindow.show())
   })
 
   ipcMain.handle('store:get', (event, key) => store.get(key))
@@ -182,7 +180,8 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('dialog:selectGameDirectory', async () => {
-    const { canceled, filePaths } = await dialog.showOpenDialog({
+    const parentWin = setupWindow || mainWindow
+    const { canceled, filePaths } = await dialog.showOpenDialog(parentWin, {
       title: 'Оберіть кореневу папку гри GTA V',
       buttonLabel: 'Обрати папку',
       properties: ['openDirectory']
@@ -195,66 +194,42 @@ app.whenReady().then(() => {
       const result = await validateGamePath(selectedPath)
       if (result.isValid) {
         const finalPath = result.exePath ? path.dirname(result.exePath) : selectedPath
-        return { success: true, path: finalPath, version: result.version }
+        return { success: true, path: finalPath }
       }
-      return { success: false, error: result.error || 'Invalid directory' }
+      return { success: false, error: 'Invalid directory' }
     } catch (error) {
       return { success: false, error: error.message }
     }
   })
 
   ipcMain.handle('install-mod', async (event, gamePath, instructions, modId) => {
-    try {
-      return await installMod(event.sender, gamePath, instructions, modId)
-    } catch (error) {
-      return { success: false, error: error.message }
-    }
+    return await installMod(event.sender, gamePath, instructions, modId)
   })
 
   ipcMain.handle('uninstall-mod', async (event, gamePath, instructions, modId) => {
-    try {
-      return await uninstallMod(event.sender, gamePath, instructions, modId)
-    } catch (error) {
-      return { success: false, error: error.message }
-    }
+    return await uninstallMod(event.sender, gamePath, instructions, modId)
   })
 
   ipcMain.handle('get-app-version', () => app.getVersion())
 
-  if (!is.dev) {
-    autoUpdater.setFeedURL({
-      provider: 'generic',
-      url: 'https://pub-e5ae8897a3144503936456b92082d266.r2.dev/'
-    })
-    autoUpdater.checkForUpdatesAndNotify()
-  }
-
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      const path = store.get('gamePath')
-      if (path) createWindow()
+      const savedPath = store.get('gta_path')
+      if (savedPath) createMainWindow().show()
       else createSetupWindow()
     }
   })
 })
 
-autoUpdater.on('checking-for-update', () => {
-  createUpdaterWindow()
-})
-
-autoUpdater.on('update-available', (info) => {
-  if (updaterWindow) {
-    updaterWindow.webContents.send('update-status', { status: 'available' })
-  }
-})
-
 autoUpdater.on('update-not-available', () => {
-  if (updaterWindow) updaterWindow.close()
-  const savedPath = store.get('gamePath')
+  if (updaterWindow) {
+    updaterWindow.close()
+    updaterWindow = null
+  }
+  const savedPath = store.get('gta_path')
   if (savedPath) {
-    createWindow()
-    mainWindow.once('ready-to-show', () => mainWindow.show())
-  } else if (!setupWindow) {
+    createMainWindow().once('ready-to-show', () => mainWindow.show())
+  } else {
     createSetupWindow()
   }
 })
@@ -263,15 +238,20 @@ autoUpdater.on('error', (err) => {
   if (updaterWindow) {
     updaterWindow.webContents.send('update-status', { status: 'error', error: err.message })
     setTimeout(() => {
-      if (updaterWindow) updaterWindow.close()
-      const savedPath = store.get('gamePath')
-      if (savedPath) {
-        createWindow()
-        mainWindow.once('ready-to-show', () => mainWindow.show())
-      } else if (!setupWindow) {
-        createSetupWindow()
+      if (updaterWindow) {
+        updaterWindow.close()
+        updaterWindow = null
       }
+      const savedPath = store.get('gta_path')
+      if (savedPath) createMainWindow().once('ready-to-show', () => mainWindow.show())
+      else createSetupWindow()
     }, 3000)
+  }
+})
+
+autoUpdater.on('update-available', () => {
+  if (updaterWindow) {
+    updaterWindow.webContents.send('update-status', { status: 'available' })
   }
 })
 
