@@ -1,81 +1,82 @@
 import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
-import { join } from 'path'
+import { join, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { installMod, uninstallMod, validateGamePath } from './services/EngineService'
 import updaterPkg from 'electron-updater'
-import path from 'path'
 import log from 'electron-log'
 import Store from 'electron-store'
 
 const { autoUpdater } = updaterPkg
 const store = new Store()
 
-let updaterWindow
-let setupWindow
-let mainWindow
+let loaderWindow = null
+let mainWindow = null
 
 autoUpdater.logger = log
 autoUpdater.logger.transports.file.level = 'info'
+autoUpdater.autoInstallOnAppQuit = true
 autoUpdater.requestHeaders = {
   'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0'
 }
-autoUpdater.autoInstallOnAppQuit = true
 
-const SERVICE_WINDOW_CONFIG = {
-  width: 480,
-  height: 550,
-  show: false,
-  frame: false,
-  resizable: false,
-  maximizable: false,
-  fullscreenable: false,
-  alwaysOnTop: true,
-  backgroundColor: '#1a1b1e',
-  center: true,
-  webPreferences: {
-    preload: join(__dirname, '../preload/index.js'),
-    sandbox: false,
-    contextIsolation: true
+function getPreloadPath() {
+  return join(__dirname, '../preload/index.js')
+}
+
+function getRenderUrl(route = '') {
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    return `${process.env['ELECTRON_RENDERER_URL']}/#${route}`
   }
+  return `file://${join(__dirname, '../renderer/index.html')}#${route}`
 }
 
-function createUpdaterWindow() {
-  if (updaterWindow) return updaterWindow
+function createLoaderWindow() {
+  if (loaderWindow) return loaderWindow
 
-  updaterWindow = new BrowserWindow({
-    ...SERVICE_WINDOW_CONFIG,
-    title: 'Obriy Updater'
+  loaderWindow = new BrowserWindow({
+    width: 300,
+    height: 350,
+    resizable: false,
+    frame: false,
+    show: false,
+    autoHideMenuBar: true,
+    center: true,
+    alwaysOnTop: false,
+    backgroundColor: '#111827',
+    icon,
+    webPreferences: {
+      preload: getPreloadPath(),
+      sandbox: false,
+      contextIsolation: true
+    }
   })
 
-  const url = is.dev && process.env['ELECTRON_RENDERER_URL'] 
-    ? `${process.env['ELECTRON_RENDERER_URL']}#/updater`
-    : `file://${join(__dirname, '../renderer/index.html')}#/updater`
+  loaderWindow.loadURL(getRenderUrl('loader'))
 
-  updaterWindow.loadURL(url)
-  updaterWindow.on('ready-to-show', () => updaterWindow.show())
-  updaterWindow.on('closed', () => { updaterWindow = null })
-
-  return updaterWindow
-}
-
-function createSetupWindow() {
-  if (setupWindow) return setupWindow
-
-  setupWindow = new BrowserWindow({
-    ...SERVICE_WINDOW_CONFIG,
-    title: 'Obriy Setup'
+  loaderWindow.on('ready-to-show', () => {
+    loaderWindow.show()
+    if (!is.dev) {
+      autoUpdater.checkForUpdates()
+    } else {
+      setTimeout(() => {
+        if (loaderWindow && !loaderWindow.isDestroyed()) {
+          loaderWindow.webContents.send('update-status', { status: 'not-available' })
+        }
+      }, 1500)
+    }
   })
 
-  const url = is.dev && process.env['ELECTRON_RENDERER_URL'] 
-    ? `${process.env['ELECTRON_RENDERER_URL']}#/setup`
-    : `file://${join(__dirname, '../renderer/index.html')}#/setup`
+  loaderWindow.webContents.setWindowOpenHandler((details) => {
+    shell.openExternal(details.url)
+    return { action: 'deny' }
+  })
 
-  setupWindow.loadURL(url)
-  setupWindow.on('ready-to-show', () => setupWindow.show())
-  setupWindow.on('closed', () => { setupWindow = null })
+  loaderWindow.on('closed', () => {
+    loaderWindow = null
+  })
 
-  return setupWindow
+  return loaderWindow
 }
 
 function createMainWindow() {
@@ -87,15 +88,23 @@ function createMainWindow() {
     minWidth: 900,
     minHeight: 600,
     show: false,
-    autoHideMenuBar: true,
     frame: false,
-    resizable: true,
-    backgroundColor: '#0F0F0F',
-    ...(process.platform === 'linux' ? { icon } : {}),
+    autoHideMenuBar: true,
+    backgroundColor: '#030712',
+    icon,
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
+      preload: getPreloadPath(),
       sandbox: false,
       contextIsolation: true
+    }
+  })
+
+  mainWindow.loadURL(getRenderUrl('main'))
+
+  mainWindow.on('ready-to-show', () => {
+    mainWindow.show()
+    if (loaderWindow && !loaderWindow.isDestroyed()) {
+      loaderWindow.close()
     }
   })
 
@@ -104,13 +113,9 @@ function createMainWindow() {
     return { action: 'deny' }
   })
 
-  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
-  } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
-  }
-
-  mainWindow.on('closed', () => { mainWindow = null })
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
 
   return mainWindow
 }
@@ -122,29 +127,29 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  const savedPath = store.get('gta_path')
-
   if (!is.dev) {
     autoUpdater.setFeedURL({
       provider: 'generic',
       url: 'https://pub-e5ae8897a3144503936456b92082d266.r2.dev/'
     })
-    createUpdaterWindow()
-    autoUpdater.checkForUpdatesAndNotify()
-  } else {
-    if (savedPath) {
-      createMainWindow().once('ready-to-show', () => mainWindow.show())
-    } else {
-      createSetupWindow()
-    }
   }
 
-  ipcMain.on('minimize-app', () => {
+  createLoaderWindow()
+
+  ipcMain.on('app:launch-main', () => {
+    createMainWindow()
+  })
+
+  ipcMain.on('app:restart', () => {
+    autoUpdater.quitAndInstall(true, true)
+  })
+
+  ipcMain.on('window:minimize', () => {
     const win = BrowserWindow.getFocusedWindow()
     if (win) win.minimize()
   })
 
-  ipcMain.on('maximize-app', () => {
+  ipcMain.on('window:maximize', () => {
     const win = BrowserWindow.getFocusedWindow()
     if (win && win.isResizable()) {
       if (win.isMaximized()) win.unmaximize()
@@ -152,38 +157,28 @@ app.whenReady().then(() => {
     }
   })
 
-  ipcMain.on('close-app', () => {
+  ipcMain.on('window:close', () => {
     const win = BrowserWindow.getFocusedWindow()
     if (win) win.close()
   })
 
-  ipcMain.on('setup-complete', () => {
-    if (setupWindow) {
-      setupWindow.close()
-      setupWindow = null
-    }
-    createMainWindow().once('ready-to-show', () => mainWindow.show())
-  })
-
-  ipcMain.handle('store:get', (event, key) => store.get(key))
-  ipcMain.handle('store:set', (event, key, value) => {
+  ipcMain.handle('store:get', (_, key) => store.get(key))
+  
+  ipcMain.handle('store:set', (_, key, value) => {
     store.set(key, value)
     return true
   })
-  ipcMain.handle('store:delete', (event, key) => {
+
+  ipcMain.handle('store:delete', (_, key) => {
     store.delete(key)
     return true
   })
 
-  ipcMain.on('restart-app', () => {
-    autoUpdater.quitAndInstall(true, true)
-  })
-
   ipcMain.handle('dialog:selectGameDirectory', async () => {
-    const parentWin = setupWindow || mainWindow
-    const { canceled, filePaths } = await dialog.showOpenDialog(parentWin, {
-      title: 'Оберіть кореневу папку гри GTA V',
-      buttonLabel: 'Обрати папку',
+    const win = BrowserWindow.getFocusedWindow()
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+      title: 'Select GTA V Directory',
+      buttonLabel: 'Select Folder',
       properties: ['openDirectory']
     })
 
@@ -193,10 +188,10 @@ app.whenReady().then(() => {
     try {
       const result = await validateGamePath(selectedPath)
       if (result.isValid) {
-        const finalPath = result.exePath ? path.dirname(result.exePath) : selectedPath
+        const finalPath = result.exePath ? dirname(result.exePath) : selectedPath
         return { success: true, path: finalPath }
       }
-      return { success: false, error: 'Invalid directory' }
+      return { success: false, error: 'GTA5.exe not found in this directory' }
     } catch (error) {
       return { success: false, error: error.message }
     }
@@ -213,51 +208,37 @@ app.whenReady().then(() => {
   ipcMain.handle('get-app-version', () => app.getVersion())
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      const savedPath = store.get('gta_path')
-      if (savedPath) createMainWindow().show()
-      else createSetupWindow()
-    }
+    if (BrowserWindow.getAllWindows().length === 0) createLoaderWindow()
   })
 })
 
-autoUpdater.on('update-not-available', () => {
-  if (updaterWindow) {
-    updaterWindow.close()
-    updaterWindow = null
-  }
-  const savedPath = store.get('gta_path')
-  if (savedPath) {
-    createMainWindow().once('ready-to-show', () => mainWindow.show())
-  } else {
-    createSetupWindow()
-  }
-})
-
-autoUpdater.on('error', (err) => {
-  if (updaterWindow) {
-    updaterWindow.webContents.send('update-status', { status: 'error', error: err.message })
-    setTimeout(() => {
-      if (updaterWindow) {
-        updaterWindow.close()
-        updaterWindow = null
-      }
-      const savedPath = store.get('gta_path')
-      if (savedPath) createMainWindow().once('ready-to-show', () => mainWindow.show())
-      else createSetupWindow()
-    }, 3000)
+autoUpdater.on('checking-for-update', () => {
+  if (loaderWindow && !loaderWindow.isDestroyed()) {
+    loaderWindow.webContents.send('update-status', { status: 'checking' })
   }
 })
 
 autoUpdater.on('update-available', () => {
-  if (updaterWindow) {
-    updaterWindow.webContents.send('update-status', { status: 'available' })
+  if (loaderWindow && !loaderWindow.isDestroyed()) {
+    loaderWindow.webContents.send('update-status', { status: 'available' })
+  }
+})
+
+autoUpdater.on('update-not-available', () => {
+  if (loaderWindow && !loaderWindow.isDestroyed()) {
+    loaderWindow.webContents.send('update-status', { status: 'not-available' })
+  }
+})
+
+autoUpdater.on('error', (err) => {
+  if (loaderWindow && !loaderWindow.isDestroyed()) {
+    loaderWindow.webContents.send('update-status', { status: 'error', error: err.message })
   }
 })
 
 autoUpdater.on('download-progress', (progressObj) => {
-  if (updaterWindow) {
-    updaterWindow.webContents.send('update-status', { 
+  if (loaderWindow && !loaderWindow.isDestroyed()) {
+    loaderWindow.webContents.send('update-status', { 
       status: 'downloading', 
       progress: progressObj.percent 
     })
@@ -265,8 +246,8 @@ autoUpdater.on('download-progress', (progressObj) => {
 })
 
 autoUpdater.on('update-downloaded', () => {
-  if (updaterWindow) {
-    updaterWindow.webContents.send('update-status', { status: 'downloaded' })
+  if (loaderWindow && !loaderWindow.isDestroyed()) {
+    loaderWindow.webContents.send('update-status', { status: 'downloaded' })
   }
   setTimeout(() => {
     autoUpdater.quitAndInstall(true, true)

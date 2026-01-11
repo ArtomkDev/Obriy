@@ -1,25 +1,20 @@
 import React from 'react'
+import { motion } from 'framer-motion'
 import WindowControls from './WindowControls'
-import icon from '../assets/electron.svg'
 
-const ServiceLayout = ({ children, title }) => {
+const ServiceLayout = ({ children }) => {
   return (
-    <div className="flex flex-col h-screen w-full bg-[#1a1b1e] text-white overflow-hidden border border-white/5 select-none font-sans">
-      <div className="h-10 flex items-center justify-between px-4 bg-[#151619] drag shrink-0 border-b border-white/5">
-        <div className="flex items-center gap-3">
-          <img src={icon} className="w-5 h-5 opacity-80" alt="logo" />
-          <span className="text-xs font-medium tracking-wide text-gray-400 uppercase">{title || 'Obriy Launcher'}</span>
+    <div className="flex h-screen w-screen items-center justify-center bg-transparent">
+      <div className="relative flex h-[350px] w-[300px] flex-col overflow-hidden rounded bg-[#313338] shadow-2xl ring-1 ring-[#1e1f22]">
+        <div className="drag-region flex h-6 shrink-0 items-center justify-end bg-[#2b2d31] px-2">
+          <div className="no-drag">
+            <WindowControls />
+          </div>
         </div>
-        <div className="no-drag">
-          <WindowControls hideMaximize={true} />
+        <div className="flex flex-1 flex-col p-5">
+          {children}
         </div>
       </div>
-      
-      <div className="flex-1 relative flex flex-col p-8 custom-scrollbar overflow-y-auto">
-        {children}
-      </div>
-
-      <div className="h-1 bg-gradient-to-r from-transparent via-indigo-500/20 to-transparent opacity-50 absolute bottom-0 w-full" />
     </div>
   )
 }

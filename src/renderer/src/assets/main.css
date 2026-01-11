@@ -4,23 +4,26 @@
 
 ::-webkit-scrollbar {
   width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0f172a; 
+  background: #2b2d31;
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #334155; 
+  background: #1a1b1e;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #475569; 
+  background: #404249;
 }
 
 body {
-  background-color: #020617;
+  background-color: #313338;
+  color: #dbdee1;
 }
 
 @keyframes progress-indeterminate {
@@ -48,20 +51,22 @@ body {
   animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-/* Красивий скролбар для терміналу */
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
+
 .custom-scrollbar::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.02);
+  background: #2b2d31;
 }
+
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: #1a1b1e;
   border-radius: 10px;
 }
+
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: #5865F2;
 }
 
 @keyframes slowZoom {

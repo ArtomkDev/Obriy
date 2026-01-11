@@ -1,60 +1,40 @@
-import React, { useEffect, useState } from 'react'
-import { VscLoading } from 'react-icons/vsc'
+import React from 'react'
+import { motion } from 'framer-motion'
 
-const UpdaterScreen = () => {
-  const [status, setStatus] = useState('checking')
-  const [progress, setProgress] = useState(0)
-  const [error, setError] = useState(null)
-
-  useEffect(() => {
-    const removeListener = window.api.onUpdateStatus((data) => {
-      setStatus(data.status)
-      if (data.progress) setProgress(data.progress)
-      if (data.error) setError(data.error)
-    })
-    return () => removeListener()
-  }, [])
-
-  const getStatusText = () => {
-    switch (status) {
-      case 'checking': return 'Перевірка оновлень...'
-      case 'available': return 'Знайдено нову версію'
-      case 'downloading': return 'Завантаження оновлення...'
-      case 'downloaded': return 'Встановлення...'
-      case 'error': return 'Помилка оновлення'
-      default: return 'Підготовка...'
-    }
-  }
-
+const UpdaterScreen = ({ status, progress, error, onRetry }) => {
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-8">
-      <div className="relative">
-        <div className="absolute inset-0 bg-indigo-500/20 blur-xl rounded-full" />
-        <div className="relative bg-[#25262b] p-6 rounded-2xl border border-white/5 shadow-xl">
-           <VscLoading className={`text-indigo-500 w-12 h-12 ${status !== 'error' ? 'animate-spin' : ''}`} />
-        </div>
+    <div className="flex h-full flex-col items-center justify-center">
+      <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-full bg-[#5865F2]">
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+          className="h-4 w-4 rounded-sm bg-white"
+        />
       </div>
 
-      <div className="w-full space-y-2 text-center">
-        <h2 className="text-xl font-semibold text-white tracking-tight">
-          {getStatusText()}
-        </h2>
-        {error && <p className="text-xs text-red-400 max-w-[80%] mx-auto">{error}</p>}
-      </div>
+      <div className="w-full text-center">
+        <p className="mb-1 text-xs font-bold text-[#F2F3F5]">
+          {error ? 'Error' : 'Updating'}
+        </p>
+        <p className="mb-4 text-[10px] text-[#949BA4]">
+          {error || status || 'Please wait...'}
+        </p>
 
-      <div className="w-full max-w-[280px] space-y-2">
-        <div className="h-1.5 w-full bg-[#25262b] rounded-full overflow-hidden">
-          {status === 'downloading' ? (
-            <div 
-              className="h-full bg-indigo-500 transition-all duration-300 ease-out rounded-full"
-              style={{ width: `${progress}%` }}
+        {!error ? (
+          <div className="h-1 w-full overflow-hidden rounded bg-[#1e1f22]">
+            <motion.div 
+              className="h-full bg-[#5865F2]"
+              initial={{ width: 0 }}
+              animate={{ width: `${progress}%` }}
             />
-          ) : status === 'checking' ? (
-            <div className="h-full w-1/3 bg-indigo-500/50 animate-indeterminate rounded-full" />
-          ) : null}
-        </div>
-        {status === 'downloading' && (
-          <p className="text-right text-xs text-gray-500 font-mono">{Math.round(progress)}%</p>
+          </div>
+        ) : (
+          <button
+            onClick={onRetry}
+            className="rounded bg-[#ED4245] px-4 py-1.5 text-[10px] font-bold text-white hover:bg-[#c03537]"
+          >
+            Retry
+          </button>
         )}
       </div>
     </div>

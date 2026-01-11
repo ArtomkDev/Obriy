@@ -1,104 +1,143 @@
-import React, { useState } from 'react'
-import { VscFolderOpened, VscCheck, VscError } from 'react-icons/vsc'
+import React, { useState, useRef, useEffect } from 'react'
+import { FolderSearch, ArrowRight, Gamepad2 } from 'lucide-react'
+import { motion } from 'framer-motion'
 
 const SetupScreen = () => {
   const [path, setPath] = useState('')
-  const [isValidating, setIsValidating] = useState(false)
-  const [error, setError] = useState(null)
+  const [status, setStatus] = useState('idle') 
+  const [scrollWidth, setScrollWidth] = useState(0)
+  
+  const textRef = useRef(null)
+  const containerRef = useRef(null)
+
+  useEffect(() => {
+    if (textRef.current && containerRef.current) {
+      const diff = textRef.current.scrollWidth - containerRef.current.clientWidth
+      // Додаємо невеликий запас для прокрутки
+      setScrollWidth(diff > 0 ? diff + 10 : 0)
+    }
+  }, [path])
 
   const handleSelectPath = async () => {
-    setIsValidating(true)
-    setError(null)
-    
+    setStatus('validating')
     try {
       const result = await window.api.selectGameDirectory()
       
       if (result.canceled) {
-        setIsValidating(false)
+        setStatus(path ? 'valid' : 'idle')
         return
       }
 
       if (result.success) {
         setPath(result.path)
+        setStatus('valid')
         await window.api.setStoreValue('gta_path', result.path)
       } else {
-        setError(result.error)
+        setStatus('error')
+        setPath(result.path || '') 
       }
     } catch (err) {
-      setError('Не вдалося перевірити шлях')
-    } finally {
-      setIsValidating(false)
+      setStatus('error')
     }
   }
 
-  const handleContinue = () => {
-    if (path) {
-      window.electron.ipcRenderer.send('setup-complete')
+  const handleLaunch = () => {
+    if (status === 'valid') {
+      window.electron.ipcRenderer.send('app:launch-main')
     }
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex-1 flex flex-col justify-center items-center gap-8">
-        <div className="text-center space-y-3">
-          <h1 className="text-2xl font-bold text-white">Налаштування гри</h1>
-          <p className="text-sm text-gray-400 leading-relaxed max-w-[320px]">
-            Для роботи лаунчера необхідно вказати шлях до встановленої версії <span className="text-indigo-400">Grand Theft Auto V</span>
-          </p>
-        </div>
+    <div className="relative flex h-full flex-col justify-between">
+      {/* Фонове світіння */}
+      <div 
+        className={`pointer-events-none absolute -left-20 -right-20 -top-20 h-48 blur-[60px] transition-opacity duration-1000 ${
+          status === 'valid' ? 'bg-green-500/20 opacity-100' : 
+          status === 'error' ? 'bg-red-500/20 opacity-100' : 'opacity-0'
+        }`} 
+      />
 
-        <div className="w-full max-w-sm space-y-4">
-          <button
-            onClick={handleSelectPath}
-            disabled={isValidating}
-            className={`
-              group w-full relative overflow-hidden rounded-xl border transition-all duration-200
-              ${path 
-                ? 'bg-[#1a1b1e] border-green-500/50 hover:border-green-500' 
-                : 'bg-[#25262b] border-white/5 hover:border-white/10 hover:bg-[#2c2e33]'
-              }
-              p-4 flex items-center gap-4 text-left
-            `}
-          >
-            <div className={`
-              p-3 rounded-lg transition-colors
-              ${path ? 'bg-green-500/10 text-green-400' : 'bg-indigo-500/10 text-indigo-400 group-hover:bg-indigo-500/20'}
-            `}>
-              {path ? <VscCheck size={20} /> : <VscFolderOpened size={20} />}
-            </div>
-            
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-0.5">
-                {path ? 'Обрана папка' : 'Дія'}
-              </p>
-              <p className="text-sm text-gray-200 truncate font-medium">
-                {path || 'Обрати папку з грою'}
-              </p>
-            </div>
-          </button>
-
-          {error && (
-            <div className="flex items-center gap-2 text-xs text-red-400 bg-red-500/10 p-3 rounded-lg border border-red-500/20">
-              <VscError size={14} className="shrink-0" />
-              <span>{error}</span>
-            </div>
-          )}
+      {/* Заголовок */}
+      <div className="relative z-10 mt-2 text-center px-4">
+        <div className="mb-3 flex justify-center">
+          <div className={`flex h-12 w-12 items-center justify-center rounded-2xl transition-colors duration-500 ${
+            status === 'valid' ? 'bg-green-500/10 text-green-400' : 
+            status === 'error' ? 'bg-red-500/10 text-red-400' : 'bg-[#5865F2]/10 text-[#5865F2]'
+          }`}>
+            <Gamepad2 size={24} />
+          </div>
         </div>
+        <h2 className="text-lg font-bold text-gray-100">Налаштування гри</h2>
+        <p className="text-[11px] font-medium text-gray-400">
+          {status === 'error' 
+            ? 'Вказано неправильну директорію. Спробуйте ще раз.' 
+            : 'Оберіть папку зі встановленою GTA V.'}
+        </p>
       </div>
 
-      <div className="mt-auto pt-6 border-t border-white/5">
+      {/* Основна кнопка вибору шляху */}
+      <div className="relative z-10 flex flex-col gap-3 px-4">
         <button
-          onClick={handleContinue}
-          disabled={!path}
+          onClick={handleSelectPath}
           className={`
-            w-full py-3.5 px-6 rounded-xl font-medium text-sm transition-all duration-200
-            ${path 
-              ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-900/20 cursor-pointer transform hover:-translate-y-0.5' 
-              : 'bg-[#25262b] text-gray-600 cursor-not-allowed'
+            group relative flex h-12 w-full items-center overflow-hidden rounded-lg border transition-all duration-300
+            ${status === 'error' 
+              ? 'border-red-500/30 bg-red-500/5 hover:border-red-500/50' 
+              : status === 'valid'
+                ? 'border-green-500/30 bg-green-500/5 hover:border-green-500/50'
+                : 'border-white/5 bg-[#1E1F22] hover:border-white/10 hover:bg-[#232428]'
             }
           `}
         >
-          Продовжити
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center border-r border-white/5">
+            <FolderSearch size={20} className={`transition-colors ${path ? 'text-gray-200' : 'text-gray-400 group-hover:text-gray-200'}`} />
+          </div>
+
+          <div 
+            ref={containerRef}
+            className="flex flex-1 items-center overflow-hidden px-3"
+          >
+            {path ? (
+              <div className="relative w-full overflow-hidden">
+                <motion.div
+                  ref={textRef}
+                  className="whitespace-nowrap text-sm font-bold text-gray-100"
+                  animate={{ x: scrollWidth > 0 ? -scrollWidth : 0 }}
+                  transition={{ 
+                    duration: scrollWidth > 0 ? scrollWidth / 25 : 0, // Швидкість залежить від довжини тексту
+                    ease: "linear",
+                    repeat: Infinity,
+                    repeatType: "reverse", // Рухається туди-сюди
+                    repeatDelay: 1.5 // Пауза на кінцях
+                  }}
+                >
+                  {path}
+                </motion.div>
+              </div>
+            ) : (
+              <span className="text-xs font-medium text-gray-500 group-hover:text-gray-400">
+                Натисніть для вибору...
+              </span>
+            )}
+          </div>
+        </button>
+      </div>
+
+      {/* Кнопка запуску */}
+      <div className="relative z-10 px-4 pb-4">
+        <button
+          onClick={handleLaunch}
+          disabled={status !== 'valid'}
+          className={`
+            flex h-10 w-full items-center justify-center gap-2 rounded-lg text-xs font-bold transition-all duration-300
+            ${status === 'valid'
+              ? 'bg-[#5865F2] text-white shadow-lg shadow-indigo-500/20 hover:bg-[#4752C4] hover:shadow-indigo-500/30 active:scale-[0.98]'
+              : 'cursor-not-allowed bg-[#2B2D31] text-gray-500'
+            }
+          `}
+        >
+          <span>Запустити Obriy</span>
+          <ArrowRight size={14} className={status === 'valid' ? 'opacity-100' : 'opacity-0'} />
         </button>
       </div>
     </div>

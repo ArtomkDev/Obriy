@@ -1,7 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: [
-    "./index.html",
+    "./src/renderer/index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
   theme: {
@@ -12,8 +12,13 @@ export default {
         primary: '#FF0055',
         textMain: '#FFFFFF',
         textSec: '#B0B0B0'
+      },
+      fontFamily: {
+        sans: ['Inter', 'sans-serif'] // Додає приємніший шрифт, якщо він є
       }
     },
   },
-  plugins: [],
+  plugins: [
+    require('tailwindcss-animate')
+  ],
 }

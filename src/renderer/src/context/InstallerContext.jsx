@@ -3,11 +3,10 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 const InstallerContext = createContext();
 
 export function InstallerProvider({ children }) {
-  // 1. Стан для шляху (початково пустий)
   const [gamePath, setGamePathState] = useState('');
-  const [isPathLoaded, setIsPathLoaded] = useState(false); // Прапорець, що ми вже перевірили файл налаштувань
+  const [isPathLoaded, setIsPathLoaded] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState('idle');
 
-  // 2. ЗАВАНТАЖЕННЯ: При старті читаємо шлях з файлу конфігу (electron-store)
   useEffect(() => {
     if (window.api) {
       window.api.getStoreValue('gta_path')
@@ -18,12 +17,20 @@ export function InstallerProvider({ children }) {
         })
         .catch(err => console.error("Failed to load game path:", err))
         .finally(() => setIsPathLoaded(true));
+
+      const removeUpdateListener = window.api.onUpdateStatus((data) => {
+        setUpdateStatus(data.status);
+      });
+
+      return () => {
+        if (removeUpdateListener) removeUpdateListener();
+      };
     } else {
       setIsPathLoaded(true);
+      setUpdateStatus('not-available');
     }
   }, []);
 
-  // 3. ЗБЕРЕЖЕННЯ: Оновлюємо стан і пишемо в файл
   const setGamePath = (path) => {
       setGamePathState(path);
       
@@ -44,10 +51,7 @@ export function InstallerProvider({ children }) {
   const [isManagerOpen, setManagerOpen] = useState(false);
 
   useEffect(() => {
-    if (!window.api) {
-        console.error("⚠️ CRITICAL: window.api is missing! Preload script failed to load.");
-        return;
-    }
+    if (!window.api) return;
 
     const removeListener = window.api.onTaskProgress((data) => {
         setTasks(prev => {
@@ -143,7 +147,6 @@ export function InstallerProvider({ children }) {
     }));
 
     try {
-      // 4. ВИПРАВЛЕНО: Беремо шлях тільки зі State (він вже завантажений з Store)
       const currentPath = gamePath; 
       
       if (!currentPath) {
@@ -245,11 +248,17 @@ export function InstallerProvider({ children }) {
       return task ? { download: task.downloadProgress, install: task.installProgress } : { download: 0, install: 0 };
   }
 
+  const isSetupComplete = isPathLoaded && !!gamePath;
+  const isCheckingUpdate = ['checking', 'available', 'downloading'].includes(updateStatus);
+
   return (
     <InstallerContext.Provider value={{ 
       gamePath,       
       setGamePath,    
-      isPathLoaded, // Можна використати для показу лоадера
+      isPathLoaded,
+      isSetupComplete,
+      isCheckingUpdate,
+      updateStatus,
       tasks, 
       startInstall, 
       startUninstall, 

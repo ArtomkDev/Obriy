@@ -6,15 +6,17 @@ const api = {
   uninstallMod: (gamePath, instructions, modId) => ipcRenderer.invoke('uninstall-mod', gamePath, instructions, modId),
   selectGameDirectory: () => ipcRenderer.invoke('dialog:selectGameDirectory'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
-  restartApp: () => ipcRenderer.send('restart-app'),
+  
+  launchMainApp: () => ipcRenderer.send('app:launch-main'),
+  minimizeWindow: () => ipcRenderer.send('window:minimize'),
+  maximizeWindow: () => ipcRenderer.send('window:maximize'),
+  closeWindow: () => ipcRenderer.send('window:close'),
+  restartApp: () => ipcRenderer.send('app:restart'),
 
-  // --- Функції для STORE ---
   getStoreValue: (key) => ipcRenderer.invoke('store:get', key),
   setStoreValue: (key, value) => ipcRenderer.invoke('store:set', key, value),
   deleteStoreValue: (key) => ipcRenderer.invoke('store:delete', key),
-  // -------------------------
 
-  // Слухачі подій з можливістю відписки
   onTaskProgress: (callback) => {
     const subscription = (_event, value) => callback(value)
     ipcRenderer.on('task-progress', subscription)
