@@ -1,8 +1,9 @@
 import { spawn } from 'child_process'
 import path from 'path'
-import { app } from 'electron'
+import { app, net } from 'electron'
 import fs from 'fs'
 import os from 'os'
+import AdmZip from 'adm-zip' // Переконайтеся, що встановили: npm install adm-zip
 
 // 1. Отримання правильного шляху до EXE
 function getEnginePath() {
@@ -11,7 +12,62 @@ function getEnginePath() {
     : path.join(process.resourcesPath, 'engine/Obriy.Core.exe') // PROD шлях
 }
 
-// 2. Підготовка списку файлів
+// 2. ОНОВЛЕНА функція скачування файлу (Виправляє помилку ADM-ZIP)
+async function downloadFile(url, destPath, sender) {
+  return new Promise((resolve, reject) => {
+    const request = net.request(url)
+    
+    request.on('response', (response) => {
+      // Перевірка статусу
+      if (response.statusCode !== 200) {
+        return reject(new Error(`Download failed: HTTP ${response.statusCode}`))
+      }
+
+      const totalBytes = parseInt(response.headers['content-length'], 10)
+      let downloadedBytes = 0
+      
+      // Створюємо потік запису
+      const fileStream = fs.createWriteStream(destPath)
+
+      // 1. Отримуємо дані
+      response.on('data', (chunk) => {
+        downloadedBytes += chunk.length
+        fileStream.write(chunk)
+
+        // Відправляємо прогрес
+        if (sender && totalBytes) {
+          const progress = Math.round((downloadedBytes / totalBytes) * 100)
+          sender.send('task-progress', { 
+            type: 'download', 
+            modId: 'current', 
+            percentage: Math.round(progress / 2) 
+          })
+        }
+      })
+
+      // 2. Коли інтернет закінчив передачу даних
+      response.on('end', () => {
+        fileStream.end() // Даємо команду "закрити файл"
+      })
+
+      // 3. ВАЖЛИВО: Чекаємо, поки файл ФІЗИЧНО запишеться і закриється
+      fileStream.on('finish', () => {
+        resolve() // Тільки тепер кажемо "Готово"
+      })
+
+      // 4. Обробка помилок запису
+      fileStream.on('error', (err) => {
+        fs.unlink(destPath, () => {}) // Видаляємо битий файл
+        reject(err)
+      })
+    })
+    
+    request.on('error', (err) => reject(err))
+    request.end()
+  })
+}
+
+// 3. Підготовка списку файлів
 function prepareBatchItems(instructionSet, gameRootPath, isUninstall) {
     let batchItems = [];
 
@@ -20,7 +76,8 @@ function prepareBatchItems(instructionSet, gameRootPath, isUninstall) {
         
         if (!sourcePath) {
             if (isUninstall) return;
-            throw new Error(`Source file path missing in instruction for ${instr.targetPath}`);
+            // Якщо sourcePath порожній, пропускаємо (можливо це просто команда видалення)
+            return; 
         }
 
         if (!fs.existsSync(sourcePath)) {
@@ -30,6 +87,7 @@ function prepareBatchItems(instructionSet, gameRootPath, isUninstall) {
         const stats = fs.statSync(sourcePath);
 
         if (stats.isDirectory()) {
+            // Рекурсивно додаємо файли з папки
             const files = fs.readdirSync(sourcePath);
             files.forEach(file => {
                 const fullSourceFilePath = path.join(sourcePath, file);
@@ -41,6 +99,7 @@ function prepareBatchItems(instructionSet, gameRootPath, isUninstall) {
                 }
             });
         } else {
+            // Один файл
             batchItems.push({
                 targetPath: path.join(gameRootPath, instr.targetPath),
                 sourceFilePath: sourcePath
@@ -51,11 +110,10 @@ function prepareBatchItems(instructionSet, gameRootPath, isUninstall) {
     return batchItems;
 }
 
-// 3. Запуск двигуна (Install/Uninstall)
+// 4. Запуск двигуна (Install/Uninstall)
 function runEngine(batchItems, eventSender, modId, actionType = 'install') {
     return new Promise((resolve, reject) => {
         const enginePath = getEnginePath()
-        // ВАЖЛИВО: Отримуємо папку, де лежить exe, щоб задати робочу директорію
         const workingDirectory = path.dirname(enginePath); 
 
         if (batchItems.length === 0) {
@@ -67,9 +125,7 @@ function runEngine(batchItems, eventSender, modId, actionType = 'install') {
         fs.writeFileSync(tempManifestPath, JSON.stringify(batchItems, null, 2))
 
         console.log(`[Engine] Launching (${actionType}): ${enginePath}`);
-        console.log(`[Engine] Working Directory: ${workingDirectory}`);
-
-        // ВАЖЛИВО: Додаємо опцію cwd (Current Working Directory)
+        
         const child = spawn(enginePath, ['install-batch', tempManifestPath], {
             cwd: workingDirectory 
         })
@@ -84,14 +140,14 @@ function runEngine(batchItems, eventSender, modId, actionType = 'install') {
         child.stderr.on('data', (data) => { 
             const str = data.toString();
             errorData += str;
-            // console.error('[Engine Log]:', str) 
-
-            const match = str.match(/\[Progress\]: (\d+)\/(\d+)/);
             
+            // Парсинг прогресу від C# (формат: [Progress]: 1/10)
+            const match = str.match(/\[Progress\]: (\d+)\/(\d+)/);
             if (match && eventSender) {
                 const current = parseInt(match[1]);
                 const total = parseInt(match[2]);
-                const percentage = (current / total) * 100;
+                // Інсталяція - це другі 50% прогресу (50-100%)
+                const percentage = 50 + Math.round((current / total) * 50);
 
                 try {
                     eventSender.send('task-progress', { 
@@ -99,29 +155,26 @@ function runEngine(batchItems, eventSender, modId, actionType = 'install') {
                         percentage: percentage,
                         type: actionType 
                     });
-                } catch (e) {
-                    console.error("Failed to send progress:", e);
-                }
+                } catch (e) { console.error(e) }
             }
         })
 
         child.on('close', (code) => {
+          // Видаляємо маніфест після завершення
+          try { fs.unlinkSync(tempManifestPath); } catch {}
+
           try {
+            // Спроба знайти JSON у виводі
             const lastOpenBrace = outputData.lastIndexOf('{');
-            
             if (lastOpenBrace !== -1) {
                 let potentialJson = outputData.substring(lastOpenBrace);
                 const lastCloseBrace = potentialJson.lastIndexOf('}');
-                
                 if (lastCloseBrace !== -1) {
                     potentialJson = potentialJson.substring(0, lastCloseBrace + 1);
                     const result = JSON.parse(potentialJson);
                     
-                    if (result.error) {
-                        reject(new Error(result.error));
-                    } else {
-                        resolve(result);
-                    }
+                    if (result.error) reject(new Error(result.error));
+                    else resolve(result);
                     return;
                 }
             }
@@ -133,18 +186,16 @@ function runEngine(batchItems, eventSender, modId, actionType = 'install') {
             }
 
           } catch (e) {
-            console.error('[Engine] JSON Parse Error:', outputData);
-            if (errorData.includes("Write successful") || errorData.includes("Keys loaded")) {
-                 resolve({ status: 'partial_success', note: 'JSON parsing failed' });
-            } else {
-                 reject(new Error(`Failed to parse engine response: ${e.message}`));
-            }
+            console.error('[Engine] JSON Parse Error:', e);
+            if (code === 0) resolve({ status: 'success', note: 'No JSON output' });
+            else reject(new Error(`Engine error: ${e.message}`));
           }
         })
     })
 }
 
-// 4. Валідація шляху
+// 5. Експортовані функції
+
 export const validateGamePath = async (gamePath) => {
   return new Promise((resolve, reject) => {
     const enginePath = getEnginePath()
@@ -152,37 +203,18 @@ export const validateGamePath = async (gamePath) => {
 
     if (!fs.existsSync(enginePath)) {
         console.error(`[Engine] Executable not found at: ${enginePath}`);
-        resolve({ isValid: false, error: 'Core engine files missing. Please reinstall Obriy.' });
+        resolve({ isValid: false, error: 'Core engine files missing.' });
         return;
     }
 
-    // ВАЖЛИВО: Тут теж додаємо cwd
     const child = spawn(enginePath, ['validate-path', gamePath], {
         cwd: workingDirectory
     })
 
     let output = ''
-    let errorOutput = ''
-
-    child.stdout.on('data', (data) => {
-      output += data.toString()
-    })
-
-    child.stderr.on('data', (data) => {
-      errorOutput += data.toString()
-    })
-
+    child.stdout.on('data', (data) => output += data.toString())
+    
     child.on('close', (code) => {
-      if (code !== 0) {
-        try {
-            const result = JSON.parse(output);
-            resolve(result);
-        } catch {
-            resolve({ isValid: false, error: errorOutput || 'Engine process failed' });
-        }
-        return
-      }
-
       try {
         const match = output.match(/\{.*\}/);
         const jsonStr = match ? match[0] : output;
@@ -195,20 +227,76 @@ export const validateGamePath = async (gamePath) => {
   })
 }
 
-export function installMod(eventSender, gameRootPath, instructionSet, modId) {
+export async function installMod(eventSender, gameRootPath, instructionSet, modId, archiveUrl) {
+    console.log(`[EngineService] Starting install for ${modId}`);
+    
+    // Тимчасова папка для цього мода
+    const tempDir = path.join(app.getPath('temp'), 'obriy_install', modId);
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+    
+    const zipPath = path.join(tempDir, 'mod.zip');
+    const extractPath = path.join(tempDir, 'extracted');
+
     try {
-        const batchItems = prepareBatchItems(instructionSet, gameRootPath, false);
-        return runEngine(batchItems, eventSender, modId, 'install');
+        // КРОК 1: Скачування (якщо є URL)
+        // ... у файлі EngineService.js ...
+
+        if (archiveUrl) {
+            // Створюємо унікальне посилання для кожного запиту
+            const noCacheUrl = `${archiveUrl}?nocache=${Date.now()}`;
+            
+            console.log(`[EngineService] 🚀 REQUESTING NEW FILE: ${noCacheUrl}`);
+            await downloadFile(noCacheUrl, zipPath, eventSender);
+            
+            console.log(`[EngineService] 📂 Extracting...`);
+            const zip = new AdmZip(zipPath);
+            zip.extractAllTo(extractPath, true);
+
+            const files = fs.readdirSync(extractPath);
+            console.log(`[EngineService] 🔎 Real files found after extract:`, files);
+        } else {
+            console.warn('[EngineService] No archive URL provided. Skipping download.');
+        }
+
+        // КРОК 3: Підготовка інструкцій (Mapping)
+        // Замінюємо {{ARCHIVE_ROOT}} на реальний шлях до розпакованої папки
+        const resolvedInstructions = instructionSet.map(instr => {
+            let resolvedSource = instr.sourcePath || instr.sourceFile; 
+            
+            if (resolvedSource && resolvedSource.includes('{{ARCHIVE_ROOT}}')) {
+                resolvedSource = resolvedSource.replace('{{ARCHIVE_ROOT}}', extractPath);
+                resolvedSource = path.normalize(resolvedSource);
+            }
+            
+            return {
+                ...instr,
+                sourceFile: resolvedSource 
+            };
+        });
+
+        // КРОК 4: Запуск C# двигуна
+        const batchItems = prepareBatchItems(resolvedInstructions, gameRootPath, false);
+        return await runEngine(batchItems, eventSender, modId, 'install');
+
     } catch (err) {
-        return Promise.reject(err);
+        console.error('[EngineService] Install Error:', err);
+        return { status: 'error', error: err.message };
+    } finally {
+        // КРОК 5: Очистка сміття
+        try {
+            if (fs.existsSync(tempDir)) {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        } catch (e) { console.error('Cleanup failed', e); }
     }
 }
 
-export function uninstallMod(eventSender, gameRootPath, instructionSet, modId) {
+export async function uninstallMod(eventSender, gameRootPath, instructionSet, modId) {
     try {
         const batchItems = prepareBatchItems(instructionSet, gameRootPath, true);
-        return runEngine(batchItems, eventSender, modId, 'uninstall');
+        return await runEngine(batchItems, eventSender, modId, 'uninstall');
     } catch (err) {
-        return Promise.reject(err);
+        console.error('[EngineService] Uninstall Error:', err);
+        return { status: 'error', error: err.message };
     }
 }

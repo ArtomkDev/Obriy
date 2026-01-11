@@ -9,7 +9,8 @@
       "version": "1.0",
       "author": "Obriy Team",
       "media": [],
-      "instructions": []
+      "instructions": [],
+      "archive": "https://pub-af821b9413f74a56ad45f675b24a2fac.r2.dev/archives/bmw_m5.zip"
     },
     {
       "id": 2,
@@ -39,6 +40,19 @@
       "version": "1.0",
       "author": "Obriy Team",
       "media": [],
+      "instructions": []
+    },
+    {
+      "id": "bmw-m5-comp",
+      "title": "BMW M5 Competition",
+      "author": "ModHub",
+      "version": "1.2",
+      "category": "vehicles",
+      "tags": ["bmw", "sport", "sedan", "germany"],
+      "uploadDate": "2025-01-12T12:00:00Z",
+      "thumbnail": "https://img.gta5-mods.com/q95/images/2021-bmw-m5-f90-competition-lci-add-on-replace-tuning-template/e367c3-3.jpg",
+      "description": "High quality model of BMW M5 F90.",
+      "instructionId": "car_replace_patchday20",
       "instructions": []
     }
   ]

@@ -202,6 +202,8 @@ app.whenReady().then(() => {
      return validateGamePath(path)
   })
 
+  // --- REPOSITORY HANDLERS ---
+  
   ipcMain.handle('repository:get-catalog', async () => {
     return await modRepository.getCatalog()
   })
@@ -210,10 +212,17 @@ app.whenReady().then(() => {
     return await modRepository.searchMods(params)
   })
 
-  ipcMain.handle('install-mod', async (event, gamePath, instructions, modId) => {
-    return await installMod(event.sender, gamePath, instructions, modId)
+  // НОВЕ: Хендлер для отримання інструкцій
+  ipcMain.handle('repository:get-instructions', async () => {
+    return await modRepository.getInstructions()
   })
+  // ---------------------------
 
+  // Знайдіть ipcMain.handle('install-mod', ...)
+  ipcMain.handle('install-mod', async (event, gamePath, instructions, modId, archiveUrl) => {
+    // Передаємо archiveUrl у сервіс
+    return await installMod(event.sender, gamePath, instructions, modId, archiveUrl)
+  })
   ipcMain.handle('uninstall-mod', async (event, gamePath, instructions, modId) => {
     return await uninstallMod(event.sender, gamePath, instructions, modId)
   })
