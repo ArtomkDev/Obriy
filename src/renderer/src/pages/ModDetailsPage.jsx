@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { mods } from '../data/mods' // Правильний імпорт
+// ВИДАЛЕНО: import { mods } from '../data/mods'
 import { useInstaller } from '../context/InstallerContext'
 import CustomPlayer from '../components/CustomPlayer'
 import ProgressBar from '../components/ProgressBar'
@@ -21,15 +21,38 @@ export default function ModDetailsPage() {
 
   const galleryRef = useRef(null)
   
+  // --- НОВА ЛОГІКА ЗАВАНТАЖЕННЯ ---
   useEffect(() => {
-    setLoading(true)
-    // Шукаємо мод по ID
-    const foundMod = mods.find((m) => m.id.toString() === id)
-    if (foundMod) {
-        setMod(foundMod)
+    let isMounted = true
+    
+    const fetchModData = async () => {
+      setLoading(true)
+      try {
+        // 1. Отримуємо весь каталог з "бекенду" (він закешований, тому це миттєво)
+        const catalog = await window.api.getModCatalog()
+        
+        // 2. Шукаємо потрібний мод
+        const foundMod = catalog.find((m) => m.id.toString() === id)
+        
+        if (isMounted) {
+            if (foundMod) {
+                setMod(foundMod)
+            } else {
+                console.error(`Mod with id ${id} not found in catalog`)
+            }
+        }
+      } catch (err) {
+        console.error("Failed to fetch mod details:", err)
+      } finally {
+        if (isMounted) setLoading(false)
+      }
     }
-    setLoading(false)
+
+    fetchModData()
+
+    return () => { isMounted = false }
   }, [id])
+  // --------------------------------
 
   const status = mod ? getModStatus(mod.id) : 'idle';
   const progress = mod ? getModProgress(mod.id) : { download: 0, install: 0 };
@@ -107,8 +130,25 @@ export default function ModDetailsPage() {
       startUninstall(mod);
   }
 
-  if (loading) return null
-  if (!mod) return <div className="p-10 text-white">MOD NOT FOUND</div>
+  if (loading) return (
+    <div className="w-full h-full bg-[#09090b] flex items-center justify-center">
+        <div className="text-white/50 animate-pulse font-bold tracking-widest uppercase">
+            Loading mod details...
+        </div>
+    </div>
+  )
+  
+  if (!mod) return (
+    <div className="w-full h-full bg-[#09090b] flex flex-col items-center justify-center gap-4">
+        <div className="text-white/50 font-bold tracking-widest uppercase">MOD NOT FOUND</div>
+        <button 
+            onClick={() => navigate('/mods')}
+            className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white hover:bg-white/10"
+        >
+            Return to Library
+        </button>
+    </div>
+  )
 
   const isProcessing = ['downloading', 'installing', 'uninstalling', 'queued', 'queued_download', 'queued_uninstall'].includes(status);
 
@@ -131,7 +171,7 @@ export default function ModDetailsPage() {
                  <div className="w-full h-full"> 
                     <CustomPlayer 
                         url={currentMedia.source} 
-                        thumbnail={mod.thumbnail} // ВИПРАВЛЕНО: thumbnail замість image
+                        thumbnail={mod.thumbnail}
                         isLocal={currentMedia.type === 'video_file'}
                     />
                  </div>

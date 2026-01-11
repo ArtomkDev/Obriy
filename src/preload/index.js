@@ -4,7 +4,12 @@ import { electronAPI } from '@electron-toolkit/preload'
 const api = {
   installMod: (gamePath, instructions, modId) => ipcRenderer.invoke('install-mod', gamePath, instructions, modId),
   uninstallMod: (gamePath, instructions, modId) => ipcRenderer.invoke('uninstall-mod', gamePath, instructions, modId),
+  validateGamePath: (path) => ipcRenderer.invoke('validate-game-path', path),
   selectGameDirectory: () => ipcRenderer.invoke('dialog:selectGameDirectory'),
+  
+  getModCatalog: () => ipcRenderer.invoke('repository:get-catalog'),
+  searchMods: (params) => ipcRenderer.invoke('repository:search', params),
+
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   
   launchMainApp: () => ipcRenderer.send('app:launch-main'),

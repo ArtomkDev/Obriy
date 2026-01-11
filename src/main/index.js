@@ -3,6 +3,7 @@ import { join, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { installMod, uninstallMod, validateGamePath } from './services/EngineService'
+import { modRepository } from './services/ModRepositoryService'
 import updaterPkg from 'electron-updater'
 import log from 'electron-log'
 import Store from 'electron-store'
@@ -195,6 +196,18 @@ app.whenReady().then(() => {
     } catch (error) {
       return { success: false, error: error.message }
     }
+  })
+
+  ipcMain.handle('validate-game-path', async (_, path) => {
+     return validateGamePath(path)
+  })
+
+  ipcMain.handle('repository:get-catalog', async () => {
+    return await modRepository.getCatalog()
+  })
+
+  ipcMain.handle('repository:search', async (_, params) => {
+    return await modRepository.searchMods(params)
   })
 
   ipcMain.handle('install-mod', async (event, gamePath, instructions, modId) => {

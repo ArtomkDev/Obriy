@@ -1,0 +1,45 @@
+{
+  "lastUpdated": "2025-01-11",
+  "mods": [
+    {
+      "id": 1,
+      "title": "Перший Хмарний Мод",
+      "description": "Це тест завантаження з R2!",
+      "thumbnail": "https://media.rockstargames.com/rockstargames-newsite/uploads/d33959588d0111e13711977755a676b1e67987a7.jpg",
+      "version": "1.0",
+      "author": "Obriy Team",
+      "media": [],
+      "instructions": []
+    },
+    {
+      "id": 2,
+      "title": "Другий Хмарний Мод",
+      "description": "Це тест завантаження з R2!",
+      "thumbnail": "https://media.rockstargames.com/rockstargames-newsite/uploads/d33959588d0111e13711977755a676b1e67987a7.jpg",
+      "version": "1.0",
+      "author": "Obriy Team",
+      "media": [],
+      "instructions": []
+    },
+    {
+      "id": 3,
+      "title": "Третій Хмарний Мод",
+      "description": "Це тест завантаження з R2!",
+      "thumbnail": "https://media.rockstargames.com/rockstargames-newsite/uploads/d33959588d0111e13711977755a676b1e67987a7.jpg",
+      "version": "1.0",
+      "author": "Obriy Team",
+      "media": [],
+      "instructions": []
+    },
+    {
+      "id": 4,
+      "title": "Четвертий Хмарний Мод",
+      "description": "Це тест завантаження з R2!",
+      "thumbnail": "https://media.rockstargames.com/rockstargames-newsite/uploads/d33959588d0111e13711977755a676b1e67987a7.jpg",
+      "version": "1.0",
+      "author": "Obriy Team",
+      "media": [],
+      "instructions": []
+    }
+  ]
+}
