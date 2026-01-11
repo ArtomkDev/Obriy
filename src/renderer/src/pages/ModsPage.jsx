@@ -4,7 +4,7 @@ import ModCard from '../components/ModCard'
 
 export default function ModsPage() {
   return (
-    <div className="w-full min-h-screen animate-fade-in pr-4 pb-20">
+    <div className="w-full min-h-screen animate-fade-in pr-4 pb-20 p-8">
       
       {/* Заголовок */}
       <div className="flex items-center justify-between mb-8 pt-4">

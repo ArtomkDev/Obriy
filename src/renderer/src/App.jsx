@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
 import SetupScreen from './components/SetupScreen'
 import UpdaterScreen from './components/UpdaterScreen'
 import WindowControls from './components/WindowControls'
 import ModsPage from './pages/ModsPage'
 import SettingsPage from './pages/SettingsPage'
+import ModDetailsPage from './pages/ModDetailsPage'
 import { InstallerProvider, useInstaller } from './context/InstallerContext'
 
 function LoaderWindowContent() {
@@ -25,7 +27,7 @@ function LoaderWindowContent() {
           <SetupScreen />
         ) : (
           <div className="flex-1 flex items-center justify-center">
-            <div className="text-white animate-pulse">Launching Obriy...</div>
+            <div className="text-white animate-pulse">Запуск Obriy...</div>
           </div>
         )}
       </div>
@@ -34,18 +36,26 @@ function LoaderWindowContent() {
 }
 
 function MainWindowContent() {
-  const [activeTab, setActiveTab] = useState('mods')
-
   return (
-    <div className="flex h-screen bg-gray-950 text-white overflow-hidden border border-gray-800">
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+    <div className="flex h-screen bg-[#09090b] text-white overflow-hidden border border-gray-800">
+      <Sidebar />
       
-      <div className="flex-1 flex flex-col min-w-0">
-        <WindowControls title="Obriy Launcher" />
+      <div className="flex-1 flex flex-col min-w-0 bg-[#09090b]">
+        <WindowControls/>
         
-        <main className="flex-1 overflow-y-auto p-6 bg-gray-900/50">
-          {activeTab === 'mods' && <ModsPage />}
-          {activeTab === 'settings' && <SettingsPage />}
+        <main className="flex-1 bg-gray-900/50 rounded-tl-3xl border-t border-l border-white/5 overflow-hidden flex flex-col relative shadow-2xl">
+          <Routes>
+            {/* Перенаправлення кореневого шляху */}
+            <Route path="/" element={<Navigate to="/mods" replace />} />
+            
+            {/* Основні маршрути */}
+            <Route path="/mods" element={<ModsPage />} />
+            <Route path="/mods/:id" element={<ModDetailsPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+
+            {/* ВАЖЛИВО: Ловить шлях "/main" (який створює Electron) та будь-які інші невідомі шляхи */}
+            <Route path="*" element={<Navigate to="/mods" replace />} />
+          </Routes>
         </main>
       </div>
     </div>

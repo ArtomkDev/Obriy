@@ -35,15 +35,11 @@ export default function Sidebar() {
   return (
     <>
       <DownloadsManager />
-
-      {/* ПРИБРАНО bg-black/20 і backdrop-blur, тепер прозорий, щоб просвічувався фон App.jsx */}
       <aside className="w-20 flex flex-col items-center py-6 z-50 relative shrink-0">
-        {/* Логотип */}
         <div className="mb-10 drag">
           <img src={electronLogo} alt="Logo" className="w-10 h-10 opacity-90" />
         </div>
 
-        {/* Навігація */}
         <nav className="flex-1 flex flex-col gap-4 w-full px-3">
            {navItems.map((item) => (
                <NavLink 
