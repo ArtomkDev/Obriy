@@ -32,6 +32,7 @@ yarn-debug.log*
 yarn-error.log*
 
 store-data/
+cloud_mock/
 
 
 gtavideo.mp4

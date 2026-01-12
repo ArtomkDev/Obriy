@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-// ВИДАЛЕНО: import { mods } from '../data/mods'
 import { useInstaller } from '../context/InstallerContext'
 import CustomPlayer from '../components/CustomPlayer'
 import ProgressBar from '../components/ProgressBar'
@@ -21,24 +20,21 @@ export default function ModDetailsPage() {
 
   const galleryRef = useRef(null)
   
-  // --- НОВА ЛОГІКА ЗАВАНТАЖЕННЯ ---
+  // --- ВИПРАВЛЕНА ЛОГІКА ЗАВАНТАЖЕННЯ ---
   useEffect(() => {
     let isMounted = true
     
-    const fetchModData = async () => {
+    const fetchData = async () => {
       setLoading(true)
       try {
-        // 1. Отримуємо весь каталог з "бекенду" (він закешований, тому це миттєво)
-        const catalog = await window.api.getModCatalog()
-        
-        // 2. Шукаємо потрібний мод
-        const foundMod = catalog.find((m) => m.id.toString() === id)
+        // ВИПРАВЛЕНО: Замість invoke використовуємо прямий метод з API
+        const modData = await window.api.getModDetails(id)
         
         if (isMounted) {
-            if (foundMod) {
-                setMod(foundMod)
+            if (modData) {
+                setMod(modData)
             } else {
-                console.error(`Mod with id ${id} not found in catalog`)
+                console.error(`Mod with id ${id} not found in cloud`)
             }
         }
       } catch (err) {
@@ -48,7 +44,7 @@ export default function ModDetailsPage() {
       }
     }
 
-    fetchModData()
+    fetchData()
 
     return () => { isMounted = false }
   }, [id])
@@ -112,7 +108,7 @@ export default function ModDetailsPage() {
       setCurrentMediaIndex(newIndex);
   }
 
-  // Якщо медіа немає, використовуємо головну картинку (thumbnail) як єдиний елемент
+  // Gallery fallback
   const gallery = mod ? (mod.media || [{ type: 'image', source: mod.thumbnail }]) : []
   const currentMedia = gallery[currentMediaIndex]
 

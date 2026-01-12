@@ -7,12 +7,8 @@ export function InstallerProvider({ children }) {
   const [isPathLoaded, setIsPathLoaded] = useState(false);
   const [updateStatus, setUpdateStatus] = useState('idle');
 
-  // --- Збереження глобальних інструкцій ---
-  const [globalInstructions, setGlobalInstructions] = useState({});
-
   useEffect(() => {
     if (window.api) {
-      // 1. Завантаження шляху до гри
       window.api.getStoreValue('gta_path')
         .then((savedPath) => {
           if (savedPath) {
@@ -22,20 +18,9 @@ export function InstallerProvider({ children }) {
         .catch(err => console.error("Failed to load game path:", err))
         .finally(() => setIsPathLoaded(true));
 
-      // 2. Слухач оновлень
       const removeUpdateListener = window.api.onUpdateStatus((data) => {
         setUpdateStatus(data.status);
       });
-
-      // 3. Завантаження реєстру інструкцій
-      if (window.api.getInstructions) {
-         window.api.getInstructions()
-            .then(data => {
-                console.log('Loaded global instructions:', data ? Object.keys(data).length : 0);
-                setGlobalInstructions(data || {});
-            })
-            .catch(err => console.error("Failed to load instructions:", err));
-      }
 
       return () => {
         if (removeUpdateListener) removeUpdateListener();
@@ -80,7 +65,6 @@ export function InstallerProvider({ children }) {
                 [data.modId]: { 
                     ...task, 
                     status: status, 
-                    // Якщо бекенд надсилає прогрес скачування, оновлюємо його тут
                     downloadProgress: data.type === 'download' ? data.percentage : 100,
                     installProgress: data.type === 'install' ? data.percentage : (data.type === 'download' ? 0 : task.installProgress)
                 }
@@ -107,18 +91,10 @@ export function InstallerProvider({ children }) {
     }
   }, [isProcessing, processQueue]);
 
-  // --- Логіка об'єднання інструкцій ---
   const resolveInstructions = (mod) => {
-      // 1. Пріоритет: Інструкції прописані прямо в моді
-      if (mod.instructions && mod.instructions.length > 0) {
-          return mod.instructions;
+      if (mod.instructionSet && mod.instructionSet.length > 0) {
+          return mod.instructionSet;
       }
-      
-      // 2. Пошук по ID в глобальному реєстрі
-      if (mod.instructionId && globalInstructions[mod.instructionId]) {
-          return globalInstructions[mod.instructionId];
-      }
-
       return [];
   };
 
@@ -126,24 +102,12 @@ export function InstallerProvider({ children }) {
     setIsDownloading(true);
     const taskId = mod.id;
 
-    // Це лише візуальна черга перед передачею в бекенд
     setTasks(prev => ({
       ...prev,
       [taskId]: { ...prev[taskId], status: 'downloading', downloadProgress: 0 }
     }));
 
-    // Швидкий таймер для переходу до процесу інсталяції (реальне скачування буде в runEngineTask)
-    let dProgress = 0;
-    const downloadInterval = setInterval(() => {
-      dProgress += 20; // Пришвидшимо цей етап, бо реальне скачування робить EngineService
-      setTasks(prev => ({
-        ...prev,
-        [taskId]: { ...prev[taskId], downloadProgress: Math.min(dProgress, 100) }
-      }));
-
-      if (dProgress >= 100) {
-        clearInterval(downloadInterval);
-        
+    setTimeout(() => {
         setTasks(prev => ({
           ...prev,
           [taskId]: { ...prev[taskId], status: 'queued', downloadProgress: 100 }
@@ -152,8 +116,7 @@ export function InstallerProvider({ children }) {
         setDownloadQueue(prev => prev.filter(m => m.id !== mod.id));
         setProcessQueue(prev => [...prev, { ...mod, actionType: 'install' }]);
         setIsDownloading(false);
-      }
-    }, 50);
+    }, 500);
   };
 
   const runEngineTask = async (task) => {
@@ -181,29 +144,18 @@ export function InstallerProvider({ children }) {
     }));
 
     try {
-      const currentPath = gamePath; 
-      
-      if (!currentPath) {
-          throw new Error("Game path is not selected or not loaded yet");
-      }
-
       let result;
-      // task.instructions вже мають бути тут
+      
       if (isUninstall) {
+          const currentPath = gamePath;
+          if (!currentPath) throw new Error("Game path not selected");
           result = await window.api.uninstallMod(currentPath, task.instructions, task.id);
       } else {
-          // !!! ВАЖЛИВО: Отримуємо посилання на архів !!!
-          const archiveUrl = task.archive || task.mod?.archive;
-
-          if (!archiveUrl) {
-             throw new Error("Mod has no archive URL (Cloud Error)");
-          }
-
-          // Передаємо archiveUrl четвертим параметром
-          result = await window.api.installMod(currentPath, task.instructions, task.id, archiveUrl);
+          // ВАЖЛИВО: Викликаємо новий метод інсталяції (тільки ID)
+          result = await window.api.installMod(task.id);
       }
       
-      if (result && (result.status === 'success' || result.status === 'success_fallback' || result.status === 'success_no_json' || result.success === true)) {
+      if (result && (result.success === true || result.status === 'success' || result.status === 'success_fallback')) {
         setTasks(prev => {
             if (isUninstall) {
                 const newTasks = { ...prev };
@@ -235,24 +187,8 @@ export function InstallerProvider({ children }) {
     const taskId = mod.id;
     if (tasks[taskId] && ['downloading', 'installing', 'queued', 'queued_download', 'uninstalling'].includes(tasks[taskId].status)) return;
 
-    // Резолвинг інструкцій
     const finalInstructions = resolveInstructions(mod);
 
-    if (!finalInstructions || finalInstructions.length === 0) {
-        console.error(`Cannot install mod ${mod.title}: No instructions found.`);
-        setTasks(prev => ({
-            ...prev,
-            [taskId]: { 
-                mod, 
-                status: 'error', 
-                error: 'Missing Instructions (Cloud Error)',
-                addedAt: Date.now()
-            }
-        }));
-        return;
-    }
-
-    // Створюємо об'єкт завдання
     const taskObject = {
         ...mod,
         instructions: finalInstructions
@@ -271,7 +207,7 @@ export function InstallerProvider({ children }) {
     }));
 
     setDownloadQueue(prev => [...prev, taskObject]);
-  }, [tasks, globalInstructions]);
+  }, [tasks]);
 
   const startUninstall = useCallback((mod) => {
       const taskId = mod.id;
@@ -296,7 +232,7 @@ export function InstallerProvider({ children }) {
       }));
 
       setProcessQueue(prev => [...prev, taskObject]);
-  }, [tasks, globalInstructions]);
+  }, [tasks]);
 
   const cancelTask = useCallback((taskId) => {
     setDownloadQueue(prev => prev.filter(m => m.id !== taskId));

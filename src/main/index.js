@@ -2,8 +2,9 @@ import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { installMod, uninstallMod, validateGamePath } from './services/EngineService'
-import { modRepository } from './services/ModRepositoryService'
+import { uninstallMod, validateGamePath } from './services/EngineService'
+// ВАЖЛИВО: Імпортуємо CloudModService
+import { installCloudMod, getModCatalog, getModDetails } from './services/CloudModService'
 import updaterPkg from 'electron-updater'
 import log from 'electron-log'
 import Store from 'electron-store'
@@ -163,6 +164,8 @@ app.whenReady().then(() => {
     if (win) win.close()
   })
 
+  ipcMain.handle('get-app-version', () => app.getVersion())
+
   ipcMain.handle('store:get', (_, key) => store.get(key))
   
   ipcMain.handle('store:set', (_, key, value) => {
@@ -202,32 +205,54 @@ app.whenReady().then(() => {
      return validateGamePath(path)
   })
 
-  // --- REPOSITORY HANDLERS ---
+  // --- CLOUD & MODS HANDLERS (ОНОВЛЕНО) ---
   
-  ipcMain.handle('repository:get-catalog', async () => {
-    return await modRepository.getCatalog()
+  // 1. Отримати каталог
+  ipcMain.handle('get-mod-catalog', async () => {
+    try {
+      return await getModCatalog()
+    } catch (error) {
+      console.error('Catalog Fetch Error:', error)
+      return []
+    }
   })
 
-  ipcMain.handle('repository:search', async (_, params) => {
-    return await modRepository.searchMods(params)
+  // 2. Отримати деталі мода
+  ipcMain.handle('get-mod-details', async (_, modId) => {
+    try {
+      return await getModDetails(modId)
+    } catch (error) {
+      console.error('Details Fetch Error:', error)
+      return null
+    }
   })
 
-  // НОВЕ: Хендлер для отримання інструкцій
-  ipcMain.handle('repository:get-instructions', async () => {
-    return await modRepository.getInstructions()
+  // 3. Інсталяція
+  ipcMain.handle('install-mod', async (_, modId) => {
+    try {
+      console.log(`[IPC] Starting installation for Mod ID: ${modId}`)
+      
+      // --- ВИПРАВЛЕННЯ: Отримуємо шлях до гри ---
+      const gamePath = store.get('gta_path')
+      
+      if (!gamePath) {
+          throw new Error('Шлях до гри не налаштовано! Будь ласка, перейдіть у налаштування.')
+      }
+      
+      // Передаємо gamePath у функцію
+      const result = await installCloudMod(modId, gamePath)
+      
+      return { success: true, data: result }
+    } catch (error) {
+      console.error('[IPC] Install Error:', error)
+      return { success: false, error: error.message }
+    }
   })
-  // ---------------------------
 
-  // Знайдіть ipcMain.handle('install-mod', ...)
-  ipcMain.handle('install-mod', async (event, gamePath, instructions, modId, archiveUrl) => {
-    // Передаємо archiveUrl у сервіс
-    return await installMod(event.sender, gamePath, instructions, modId, archiveUrl)
-  })
+  // 4. Видалення
   ipcMain.handle('uninstall-mod', async (event, gamePath, instructions, modId) => {
     return await uninstallMod(event.sender, gamePath, instructions, modId)
   })
-
-  ipcMain.handle('get-app-version', () => app.getVersion())
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createLoaderWindow()

@@ -3,17 +3,16 @@ import { electronAPI } from '@electron-toolkit/preload'
 
 const api = {
   // --- Core Engine ---
-  // Знайдіть рядок installMod і додайте archiveUrl
-  installMod: (gamePath, instructions, modId, archiveUrl) => ipcRenderer.invoke('install-mod', gamePath, instructions, modId, archiveUrl),
+  installMod: (modId) => ipcRenderer.invoke('install-mod', modId),
   uninstallMod: (gamePath, instructions, modId) => ipcRenderer.invoke('uninstall-mod', gamePath, instructions, modId),
+  
   validateGamePath: (path) => ipcRenderer.invoke('validate-game-path', path),
   selectGameDirectory: () => ipcRenderer.invoke('dialog:selectGameDirectory'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
-  // --- Cloud Repository (НОВІ МЕТОДИ) ---
-  getModCatalog: () => ipcRenderer.invoke('repository:get-catalog'),
-  searchMods: (params) => ipcRenderer.invoke('repository:search', params),
-  getInstructions: () => ipcRenderer.invoke('repository:get-instructions'), // <--- ЦЬОГО НЕ ВИСТАЧАЛО
+  // --- Cloud Repository ---
+  getModCatalog: () => ipcRenderer.invoke('get-mod-catalog'),
+  getModDetails: (modId) => ipcRenderer.invoke('get-mod-details', modId),
 
   // --- Window Controls ---
   launchMainApp: () => ipcRenderer.send('app:launch-main'),

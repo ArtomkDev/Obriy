@@ -9,9 +9,18 @@ export default function ModsPage() {
     setIsLoading(true)
     try {
       const data = await window.api.getModCatalog()
-      setModsList(data)
+      
+      // --- ВИПРАВЛЕННЯ ТУТ ---
+      // Мапимо дані з формату API (name, image) у формат UI (title, thumbnail)
+      const mappedMods = data.map(mod => ({
+        ...mod,
+        title: mod.name || mod.title || 'Untitled', // Якщо немає title, беремо name
+        thumbnail: mod.image || mod.thumbnail || '', // Якщо немає thumbnail, беремо image
+      }))
+      
+      setModsList(mappedMods)
     } catch (err) {
-      console.error(err)
+      console.error("Failed to load catalog:", err)
     } finally {
       setIsLoading(false)
     }
@@ -34,7 +43,9 @@ export default function ModsPage() {
       </div>
 
       {isLoading ? (
-        <div className="text-white/30 text-center mt-20">Downloading Catalog...</div>
+        <div className="text-white/30 text-center mt-20 font-bold tracking-widest animate-pulse">
+            LOADING CATALOG...
+        </div>
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-6">
           {modsList.map((mod) => (
@@ -42,7 +53,7 @@ export default function ModsPage() {
           ))}
           
           {modsList.length === 0 && (
-             <div className="col-span-full text-center text-white/20">
+             <div className="col-span-full text-center text-white/20 mt-10">
                 Catalog is empty. Check your R2 bucket.
              </div>
           )}
