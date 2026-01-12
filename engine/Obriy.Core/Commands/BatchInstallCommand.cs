@@ -8,8 +8,8 @@ namespace Obriy.Core.Commands
 {
     public class BatchItem
     {
-        public string targetPath { get; set; }
-        public string sourceFilePath { get; set; }
+        public string TargetPath { get; set; }
+        public string SourceFilePath { get; set; }
     }
 
     public class BatchInstallCommand : ICommand
@@ -18,58 +18,96 @@ namespace Obriy.Core.Commands
 
         public object Execute(string[] args)
         {
-            // ВИПРАВЛЕННЯ 1: Тепер ми отримуємо тільки аргументи, без назви команди.
-            // Тому перевіряємо, чи є хоча б 1 елемент (шлях до маніфесту).
-            if (args.Length < 1)
-            {
-                var error = new { error = "Manifest path required" };
-                Console.WriteLine(JsonSerializer.Serialize(error));
-                return error;
-            }
+            // Налаштування миттєвого виводу в консоль (без буферизації)
+            var writer = new StreamWriter(Console.OpenStandardOutput());
+            writer.AutoFlush = true;
+            Console.SetOut(writer);
 
-            // ВИПРАВЛЕННЯ 2: Беремо шлях з нульового індексу
+            if (args.Length < 1) return Error("Manifest path required");
+
             string manifestPath = args[0];
-
-            if (!File.Exists(manifestPath))
-            {
-                var error = new { error = "Manifest file not found" };
-                Console.WriteLine(JsonSerializer.Serialize(error));
-                return error;
-            }
+            if (!File.Exists(manifestPath)) return Error("Manifest file not found");
 
             try
             {
                 string jsonContent = File.ReadAllText(manifestPath);
-                var items = JsonSerializer.Deserialize<List<BatchItem>>(jsonContent);
+                var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                var items = JsonSerializer.Deserialize<List<BatchItem>>(jsonContent, options);
+                
                 var editor = new RpfEditor();
+                
+                // 1. Рахуємо загальну вагу всіх файлів (в байтах)
+                long totalBytes = 0;
+                var fileSizes = new List<long>();
 
-                Console.Error.WriteLine($"[Batch] Processing {items.Count} items...");
+                foreach (var item in items)
+                {
+                    if (File.Exists(item.SourceFilePath))
+                    {
+                        long size = new FileInfo(item.SourceFilePath).Length;
+                        totalBytes += size;
+                        fileSizes.Add(size);
+                    }
+                    else
+                    {
+                        fileSizes.Add(0);
+                    }
+                }
+
+                // Захист від ділення на нуль, якщо файли пусті
+                if (totalBytes == 0) totalBytes = 1;
+
+                long processedBytes = 0;
+                int lastReportedPercent = -1;
+
+                Console.Error.WriteLine($"[Batch] Processing {items.Count} files. Total size: {totalBytes / 1024} KB");
 
                 for (int i = 0; i < items.Count; i++)
                 {
                     var item = items[i];
+                    long currentFileSize = fileSizes[i];
 
-                    // Лог прогресу для Electron
-                    Console.Error.WriteLine($"[Progress]: {i + 1}/{items.Count}");
-                    Console.Error.WriteLine($"[Batch] Installing: {Path.GetFileName(item.sourceFilePath)}");
+                    // Інсталюємо файл
+                    var pathInfo = SplitPath(item.TargetPath);
+                    editor.InstallMod(pathInfo.PhysicalPath, pathInfo.InternalPath, item.SourceFilePath);
+
+                    // 2. Оновлюємо прогрес на основі ваги
+                    processedBytes += currentFileSize;
                     
-                    var pathInfo = SplitPath(item.targetPath);
-                    editor.InstallMod(pathInfo.PhysicalPath, pathInfo.InternalPath, item.sourceFilePath);
+                    int currentPercent = (int)((double)processedBytes / totalBytes * 100.0);
+
+                    // Відправляємо прогрес, тільки якщо він змінився або це фінал
+                    if (currentPercent > lastReportedPercent || i == items.Count - 1)
+                    {
+                        var progressMessage = new 
+                        { 
+                            type = "progress", 
+                            value = currentPercent 
+                        };
+
+                        Console.WriteLine(JsonSerializer.Serialize(progressMessage));
+                        lastReportedPercent = currentPercent;
+                    }
                 }
 
-                // Видаляємо тимчасовий файл маніфесту після успішного виконання
                 try { File.Delete(manifestPath); } catch { }
 
                 var success = new { status = "success", processed = items.Count };
                 Console.WriteLine(JsonSerializer.Serialize(success));
+                
                 return success;
             }
             catch (Exception ex)
             {
-                var error = new { error = ex.Message, trace = ex.StackTrace };
-                Console.WriteLine(JsonSerializer.Serialize(error));
-                return error;
+                return Error(ex.Message, ex.StackTrace);
             }
+        }
+
+        private object Error(string msg, string trace = null)
+        {
+            var err = new { status = "error", message = msg, trace = trace };
+            Console.WriteLine(JsonSerializer.Serialize(err));
+            return err;
         }
 
         private (string PhysicalPath, string InternalPath) SplitPath(string fullPath)
@@ -80,23 +118,16 @@ namespace Obriy.Core.Commands
             while (!string.IsNullOrEmpty(currentPath))
             {
                 if (File.Exists(currentPath))
-                {
                     return (currentPath, internalParts.TrimStart('/', '\\'));
-                }
 
                 string fileName = Path.GetFileName(currentPath);
                 string directory = Path.GetDirectoryName(currentPath);
 
-                // Запобіжник від нескінченного циклу, якщо дійшли до кореня диска
-                if (string.IsNullOrEmpty(directory) || directory == currentPath)
-                {
-                    break;
-                }
+                if (string.IsNullOrEmpty(directory) || directory == currentPath) break;
 
                 internalParts = Path.Combine(fileName, internalParts);
                 currentPath = directory;
             }
-
             throw new FileNotFoundException($"Valid RPF root not found for: {fullPath}");
         }
     }

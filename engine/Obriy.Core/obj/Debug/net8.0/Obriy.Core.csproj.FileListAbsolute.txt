@@ -24,3 +24,9 @@ D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\refint\Obriy.Core.d
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\Obriy.Core.pdb
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\Obriy.Core.genruntimeconfig.cache
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\ref\Obriy.Core.dll
+D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\keys\gtav_aes_key.dat
+D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\keys\gtav_hash_lut.dat
+D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\keys\gtav_ng_decrypt_tables.dat
+D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\keys\gtav_ng_encrypt_luts.dat
+D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\keys\gtav_ng_encrypt_tables.dat
+D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\keys\gtav_ng_key.dat

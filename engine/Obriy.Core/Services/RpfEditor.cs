@@ -9,16 +9,13 @@ namespace Obriy.Core.Services
     {
         public RpfEditor(string pathToGameFolder = null)
         {
-            // Перевіряємо, чи ключі вже завантажені
             if (GTA5Keys.PC_AES_KEY != null && GTA5Keys.PC_AES_KEY.Length > 0)
                 return;
 
             string basePath = AppDomain.CurrentDomain.BaseDirectory;
-            // ЗМІНА: Додаємо "keys" до шляху
-            string keysPath = Path.Combine(basePath, "keys"); 
+            string keysPath = Path.Combine(basePath, "keys");
             string aesKeyFile = Path.Combine(keysPath, "gtav_aes_key.dat");
 
-            // Якщо папки keys немає в білді, пробуємо шукати в корені (для зворотної сумісності)
             if (!File.Exists(aesKeyFile))
             {
                 keysPath = basePath;
@@ -28,10 +25,10 @@ namespace Obriy.Core.Services
             if (File.Exists(aesKeyFile))
             {
                 Console.Error.WriteLine($"[RpfEditor] Loading keys from: {keysPath}");
-                try 
+                try
                 {
                     GTA5Keys.PC_AES_KEY = File.ReadAllBytes(aesKeyFile);
-                    
+
                     if (GTA5Keys.PC_AES_KEY.Length < 32)
                         throw new Exception("gtav_aes_key.dat is too small. Check Git LFS.");
 
@@ -88,7 +85,6 @@ namespace Obriy.Core.Services
 
             RpfFile rpfFile = new RpfFile(physicalRpfPath, physicalRpfPath);
 
-            // Використовуємо безпечне сканування з логуванням помилок
             rpfFile.ScanStructure(
                 status => { },
                 error => Console.Error.WriteLine($"[CodeWalker Error] {error}")
@@ -106,11 +102,11 @@ namespace Obriy.Core.Services
             {
                 string part = pathParts[i];
                 var subDir = currentDir.Directories.FirstOrDefault(d => d.Name.Equals(part, StringComparison.OrdinalIgnoreCase));
-                
+
                 if (subDir == null)
                 {
-                     string available = string.Join(", ", currentDir.Directories.Select(d => d.Name));
-                     throw new Exception($"Folder '{part}' not found inside '{physicalRpfPath}'. Available folders: [{available}]");
+                    string available = string.Join(", ", currentDir.Directories.Select(d => d.Name));
+                    throw new Exception($"Folder '{part}' not found inside '{physicalRpfPath}'. Available folders: [{available}]");
                 }
                 currentDir = subDir;
             }
@@ -132,16 +128,14 @@ namespace Obriy.Core.Services
         private void HandleNestedRpf(string parentRpfPath, string[] pathParts, int rpfIndex, string sourceFile)
         {
             string nestedRpfInternalPath = string.Join("/", pathParts.Take(rpfIndex + 1));
-            string nestedRpfName = pathParts[rpfIndex]; // Наприклад: weapons.rpf
+            string nestedRpfName = pathParts[rpfIndex];
             string remainingPath = string.Join("/", pathParts.Skip(rpfIndex + 1));
 
             Console.Error.WriteLine($"[RpfEditor] Detected nested RPF: {nestedRpfName}");
-            
-            // FIX: Створюємо тимчасову папку з GUID, але зберігаємо оригінальне ім'я файлу.
-            // Це критично для NG Decryption, яке залежить від імені файлу!
+
             string tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
             string tempRpfPath = Path.Combine(tempDir, nestedRpfName);
-            
+
             try
             {
                 Directory.CreateDirectory(tempDir);
@@ -153,17 +147,14 @@ namespace Obriy.Core.Services
                     throw new Exception($"Extracted nested RPF {nestedRpfName} is empty. Extraction failed.");
 
                 Console.Error.WriteLine($"[RpfEditor] Editing nested RPF...");
-                
-                // Рекурсивно редагуємо витягнутий RPF
+
                 InstallMod(tempRpfPath, remainingPath, sourceFile);
 
                 Console.Error.WriteLine($"[RpfEditor] Repacking nested RPF back to {parentRpfPath}...");
-                // Записуємо змінений файл назад
                 InstallMod(parentRpfPath, nestedRpfInternalPath, tempRpfPath);
             }
             finally
             {
-                // Прибираємо за собою всю папку
                 if (Directory.Exists(tempDir))
                     Directory.Delete(tempDir, true);
             }
@@ -172,7 +163,7 @@ namespace Obriy.Core.Services
         private void ExtractFileFromRpf(string physicalRpfPath, string internalPath, string outputPath)
         {
             RpfFile rpfFile = new RpfFile(physicalRpfPath, physicalRpfPath);
-            
+
             rpfFile.ScanStructure(null, err => Console.Error.WriteLine($"[Extract Error] {err}"));
 
             if (rpfFile.Root == null) throw new Exception($"Cannot open RPF for extraction: {physicalRpfPath}");

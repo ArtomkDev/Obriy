@@ -3,17 +3,27 @@ const path = require('path');
 const archiver = require('archiver');
 const config = require('../config');
 
-module.exports = function packageMod(modId) {
+module.exports = async function packageMod(modId) {
+    const sourceDir = path.join(config.paths.modsSource, modId, 'mod');
+    const outputDir = path.join(config.paths.modsDist, modId);
+    const outputPath = path.join(outputDir, 'payload.zip');
+
+    console.log(`[Packager] Starting compression for ${modId}...`);
+
+    if (!await fs.pathExists(sourceDir)) {
+        throw new Error(`Source directory missing: ${sourceDir}`);
+    }
+
+    await fs.ensureDir(outputDir);
+
+    if (await fs.pathExists(outputPath)) {
+        console.log(`[Packager] Removing old payload artifact...`);
+        await fs.remove(outputPath);
+    }
+
     return new Promise((resolve, reject) => {
-        console.log(`[Packager] Zipping payload for ${modId}...`);
-
-        const sourceDir = path.join(config.paths.modsSource, modId, 'mod');
-        const outputDir = path.join(config.paths.modsDist, modId);
-        const outputPath = path.join(outputDir, 'payload.zip');
-
-        // Створюємо стрім для запису
         const output = fs.createWriteStream(outputPath);
-        const archive = archiver('zip', { zlib: { level: 9 } }); // Максимальне стиснення
+        const archive = archiver('zip', { zlib: { level: 9 } });
 
         output.on('close', () => {
             const size = archive.pointer();
@@ -21,11 +31,19 @@ module.exports = function packageMod(modId) {
             resolve(size);
         });
 
-        archive.on('error', (err) => reject(err));
+        archive.on('warning', (err) => {
+            if (err.code === 'ENOENT') {
+                console.warn(err);
+            } else {
+                reject(err);
+            }
+        });
+
+        archive.on('error', (err) => {
+            reject(err);
+        });
 
         archive.pipe(output);
-
-        // Додаємо вміст папки mod в корінь архіву
         archive.directory(sourceDir, false);
         archive.finalize();
     });

@@ -1,14 +1,10 @@
-import { app } from 'electron'
+import { app, BrowserWindow } from 'electron'
 import path from 'path'
 import fs from 'fs-extra'
 import AdmZip from 'adm-zip'
-import { pipeline } from 'stream/promises'
-import { createWriteStream } from 'fs'
 import { runEngine } from './EngineService'
 
 const CLOUD_URL = 'https://pub-af821b9413f74a56ad45f675b24a2fac.r2.dev/v1'
-
-// --- DATA FETCHING (GET) ---
 
 export async function getModCatalog() {
   const url = `${CLOUD_URL}/catalog/index.json?t=${Date.now()}`
@@ -41,47 +37,49 @@ export async function getModDetails(modId) {
   }
 }
 
-// --- INSTALLATION LOGIC (ACTION) ---
-
-// ВИПРАВЛЕННЯ 1: Додано аргумент gamePath
 export async function installCloudMod(modId, gamePath) {
   const userDataPath = app.getPath('userData')
   const cacheDir = path.join(userDataPath, 'ModsCache', modId.toString())
   const zipPath = path.join(cacheDir, 'payload.zip')
   const manifestPath = path.join(cacheDir, 'manifest.json')
 
-  await fs.ensureDir(cacheDir)
+  await fs.emptyDir(cacheDir)
 
-  // 1. Скачуємо (якщо файлів немає або треба оновити)
-  // Можна додати перевірку на існування, щоб не качати двічі
-  if (!fs.existsSync(zipPath)) {
-      console.log('[Cloud] Downloading payload...')
-      await downloadFile(`${CLOUD_URL}/mods/${modId}/payload.zip`, zipPath)
-  }
-  await downloadFile(`${CLOUD_URL}/mods/${modId}/manifest.json`, manifestPath)
+  console.log(`[Cloud] Downloading fresh payload for Mod ID: ${modId}`)
+  
+  await downloadFileWithProgress(
+    `${CLOUD_URL}/mods/${modId}/payload.zip`, 
+    zipPath,
+    (percent) => sendProgress('download', percent)
+  )
+  
+  await downloadFileWithProgress(
+    `${CLOUD_URL}/mods/${modId}/manifest.json`, 
+    manifestPath,
+    () => {} 
+  )
 
-  // 2. Розпаковуємо
-  console.log('[Cloud] Extracting...')
+  console.log('[Cloud] Extracting payload...')
+  sendProgress('install', 10) 
+  
   const zip = new AdmZip(zipPath)
   zip.extractAllTo(cacheDir, true)
-
-  // 3. Готуємо інструкції з правильними шляхами
-  const manifest = await fs.readJson(manifestPath)
   
-  // Передаємо gamePath у трансформер
+  sendProgress('install', 30)
+
+  const manifest = await fs.readJson(manifestPath)
   const engineInstructions = transformInstructions(manifest.instructionSet, cacheDir, gamePath)
 
-  console.log(`[Cloud] Prepared ${engineInstructions.length} operations for Engine`)
+  console.log(`[Cloud] Dispatching ${engineInstructions.length} operations to Engine`)
+  sendProgress('install', 50)
 
-  // 4. Запускаємо C#
   const result = await runEngine('install-batch', {
     manifestPath: saveTempManifest(engineInstructions)
   })
 
+  sendProgress('install', 100)
   return result
 }
-
-// --- HELPERS ---
 
 async function fetchJson(url) {
   const response = await fetch(url)
@@ -89,10 +87,37 @@ async function fetchJson(url) {
   return await response.json()
 }
 
-async function downloadFile(url, destPath) {
+async function downloadFileWithProgress(url, destPath, onProgress) {
   const response = await fetch(url)
   if (!response.ok) throw new Error(`Failed to download ${url}`)
-  await pipeline(response.body, createWriteStream(destPath))
+
+  const totalBytes = Number(response.headers.get('content-length') || 0)
+  const fileStream = fs.createWriteStream(destPath)
+  const reader = response.body.getReader()
+  
+  let receivedBytes = 0
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    receivedBytes += value.length
+    fileStream.write(Buffer.from(value))
+
+    if (totalBytes > 0) {
+      const percent = Math.round((receivedBytes / totalBytes) * 100)
+      onProgress(percent)
+    }
+  }
+
+  fileStream.end()
+}
+
+function sendProgress(type, value) {
+  const windows = BrowserWindow.getAllWindows()
+  if (windows.length > 0) {
+    windows[0].webContents.send('installation-progress', { type, value })
+  }
 }
 
 function transformInstructions(cloudInstructions, modCachePath, gamePath) {
@@ -100,21 +125,15 @@ function transformInstructions(cloudInstructions, modCachePath, gamePath) {
 
   for (const instruction of cloudInstructions) {
     if (instruction.type === 'replace_batch') {
-      const sourceDir = path.join(modCachePath, instruction.sourceSubPath || '')
+      const sourceSubDir = instruction.sourceSubPath || ''
+      const absoluteSourceDir = path.join(modCachePath, sourceSubDir)
       
       for (const fileName of instruction.files) {
         flattened.push({
-          // ВИПРАВЛЕННЯ 2: Формуємо абсолютний шлях до цілі
-          // D:\Games\GTAV + update\x64\...\vehicles.rpf + car.yft
           targetPath: path.join(gamePath, instruction.targetPath, fileName),
-          
-          // ВИПРАВЛЕННЯ 3: Ключ має бути sourceFilePath (як у C# класі BatchItem), а не sourceFile
-          sourceFilePath: path.join(sourceDir, fileName)
+          sourceFilePath: path.join(absoluteSourceDir, fileName)
         })
       }
-    } else {
-      // Якщо є інші типи команд, їх теж треба адаптувати, 
-      // але поки працюємо тільки з replace_batch
     }
   }
 
