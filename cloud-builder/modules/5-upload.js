@@ -9,7 +9,7 @@ const colors = require('colors');
 // Завантажуємо змінні середовища
 dotenv.config();
 
-// Налаштування клієнта (взято з твого старого скрипта)
+// Налаштування клієнта
 const s3Client = new S3Client({
     region: 'auto',
     endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
@@ -29,8 +29,9 @@ async function getFiles(dir) {
     return files.reduce((a, f) => a.concat(f), []);
 }
 
-module.exports = async function uploadToCloud() {
-    console.log(`[Upload] ☁️  Starting upload to Cloudflare R2...`.cyan);
+// ПРИЙМАЄМО currentModId ЯК АРГУМЕНТ
+module.exports = async function uploadToCloud(currentModId) {
+    console.log(`[Upload] ☁️  Starting upload to Cloudflare R2 for Mod ID: ${currentModId}...`.cyan);
 
     if (!process.env.R2_ACCOUNT_ID || !process.env.R2_BUCKET_NAME) {
         console.warn(`   ⚠️ SKIPPING UPLOAD: .env variables missing`.yellow);
@@ -39,30 +40,42 @@ module.exports = async function uploadToCloud() {
 
     const distPath = config.paths.dist; // cloud_mock/v1
     
-    // Отримуємо список всіх файлів, які ми збілдили
+    // Отримуємо список всіх файлів
     const allFiles = await getFiles(distPath);
 
-    console.log(`   -> Found ${allFiles.length} files to upload.`);
+    console.log(`   -> Scanning build directory... Found ${allFiles.length} files total.`);
+
+    let uploadCount = 0;
 
     for (const filePath of allFiles) {
-        // Отримуємо відносний шлях для S3 ключа
-        // Наприклад: D:\...\cloud_mock\v1\mods\21\manifest.json -> mods/21/manifest.json
+        // Отримуємо відносний шлях
         let relativePath = path.relative(distPath, filePath);
         
-        // ВАЖЛИВО: Windows використовує '\', а URL потребує '/'
+        // Нормалізуємо слеші для URL та перевірок (Windows fix)
         relativePath = relativePath.split(path.sep).join('/');
         
-        // Додаємо префікс v1 (якщо треба, або прибираємо, якщо dist вже v1)
-        // У нашому випадку dist це cloud_mock/v1, тому ключ буде v1/mods/...
+        // --- ФІЛЬТРАЦІЯ ---
+        // 1. Це файл каталогу? (завжди оновлюємо index.json та категорії)
+        const isCatalog = relativePath.startsWith('catalog/');
+        
+        // 2. Це файл ПОТОЧНОГО моду? (оновлюємо тільки папку mods/22, якщо збираємо 22)
+        const isCurrentMod = relativePath.startsWith(`mods/${currentModId}/`);
+
+        // Якщо файл не належить ні до каталогу, ні до поточного моду — пропускаємо його
+        if (!isCatalog && !isCurrentMod) {
+            continue;
+        }
+
+        // Формуємо ключ для S3
         const s3Key = `v1/${relativePath}`;
 
         const fileContent = await fs.readFile(filePath);
         const contentType = mime.lookup(filePath) || 'application/octet-stream';
 
-        // Логіка кешування (з твого скрипта)
-        let cacheControl = 'public, max-age=31536000'; // Довгий кеш для картинок/архівів
+        // Логіка кешування
+        let cacheControl = 'public, max-age=31536000'; // Довгий кеш
         if (s3Key.endsWith('.json')) {
-            cacheControl = 'no-cache, no-store, must-revalidate'; // Жодного кешу для JSON
+            cacheControl = 'no-cache, no-store, must-revalidate'; // Без кешу для JSON
         }
 
         try {
@@ -76,8 +89,11 @@ module.exports = async function uploadToCloud() {
 
             await s3Client.send(command);
             console.log(`   -> ✅ Uploaded: ${s3Key}`);
+            uploadCount++;
         } catch (err) {
             console.error(`   -> ❌ Error uploading ${s3Key}: ${err.message}`.red);
         }
     }
+
+    console.log(`   -> Upload complete. Transferred ${uploadCount} files.`.green);
 };

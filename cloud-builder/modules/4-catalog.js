@@ -1,20 +1,58 @@
 const fs = require('fs-extra');
 const path = require('path');
 const config = require('../config');
+const colors = require('colors');
 
-module.exports = async function updateCatalog(newModManifest) {
-    console.log(`[Catalog] Updating global index...`);
+// ==============================================================================
+// 🔴 КРОК 1: ВСТАВ СЮДИ СВОЄ ПУБЛІЧНЕ ПОСИЛАННЯ R2 (з вкладки Settings -> Public Access)
+// Воно має виглядати приблизно так: 'https://pub-xxxxxxxxxxxx.r2.dev/v1/catalog'
+// ==============================================================================
+const remoteCatalogBaseUrl = 'https://pub-af821b9413f74a56ad45f675b24a2fac.r2.dev/v1/catalog'; 
 
-    const indexFile = path.join(config.paths.catalog, 'index.json');
-    await fs.ensureDir(config.paths.catalog);
-    await fs.ensureDir(path.join(config.paths.catalog, 'categories'));
-
-    let catalog = [];
-    if (fs.existsSync(indexFile)) {
-        catalog = await fs.readJson(indexFile);
+async function fetchRemoteCatalog(filename) {
+    const targetUrl = `${remoteCatalogBaseUrl}/${filename}`;
+    console.log(`[Catalog] 🌐 Checking remote: ${targetUrl}`.gray);
+    
+    // Перевірка на "заглушку"
+    if (targetUrl.includes('your-project-url')) {
+        console.error(`\n❌ ERROR: You must update 'remoteCatalogBaseUrl' in modules/4-catalog.js!`.red.bold);
+        console.error(`The script cannot see existing mods without a real URL.\n`.red);
+        process.exit(1);
     }
 
-    // Міні-об'єкт для пошуку (оптимізація трафіку)
+    try {
+        const response = await fetch(targetUrl);
+        
+        if (response.ok) {
+            const data = await response.json();
+            console.log(`   -> ✅ Found existing data: ${data.length} items`.green);
+            return data;
+        } else if (response.status === 404) {
+             console.log(`   -> ⚠️ File not found (404). Assuming new catalog.`.yellow);
+             return [];
+        } else {
+            throw new Error(`HTTP Error ${response.status}`);
+        }
+    } catch (error) {
+        console.error(`\n❌ CRITICAL ERROR: Could not fetch remote catalog!`.red.bold);
+        console.error(`   Reason: ${error.message}`.red);
+        console.error(`   URL: ${targetUrl}`.red);
+        console.error(`\n⛔ STOPPING to prevent data loss. Check your internet or URL.\n`.red);
+        process.exit(1); // Зупиняємо білд, щоб не затерти файл
+    }
+}
+
+module.exports = async function updateCatalog(newModManifest) {
+    console.log(`[Catalog] Syncing with remote cloud...`.cyan);
+
+    const catalogDir = config.paths.catalog;
+    const categoriesDir = path.join(catalogDir, 'categories');
+    const indexFileName = 'index.json';
+    const categoryFileName = `categories/${newModManifest.category.toLowerCase()}.json`;
+
+    await fs.ensureDir(catalogDir);
+    await fs.ensureDir(categoriesDir);
+
     const catalogItem = {
         id: newModManifest.id,
         n: newModManifest.name,
@@ -22,20 +60,28 @@ module.exports = async function updateCatalog(newModManifest) {
         c: newModManifest.category,
         t: newModManifest.tags,
         v: newModManifest.version,
-        d: Date.now() // timestamp
+        d: Date.now()
     };
 
-    // Видаляємо стару версію якщо є, додаємо нову
-    catalog = catalog.filter(item => item.id !== newModManifest.id);
-    catalog.unshift(catalogItem); // Додаємо на початок (найновіше)
+    // 1. ОНОВЛЕННЯ ГОЛОВНОГО ІНДЕКСУ
+    // Тепер, якщо fetch впаде, скрипт ЗУПИНИТЬСЯ, а не поверне пустий масив.
+    let mainCatalog = await fetchRemoteCatalog(indexFileName);
+    
+    // Видаляємо стару версію (якщо є) і додаємо нову
+    mainCatalog = mainCatalog.filter(item => item.id !== newModManifest.id);
+    mainCatalog.unshift(catalogItem);
+    
+    const localIndexPath = path.join(catalogDir, indexFileName);
+    await fs.writeJson(localIndexPath, mainCatalog);
 
-    // Зберігаємо головний індекс
-    await fs.writeJson(indexFile, catalog); // Тут можна додати {spaces: 0} для мініфікації
+    // 2. ОНОВЛЕННЯ КАТЕГОРІЇ
+    let categoryCatalog = await fetchRemoteCatalog(categoryFileName);
 
-    // Оновлення файлу категорії
-    const categoryFile = path.join(config.paths.catalog, 'categories', `${newModManifest.category.toLowerCase()}.json`);
-    const categoryItems = catalog.filter(i => i.c === newModManifest.category);
-    await fs.writeJson(categoryFile, categoryItems);
+    categoryCatalog = categoryCatalog.filter(item => item.id !== newModManifest.id);
+    categoryCatalog.unshift(catalogItem);
 
-    console.log(`   -> Index updated. Total mods: ${catalog.length}`);
+    const localCategoryPath = path.join(catalogDir, categoryFileName);
+    await fs.writeJson(localCategoryPath, categoryCatalog);
+
+    console.log(`   -> Catalog updated locally. Total mods in index: ${mainCatalog.length}`.green);
 };

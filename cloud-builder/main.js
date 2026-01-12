@@ -49,9 +49,10 @@ if (!modId || modId.startsWith('--')) {
         await updateCatalog(cloudManifest);
 
         // 5. Завантаження (Тільки якщо є прапорець --upload)
+        // 5. Завантаження (Тільки якщо є прапорець --upload)
         if (shouldUpload) {
             console.log('\n📦 Deployment requested...'.magenta);
-            await uploadToCloud();
+            await uploadToCloud(modId); // <--- ДОДАЙТЕ modId В ДУЖКИ
         } else {
             console.log('\n⚠️  Skipping Cloud Upload. Use --upload to deploy.'.gray);
         }
