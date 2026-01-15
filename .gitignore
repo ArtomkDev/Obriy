@@ -33,6 +33,7 @@ yarn-error.log*
 
 store-data/
 cloud_mock/
+keys/
 
 
 gtavideo.mp4

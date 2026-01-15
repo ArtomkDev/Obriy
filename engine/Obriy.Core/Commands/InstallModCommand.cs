@@ -23,10 +23,23 @@ namespace Obriy.Core.Commands
 
             try
             {
-                var pathInfo = SplitPath(fullTargetPath);
+                if (!File.Exists(sourceFile))
+                {
+                    throw new FileNotFoundException($"Source file not found: {sourceFile}");
+                }
+
+                // Розбиваємо повний шлях на: шлях до RPF та внутрішній шлях у архіві
+                var (physicalRpfPath, internalPath) = SplitPath(fullTargetPath);
                 
-                var editor = new RpfEditor();
-                editor.InstallMod(pathInfo.PhysicalPath, pathInfo.InternalPath, sourceFile);
+                // Знаходимо корінь гри (для ключів) та відносний шлях RPF
+                var gameRoot = FindGameRoot(physicalRpfPath);
+                var relativeRpfPath = Path.GetRelativePath(gameRoot, physicalRpfPath);
+
+                // Ініціалізуємо редактор і виконуємо інсталяцію
+                var editor = new RpfEditor(gameRoot);
+                var fileContent = File.ReadAllBytes(sourceFile);
+
+                editor.InstallFile(relativeRpfPath, internalPath, fileContent);
                 
                 var success = new { status = "success" };
                 Console.WriteLine(JsonSerializer.Serialize(success)); 
@@ -52,14 +65,34 @@ namespace Obriy.Core.Commands
                     return (currentPath, internalParts.TrimStart('/', '\\'));
                 }
 
-                string fileName = Path.GetFileName(currentPath);
-                string directory = Path.GetDirectoryName(currentPath);
+                string? fileName = Path.GetFileName(currentPath);
+                string? directory = Path.GetDirectoryName(currentPath);
 
-                internalParts = Path.Combine(fileName, internalParts);
+                // Захист від зациклення або виходу за межі кореня
+                if (string.IsNullOrEmpty(directory) || directory == currentPath) break;
+
+                internalParts = Path.Combine(fileName ?? "", internalParts);
                 currentPath = directory;
             }
 
             throw new FileNotFoundException($"Could not find a valid RPF root in path: {fullPath}");
+        }
+
+        private string FindGameRoot(string rpfPath)
+        {
+            var dir = Path.GetDirectoryName(rpfPath);
+            while (!string.IsNullOrEmpty(dir))
+            {
+                if (File.Exists(Path.Combine(dir, "GTA5.exe")))
+                {
+                    return dir;
+                }
+                var parent = Directory.GetParent(dir);
+                if (parent == null) break;
+                dir = parent.FullName;
+            }
+            // Якщо GTA5.exe не знайдено, повертаємо папку де лежить сам RPF (або throw exception, залежно від логіки)
+            return Path.GetDirectoryName(rpfPath) ?? rpfPath;
         }
     }
 }
