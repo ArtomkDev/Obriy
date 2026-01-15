@@ -1,3 +1,5 @@
+D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\ShadersGen9Conversion.xml
+D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\strings.txt
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\keys\gtav_aes_key.dat
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\keys\gtav_hash_lut.dat
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\keys\gtav_ng_decrypt_tables.dat
@@ -9,12 +11,12 @@ D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\Obriy.Core.deps.jso
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\Obriy.Core.runtimeconfig.json
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\Obriy.Core.dll
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\Obriy.Core.pdb
-D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\HtmlAgilityPack.dll
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\Microsoft.Win32.SystemEvents.dll
-D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\RageLib.dll
-D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\RageLib.GTA5.dll
-D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\System.Xml.XPath.XmlDocument.dll
+D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\SharpDX.dll
+D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\SharpDX.Mathematics.dll
+D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\System.Drawing.Common.dll
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\runtimes\win\lib\net8.0\Microsoft.Win32.SystemEvents.dll
+D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\CodeWalker.Core.pdb
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\Obriy.Core.csproj.AssemblyReference.cache
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\Obriy.Core.GeneratedMSBuildEditorConfig.editorconfig
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\Obriy.Core.AssemblyInfoInputs.cache

@@ -4,12 +4,11 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
+    <Nullable>disable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="RageLib.GTA5" Version="1.1.1" />
-    <PackageReference Include="Microsoft.Win32.SystemEvents" Version="8.0.0" />
+    <ProjectReference Include="..\CodeWalker.Core\CodeWalker.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>

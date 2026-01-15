@@ -8,8 +8,8 @@ namespace Obriy.Core.Commands
 {
     public class BatchItem
     {
-        public string TargetPath { get; set; } = string.Empty;
-        public string SourceFilePath { get; set; } = string.Empty;
+        public string TargetPath { get; set; }
+        public string SourceFilePath { get; set; }
     }
 
     public class BatchInstallCommand : ICommand
@@ -18,6 +18,7 @@ namespace Obriy.Core.Commands
 
         public object Execute(string[] args)
         {
+            // Налаштування миттєвого виводу в консоль (без буферизації)
             var writer = new StreamWriter(Console.OpenStandardOutput());
             writer.AutoFlush = true;
             Console.SetOut(writer);
@@ -33,8 +34,9 @@ namespace Obriy.Core.Commands
                 var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
                 var items = JsonSerializer.Deserialize<List<BatchItem>>(jsonContent, options);
                 
-                if (items == null) return Error("Failed to parse manifest");
-
+                var editor = new RpfEditor();
+                
+                // 1. Рахуємо загальну вагу всіх файлів (в байтах)
                 long totalBytes = 0;
                 var fileSizes = new List<long>();
 
@@ -52,6 +54,7 @@ namespace Obriy.Core.Commands
                     }
                 }
 
+                // Захист від ділення на нуль, якщо файли пусті
                 if (totalBytes == 0) totalBytes = 1;
 
                 long processedBytes = 0;
@@ -59,41 +62,21 @@ namespace Obriy.Core.Commands
 
                 Console.Error.WriteLine($"[Batch] Processing {items.Count} files. Total size: {totalBytes / 1024} KB");
 
-                RpfEditor? currentEditor = null;
-                string? lastGameRoot = null;
-
                 for (int i = 0; i < items.Count; i++)
                 {
                     var item = items[i];
                     long currentFileSize = fileSizes[i];
 
-                    if (File.Exists(item.SourceFilePath))
-                    {
-                        try
-                        {
-                            var (physicalRpfPath, internalPath) = SplitPath(item.TargetPath);
-                            var gameRoot = FindGameRoot(physicalRpfPath);
+                    // Інсталюємо файл
+                    var pathInfo = SplitPath(item.TargetPath);
+                    editor.InstallMod(pathInfo.PhysicalPath, pathInfo.InternalPath, item.SourceFilePath);
 
-                            if (currentEditor == null || lastGameRoot != gameRoot)
-                            {
-                                currentEditor = new RpfEditor(gameRoot);
-                                lastGameRoot = gameRoot;
-                            }
-
-                            var relativeRpfPath = Path.GetRelativePath(gameRoot, physicalRpfPath);
-                            var fileContent = File.ReadAllBytes(item.SourceFilePath);
-
-                            currentEditor.InstallFile(relativeRpfPath, internalPath, fileContent);
-                        }
-                        catch (Exception ex)
-                        {
-                            throw new Exception($"Failed to install {item.SourceFilePath} to {item.TargetPath}: {ex.Message}");
-                        }
-                    }
-
+                    // 2. Оновлюємо прогрес на основі ваги
                     processedBytes += currentFileSize;
+                    
                     int currentPercent = (int)((double)processedBytes / totalBytes * 100.0);
 
+                    // Відправляємо прогрес, тільки якщо він змінився або це фінал
                     if (currentPercent > lastReportedPercent || i == items.Count - 1)
                     {
                         var progressMessage = new 
@@ -120,7 +103,7 @@ namespace Obriy.Core.Commands
             }
         }
 
-        private object Error(string msg, string? trace = null)
+        private object Error(string msg, string trace = null)
         {
             var err = new { status = "error", message = msg, trace = trace };
             Console.WriteLine(JsonSerializer.Serialize(err));
@@ -135,36 +118,17 @@ namespace Obriy.Core.Commands
             while (!string.IsNullOrEmpty(currentPath))
             {
                 if (File.Exists(currentPath))
-                {
                     return (currentPath, internalParts.TrimStart('/', '\\'));
-                }
 
-                string? fileName = Path.GetFileName(currentPath);
-                string? directory = Path.GetDirectoryName(currentPath);
+                string fileName = Path.GetFileName(currentPath);
+                string directory = Path.GetDirectoryName(currentPath);
 
                 if (string.IsNullOrEmpty(directory) || directory == currentPath) break;
 
-                internalParts = Path.Combine(fileName ?? "", internalParts);
+                internalParts = Path.Combine(fileName, internalParts);
                 currentPath = directory;
             }
-
-            throw new FileNotFoundException($"Could not find a valid RPF root in path: {fullPath}");
-        }
-
-        private string FindGameRoot(string rpfPath)
-        {
-            var dir = Path.GetDirectoryName(rpfPath);
-            while (!string.IsNullOrEmpty(dir))
-            {
-                if (File.Exists(Path.Combine(dir, "GTA5.exe")))
-                {
-                    return dir;
-                }
-                var parent = Directory.GetParent(dir);
-                if (parent == null) break;
-                dir = parent.FullName;
-            }
-            return Path.GetDirectoryName(rpfPath) ?? rpfPath;
+            throw new FileNotFoundException($"Valid RPF root not found for: {fullPath}");
         }
     }
 }
