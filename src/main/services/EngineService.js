@@ -8,6 +8,7 @@ import AdmZip from 'adm-zip'
 let backendProcess = null
 let isBackendReady = false
 let commandQueue = Promise.resolve()
+const COMMAND_TIMEOUT_MS = 600000 
 
 function getEnginePath() {
   return !app.isPackaged
@@ -30,8 +31,6 @@ export function startBackendProcess() {
         return
     }
 
-    console.log(`[EngineService] Spawning backend: ${enginePath}`)
-
     backendProcess = spawn(enginePath, [], {
       cwd: workingDirectory,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -50,30 +49,34 @@ export function startBackendProcess() {
         try {
           const json = JSON.parse(line)
           if (json.status === 'ready') {
-              console.log('[EngineService] Backend Ready')
               isBackendReady = true
               backendProcess.stdout.removeListener('data', initListener)
               resolve(true)
           }
         } catch (e) {
-           // Ігноруємо невалідний JSON при запуску
         }
       }
     }
 
     backendProcess.stdout.on('data', initListener)
     
-    // Глобальний логер помилок (замість дублювання в sendCommand)
     backendProcess.stderr.on('data', (data) => {
       console.error(`[Core Log]: ${data.toString()}`)
     })
 
     backendProcess.on('close', (code) => {
-      console.log(`[EngineService] Backend closed with code ${code}`)
       backendProcess = null
       isBackendReady = false
     })
   })
+}
+
+function killBackend() {
+    if (backendProcess) {
+        backendProcess.kill()
+        backendProcess = null
+        isBackendReady = false
+    }
 }
 
 function sendCommand(commandName, args, eventSender, modId) {
@@ -86,12 +89,14 @@ function sendCommand(commandName, args, eventSender, modId) {
       }
     }
 
-    return new Promise((resolve, reject) => {
+    const executePromise = new Promise((resolve, reject) => {
       const request = JSON.stringify({ Command: commandName, Args: args }) + '\n'
       let buffer = ''
       
       const cleanupListeners = () => {
-        backendProcess.stdout.removeListener('data', responseHandler)
+        if (backendProcess) {
+            backendProcess.stdout.removeListener('data', responseHandler)
+        }
       }
 
       const responseHandler = (data) => {
@@ -105,21 +110,17 @@ function sendCommand(commandName, args, eventSender, modId) {
             try {
                 const json = JSON.parse(line)
                 
-                // [FIX 1] Обробка прогресу
                 if (json.type === 'progress') {
                     if (eventSender) {
-                        // [FIX 2] Відправляємо подію 'task-progress' замість 'installation-progress'
-                        // [FIX 3] Додаємо modId та мапимо json.value на percentage
                         eventSender.send('task-progress', { 
                             type: 'install', 
-                            modId: modId,       // Критично важливо для Context!
+                            modId: modId,
                             percentage: json.value 
                         })
                     }
-                    continue; // Це не кінець команди, чекаємо далі
+                    continue
                 }
 
-                // Це фінальна відповідь
                 cleanupListeners()
                 resolve(json)
             } catch (e) {
@@ -131,12 +132,28 @@ function sendCommand(commandName, args, eventSender, modId) {
       backendProcess.stdout.on('data', responseHandler)
       
       try {
+        if (!backendProcess.stdin.writable) {
+            throw new Error('Backend stdin is not writable')
+        }
         backendProcess.stdin.write(request)
       } catch (err) {
         cleanupListeners()
         reject(err)
       }
     })
+
+    const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+            reject(new Error(`Command ${commandName} timed out after ${COMMAND_TIMEOUT_MS}ms`))
+        }, COMMAND_TIMEOUT_MS)
+    })
+
+    try {
+        return await Promise.race([executePromise, timeoutPromise])
+    } catch (error) {
+        killBackend()
+        throw error
+    }
   }
 
   commandQueue = commandQueue.then(() => nextCommand()).catch(e => {
@@ -147,7 +164,7 @@ function sendCommand(commandName, args, eventSender, modId) {
   return commandQueue
 }
 
-async function downloadFile(url, destPath, sender, modId) { // Додано modId
+async function downloadFile(url, destPath, sender, modId) {
   return new Promise((resolve, reject) => {
     const request = net.request(url)
     
@@ -169,7 +186,7 @@ async function downloadFile(url, destPath, sender, modId) { // Додано modI
           const progress = Math.round((downloadedBytes / totalBytes) * 100)
           sender.send('task-progress', { 
             type: 'download', 
-            modId: modId || 'current', // Передаємо modId
+            modId: modId || 'current',
             percentage: progress
           })
         }
@@ -221,8 +238,6 @@ function prepareBatchItems(instructionSet, gameRootPath, isUninstall) {
     return batchItems;
 }
 
-// --- ЕКСПОРТОВАНІ МЕТОДИ ---
-
 export async function executeBatch(manifestPath, eventSender) {
     return await sendCommand('install-batch', [manifestPath], eventSender);
 }
@@ -239,7 +254,6 @@ export const validateGamePath = async (gamePath) => {
 }
 
 export async function installMod(eventSender, gameRootPath, instructionSet, modId, archiveUrl) {
-    console.log(`[EngineService] Starting install for ${modId}`);
     
     const tempDir = path.join(app.getPath('temp'), 'obriy_install', modId);
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
@@ -250,10 +264,8 @@ export async function installMod(eventSender, gameRootPath, instructionSet, modI
     try {
         if (archiveUrl) {
             const noCacheUrl = `${archiveUrl}?nocache=${Date.now()}`;
-            // Передаємо modId у downloadFile
             await downloadFile(noCacheUrl, zipPath, eventSender, modId);
             
-            console.log(`[EngineService] Extracting...`);
             const zip = new AdmZip(zipPath);
             zip.extractAllTo(extractPath, true);
         }
@@ -271,14 +283,12 @@ export async function installMod(eventSender, gameRootPath, instructionSet, modI
         const manifestPath = path.join(os.tmpdir(), `obriy_batch_${Date.now()}.json`);
         fs.writeFileSync(manifestPath, JSON.stringify(batchItems, null, 2));
 
-        // Передаємо modId у sendCommand для відстеження прогресу
         const result = await sendCommand('install-batch', [manifestPath], eventSender, modId);
         
         try { fs.unlinkSync(manifestPath); } catch {}
         return result;
 
     } catch (err) {
-        console.error('[EngineService] Install Error:', err);
         return { status: 'error', error: err.message };
     } finally {
         try {
