@@ -167,15 +167,19 @@ namespace CodeWalker.GameFiles
 
         public static void LoadFromPath(string path = ".\\Keys", bool gen9 = false, string key = null)
         {
-            //PC_AES_KEY = File.ReadAllBytes(path + "\\gtav_aes_key.dat");
-            //PC_NG_KEYS = CryptoIO.ReadNgKeys(path + "\\gtav_ng_key.dat");
-            //PC_NG_DECRYPT_TABLES = CryptoIO.ReadNgTables(path + "\\gtav_ng_decrypt_tables.dat");
-            ////PC_NG_ENCRYPT_TABLES = CryptoIO.ReadNgTables(path + "\\gtav_ng_encrypt_tables.dat");
-            ////PC_NG_ENCRYPT_LUTs = CryptoIO.ReadNgLuts(path + "\\gtav_ng_encrypt_luts.dat");
-            //PC_LUT = File.ReadAllBytes(path + "\\gtav_hash_lut.dat");
-
-            //GenerateMagicData(path);
-            UseMagicData(path, gen9, key);
+            try 
+            {
+                PC_AES_KEY = File.ReadAllBytes(Path.Combine(path, "gtav_aes_key.dat"));
+                PC_NG_KEYS = CryptoIO.ReadNgKeys(Path.Combine(path, "gtav_ng_key.dat"));
+                PC_NG_DECRYPT_TABLES = CryptoIO.ReadNgTables(Path.Combine(path, "gtav_ng_decrypt_tables.dat"));
+                PC_NG_ENCRYPT_TABLES = CryptoIO.ReadNgTables(Path.Combine(path, "gtav_ng_encrypt_tables.dat"));
+                PC_NG_ENCRYPT_LUTs = CryptoIO.ReadNgLuts(Path.Combine(path, "gtav_ng_encrypt_luts.dat"));
+                PC_LUT = File.ReadAllBytes(Path.Combine(path, "gtav_hash_lut.dat"));
+            }
+            catch (Exception ex)
+            {
+                throw new FileNotFoundException($"Failed to load keys from {path}. Ensure .dat files exist. Error: {ex.Message}");
+            }
         }
 
         public static void SaveToPath(string path = ".\\Keys")

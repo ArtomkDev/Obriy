@@ -2,7 +2,8 @@ import { app, BrowserWindow } from 'electron'
 import path from 'path'
 import fs from 'fs-extra'
 import AdmZip from 'adm-zip'
-import { runEngine } from './EngineService'
+// ВИПРАВЛЕНО: Імпорт executeBatch замість runEngine
+import { executeBatch } from './EngineService'
 
 const CLOUD_URL = 'https://pub-af821b9413f74a56ad45f675b24a2fac.r2.dev/v1'
 
@@ -73,9 +74,8 @@ export async function installCloudMod(modId, gamePath) {
   console.log(`[Cloud] Dispatching ${engineInstructions.length} operations to Engine`)
   sendProgress('install', 50)
 
-  const result = await runEngine('install-batch', {
-    manifestPath: saveTempManifest(engineInstructions)
-  })
+  // ВИПРАВЛЕНО: Виклик executeBatch, передаємо тільки шлях
+  const result = await executeBatch(saveTempManifest(engineInstructions))
 
   sendProgress('install', 100)
   return result
@@ -93,6 +93,7 @@ async function downloadFileWithProgress(url, destPath, onProgress) {
 
   const totalBytes = Number(response.headers.get('content-length') || 0)
   const fileStream = fs.createWriteStream(destPath)
+  // Важливо: getReader доступний тільки в середовищах де fetch підтримує streams (Electron/Node 18+)
   const reader = response.body.getReader()
   
   let receivedBytes = 0

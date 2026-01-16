@@ -5,14 +5,138 @@ import fs from 'fs'
 import os from 'os'
 import AdmZip from 'adm-zip'
 
-// 1. Отримання правильного шляху до EXE
+let backendProcess = null
+let isBackendReady = false
+let commandQueue = Promise.resolve()
+
 function getEnginePath() {
   return !app.isPackaged
-    ? path.join(process.cwd(), 'engine/Obriy.Core/bin/Debug/net8.0/Obriy.Core.exe') // DEV шлях
-    : path.join(process.resourcesPath, 'engine/Obriy.Core.exe') // PROD шлях
+    ? path.join(process.cwd(), 'engine/Obriy.Core/bin/Debug/net8.0/Obriy.Core.exe')
+    : path.join(process.resourcesPath, 'engine/Obriy.Core.exe')
 }
 
-// 2. Функція скачування файлу
+export function startBackendProcess() {
+  return new Promise((resolve, reject) => {
+    if (backendProcess && !backendProcess.killed) {
+      resolve(true)
+      return
+    }
+
+    const enginePath = getEnginePath()
+    const workingDirectory = path.dirname(enginePath)
+
+    if (!fs.existsSync(enginePath)) {
+        reject(new Error(`Core engine not found at ${enginePath}`))
+        return
+    }
+
+    console.log(`[EngineService] Spawning backend: ${enginePath}`)
+
+    backendProcess = spawn(enginePath, [], {
+      cwd: workingDirectory,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true
+    })
+
+    const initListener = (data) => {
+      const message = data.toString().trim()
+      try {
+        const json = JSON.parse(message)
+        if (json.status === 'ready') {
+            console.log('[EngineService] Backend Ready')
+            isBackendReady = true
+            backendProcess.stdout.removeListener('data', initListener)
+            resolve(true)
+        }
+      } catch (e) {
+         // Ігноруємо шум при запуску
+      }
+    }
+
+    backendProcess.stdout.on('data', initListener)
+    
+    backendProcess.stderr.on('data', (data) => {
+      console.error(`[Core Log]: ${data.toString()}`)
+    })
+
+    backendProcess.on('close', (code) => {
+      console.log(`[EngineService] Backend closed with code ${code}`)
+      backendProcess = null
+      isBackendReady = false
+    })
+  })
+}
+
+// Внутрішня функція відправки команд
+function sendCommand(commandName, args, eventSender, modId) {
+  const nextCommand = async () => {
+    if (!backendProcess || !isBackendReady) {
+      // Спробуємо запустити, якщо впав
+      try {
+        await startBackendProcess()
+      } catch (e) {
+        throw new Error('Backend process is not running or failed to start')
+      }
+    }
+
+    return new Promise((resolve, reject) => {
+      const request = JSON.stringify({ Command: commandName, Args: args }) + '\n'
+      
+      const responseHandler = (data) => {
+        const str = data.toString().trim()
+        try {
+          if (str.startsWith('{') && str.endsWith('}')) {
+             const json = JSON.parse(str)
+             backendProcess.stdout.removeListener('data', responseHandler)
+             backendProcess.stderr.removeListener('data', progressHandler)
+             resolve(json)
+          }
+        } catch (e) {
+           console.error('JSON Parse Error:', e)
+        }
+      }
+
+      const progressHandler = (data) => {
+        if (!eventSender) return
+        
+        const str = data.toString()
+        const match = str.match(/\[Progress\]: (\d+)\/(\d+)/)
+        
+        if (match) {
+            const current = parseInt(match[1])
+            const total = parseInt(match[2])
+            const percentage = 50 + Math.round((current / total) * 50)
+            
+            try {
+                eventSender.send('installation-progress', { 
+                    type: 'install', 
+                    value: percentage 
+                })
+            } catch (e) {}
+        }
+      }
+
+      backendProcess.stdout.on('data', responseHandler)
+      backendProcess.stderr.on('data', progressHandler)
+      
+      try {
+        backendProcess.stdin.write(request)
+      } catch (err) {
+        backendProcess.stdout.removeListener('data', responseHandler)
+        backendProcess.stderr.removeListener('data', progressHandler)
+        reject(err)
+      }
+    })
+  }
+
+  commandQueue = commandQueue.then(() => nextCommand()).catch(e => {
+      console.error('Command Execution Error:', e)
+      throw e
+  })
+  
+  return commandQueue
+}
+
 async function downloadFile(url, destPath, sender) {
   return new Promise((resolve, reject) => {
     const request = net.request(url)
@@ -41,14 +165,8 @@ async function downloadFile(url, destPath, sender) {
         }
       })
 
-      response.on('end', () => {
-        fileStream.end()
-      })
-
-      fileStream.on('finish', () => {
-        resolve()
-      })
-
+      response.on('end', () => fileStream.end())
+      fileStream.on('finish', () => resolve())
       fileStream.on('error', (err) => {
         fs.unlink(destPath, () => {})
         reject(err)
@@ -60,24 +178,18 @@ async function downloadFile(url, destPath, sender) {
   })
 }
 
-// 3. Підготовка списку файлів
 function prepareBatchItems(instructionSet, gameRootPath, isUninstall) {
     let batchItems = [];
-
     instructionSet.forEach(instr => {
         const sourcePath = isUninstall ? instr.vanillaFile : instr.sourceFile;
-        
-        if (!sourcePath) {
-            if (isUninstall) return;
-            return; 
-        }
+        if (!sourcePath) return; 
 
         if (!fs.existsSync(sourcePath)) {
+            if (isUninstall) return;
             throw new Error(`File source not found: ${sourcePath}`);
         }
 
         const stats = fs.statSync(sourcePath);
-
         if (stats.isDirectory()) {
             const files = fs.readdirSync(sourcePath);
             files.forEach(file => {
@@ -96,150 +208,25 @@ function prepareBatchItems(instructionSet, gameRootPath, isUninstall) {
             });
         }
     });
-
     return batchItems;
 }
 
-// 4. Запуск двигуна (Universal: Legacy + Cloud Support)
-// ТЕПЕР ЕКСПОРТУЄТЬСЯ І ПІДТРИМУЄ РІЗНІ АРГУМЕНТИ
-export function runEngine(arg1, arg2, arg3, arg4) {
-    return new Promise((resolve, reject) => {
-        const enginePath = getEnginePath()
-        const workingDirectory = path.dirname(enginePath); 
+// --- ЕКСПОРТОВАНІ МЕТОДИ ---
 
-        let manifestPath;
-        let eventSender = null;
-        let modId = null;
-        let actionType = 'install';
-        let shouldCleanup = false;
-
-        // --- ВИЗНАЧЕННЯ ТИПУ ВИКЛИКУ ---
-        
-        // Варіант А: Старий виклик (installMod/uninstallMod передають масив batchItems)
-        if (Array.isArray(arg1)) {
-            const batchItems = arg1;
-            eventSender = arg2;
-            modId = arg3;
-            if (arg4) actionType = arg4;
-
-            if (batchItems.length === 0) {
-                resolve({ status: 'warning', message: 'No files found to process.' });
-                return;
-            }
-
-            manifestPath = path.join(os.tmpdir(), `obriy_batch_${Date.now()}.json`)
-            fs.writeFileSync(manifestPath, JSON.stringify(batchItems, null, 2))
-            shouldCleanup = true;
-        } 
-        // Варіант Б: Новий виклик з CloudModService (передає команду 'install-batch' і об'єкт параметрів)
-        else if (typeof arg1 === 'string') {
-            // arg1 = 'install-batch'
-            const params = arg2; // { manifestPath: ... }
-            manifestPath = params.manifestPath;
-            // modId та eventSender поки що null у цьому сценарії (прогрес можна додати пізніше)
-        } else {
-            return reject(new Error('Invalid arguments passed to runEngine'));
-        }
-
-        console.log(`[Engine] Launching (${actionType}): ${enginePath}`);
-        
-        const child = spawn(enginePath, ['install-batch', manifestPath], {
-            cwd: workingDirectory 
-        })
-
-        let outputData = ''
-        let errorData = ''
-
-        child.stdout.on('data', (data) => { 
-            outputData += data.toString();
-        })
-
-        child.stderr.on('data', (data) => { 
-            const str = data.toString();
-            errorData += str;
-            
-            const match = str.match(/\[Progress\]: (\d+)\/(\d+)/);
-            if (match && eventSender) {
-                const current = parseInt(match[1]);
-                const total = parseInt(match[2]);
-                const percentage = 50 + Math.round((current / total) * 50);
-
-                try {
-                    eventSender.send('task-progress', { 
-                        modId: modId, 
-                        percentage: percentage, 
-                        type: actionType 
-                    });
-                } catch (e) { console.error(e) }
-            }
-        })
-
-        child.on('close', (code) => {
-          if (shouldCleanup) {
-              try { fs.unlinkSync(manifestPath); } catch {}
-          }
-
-          try {
-            const lastOpenBrace = outputData.lastIndexOf('{');
-            if (lastOpenBrace !== -1) {
-                let potentialJson = outputData.substring(lastOpenBrace);
-                const lastCloseBrace = potentialJson.lastIndexOf('}');
-                if (lastCloseBrace !== -1) {
-                    potentialJson = potentialJson.substring(0, lastCloseBrace + 1);
-                    const result = JSON.parse(potentialJson);
-                    
-                    if (result.error) reject(new Error(result.error));
-                    else resolve(result);
-                    return;
-                }
-            }
-            
-            if (code === 0) {
-                 resolve({ status: 'success_fallback' });
-            } else {
-                 reject(new Error(`Engine failed (Code ${code}). Stderr: ${errorData}`));
-            }
-
-          } catch (e) {
-            console.error('[Engine] JSON Parse Error:', e);
-            if (code === 0) resolve({ status: 'success', note: 'No JSON output' });
-            else reject(new Error(`Engine error: ${e.message}`));
-          }
-        })
-    })
+// НОВИЙ МЕТОД ДЛЯ ХМАРНОГО СЕРВІСУ
+export async function executeBatch(manifestPath, eventSender) {
+    return await sendCommand('install-batch', [manifestPath], eventSender);
 }
 
-// 5. Експортовані функції
-
 export const validateGamePath = async (gamePath) => {
-  return new Promise((resolve, reject) => {
-    const enginePath = getEnginePath()
-    const workingDirectory = path.dirname(enginePath);
-
-    if (!fs.existsSync(enginePath)) {
-        console.error(`[Engine] Executable not found at: ${enginePath}`);
-        resolve({ isValid: false, error: 'Core engine files missing.' });
-        return;
+    if (!isBackendReady) {
+        try {
+            await startBackendProcess()
+        } catch (e) {
+            return { isValid: false, error: 'Engine failed to start' }
+        }
     }
-
-    const child = spawn(enginePath, ['validate-path', gamePath], {
-        cwd: workingDirectory
-    })
-
-    let output = ''
-    child.stdout.on('data', (data) => output += data.toString())
-    
-    child.on('close', (code) => {
-      try {
-        const match = output.match(/\{.*\}/);
-        const jsonStr = match ? match[0] : output;
-        const result = JSON.parse(jsonStr)
-        resolve(result)
-      } catch (e) {
-        resolve({ isValid: false, error: 'Invalid response from engine' })
-      }
-    })
-  })
+    return await sendCommand('validate-path', [gamePath])
 }
 
 export async function installMod(eventSender, gameRootPath, instructionSet, modId, archiveUrl) {
@@ -254,52 +241,52 @@ export async function installMod(eventSender, gameRootPath, instructionSet, modI
     try {
         if (archiveUrl) {
             const noCacheUrl = `${archiveUrl}?nocache=${Date.now()}`;
-            console.log(`[EngineService] 🚀 REQUESTING NEW FILE: ${noCacheUrl}`);
             await downloadFile(noCacheUrl, zipPath, eventSender);
             
-            console.log(`[EngineService] 📂 Extracting...`);
+            console.log(`[EngineService] Extracting...`);
             const zip = new AdmZip(zipPath);
             zip.extractAllTo(extractPath, true);
-        } else {
-            console.warn('[EngineService] No archive URL provided. Skipping download.');
         }
 
         const resolvedInstructions = instructionSet.map(instr => {
             let resolvedSource = instr.sourcePath || instr.sourceFile; 
-            
             if (resolvedSource && resolvedSource.includes('{{ARCHIVE_ROOT}}')) {
                 resolvedSource = resolvedSource.replace('{{ARCHIVE_ROOT}}', extractPath);
                 resolvedSource = path.normalize(resolvedSource);
             }
-            
-            return {
-                ...instr,
-                sourceFile: resolvedSource 
-            };
+            return { ...instr, sourceFile: resolvedSource };
         });
 
         const batchItems = prepareBatchItems(resolvedInstructions, gameRootPath, false);
-        // Викликаємо runEngine по-старому (масив першим аргументом)
-        return await runEngine(batchItems, eventSender, modId, 'install');
+        const manifestPath = path.join(os.tmpdir(), `obriy_batch_${Date.now()}.json`);
+        fs.writeFileSync(manifestPath, JSON.stringify(batchItems, null, 2));
+
+        const result = await sendCommand('install-batch', [manifestPath], eventSender, modId);
+        
+        try { fs.unlinkSync(manifestPath); } catch {}
+        return result;
 
     } catch (err) {
         console.error('[EngineService] Install Error:', err);
         return { status: 'error', error: err.message };
     } finally {
         try {
-            if (fs.existsSync(tempDir)) {
-                fs.rmSync(tempDir, { recursive: true, force: true });
-            }
-        } catch (e) { console.error('Cleanup failed', e); }
+            if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
+        } catch (e) {}
     }
 }
 
 export async function uninstallMod(eventSender, gameRootPath, instructionSet, modId) {
     try {
         const batchItems = prepareBatchItems(instructionSet, gameRootPath, true);
-        return await runEngine(batchItems, eventSender, modId, 'uninstall');
+        const manifestPath = path.join(os.tmpdir(), `obriy_batch_uninstall_${Date.now()}.json`);
+        fs.writeFileSync(manifestPath, JSON.stringify(batchItems, null, 2));
+
+        const result = await sendCommand('install-batch', [manifestPath], eventSender, modId);
+        
+        try { fs.unlinkSync(manifestPath); } catch {}
+        return result;
     } catch (err) {
-        console.error('[EngineService] Uninstall Error:', err);
         return { status: 'error', error: err.message };
     }
 }

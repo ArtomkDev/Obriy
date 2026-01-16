@@ -1,5 +1,6 @@
 using CodeWalker.GameFiles;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 
@@ -24,20 +25,14 @@ namespace Obriy.Core.Services
 
             if (File.Exists(aesKeyFile))
             {
-                Console.Error.WriteLine($"[RpfEditor] Loading keys from: {keysPath}");
                 try
                 {
                     GTA5Keys.PC_AES_KEY = File.ReadAllBytes(aesKeyFile);
-
-                    if (GTA5Keys.PC_AES_KEY.Length < 32)
-                        throw new Exception("gtav_aes_key.dat is too small. Check Git LFS.");
-
                     GTA5Keys.PC_LUT = File.ReadAllBytes(Path.Combine(keysPath, "gtav_hash_lut.dat"));
                     GTA5Keys.PC_NG_KEYS = CryptoIO.ReadNgKeys(Path.Combine(keysPath, "gtav_ng_key.dat"));
                     GTA5Keys.PC_NG_DECRYPT_TABLES = CryptoIO.ReadNgTables(Path.Combine(keysPath, "gtav_ng_decrypt_tables.dat"));
                     GTA5Keys.PC_NG_ENCRYPT_TABLES = CryptoIO.ReadNgTables(Path.Combine(keysPath, "gtav_ng_encrypt_tables.dat"));
                     GTA5Keys.PC_NG_ENCRYPT_LUTs = CryptoIO.ReadNgLuts(Path.Combine(keysPath, "gtav_ng_encrypt_luts.dat"));
-                    Console.Error.WriteLine("[RpfEditor] Keys loaded successfully!");
                 }
                 catch (Exception ex)
                 {
@@ -47,127 +42,115 @@ namespace Obriy.Core.Services
             }
             else if (!string.IsNullOrEmpty(pathToGameFolder) && File.Exists(Path.Combine(pathToGameFolder, "GTA5.exe")))
             {
-                Console.Error.WriteLine("[RpfEditor] .dat keys not found, scanning GTA5.exe...");
                 byte[] exeData = File.ReadAllBytes(Path.Combine(pathToGameFolder, "GTA5.exe"));
                 GTA5Keys.GenerateV2(exeData, null);
             }
-            else
-            {
-                Console.Error.WriteLine($"Warning: Keys not found at {keysPath}! Encrypted RPFs will fail.");
-            }
         }
 
-        public void InstallMod(string physicalRpfPath, string internalPath, string replacementFilePath)
+        public void InstallBatch(string physicalRpfPath, Dictionary<string, string> files, Action<long> onBytesWritten = null)
         {
-            string normalizedPath = internalPath.Replace('\\', '/');
-            string[] pathParts = normalizedPath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
-
-            int nestedRpfIndex = -1;
-            for (int i = 0; i < pathParts.Length - 1; i++)
-            {
-                if (pathParts[i].EndsWith(".rpf", StringComparison.OrdinalIgnoreCase))
-                {
-                    nestedRpfIndex = i;
-                    break;
-                }
-            }
-
-            if (nestedRpfIndex != -1)
-            {
-                HandleNestedRpf(physicalRpfPath, pathParts, nestedRpfIndex, replacementFilePath);
-                return;
-            }
-
-            Console.Error.WriteLine($"[RpfEditor] Opening RPF: {physicalRpfPath}");
-
             if (!File.Exists(physicalRpfPath))
                 throw new FileNotFoundException($"RPF file not found: {physicalRpfPath}");
 
-            RpfFile rpfFile = new RpfFile(physicalRpfPath, physicalRpfPath);
+            var directFiles = new Dictionary<string, string>();
+            var nestedGroups = new Dictionary<string, Dictionary<string, string>>();
 
-            rpfFile.ScanStructure(
-                status => { },
-                error => Console.Error.WriteLine($"[CodeWalker Error] {error}")
-            );
-
-            if (rpfFile.Root == null)
+            foreach (var file in files)
             {
-                throw new Exception($"Failed to scan RPF: {physicalRpfPath}. LastError: {rpfFile.LastError}. See stderr for details.");
+                string path = file.Key.Replace('\\', '/');
+                int rpfIndex = path.IndexOf(".rpf/", StringComparison.OrdinalIgnoreCase);
+
+                if (rpfIndex != -1)
+                {
+                    int splitIndex = rpfIndex + 4;
+                    string nestedRpfPath = path.Substring(0, splitIndex);
+                    string remainingPath = path.Substring(splitIndex + 1);
+
+                    if (!nestedGroups.ContainsKey(nestedRpfPath))
+                        nestedGroups[nestedRpfPath] = new Dictionary<string, string>();
+
+                    nestedGroups[nestedRpfPath][remainingPath] = file.Value;
+                }
+                else
+                {
+                    directFiles[path] = file.Value;
+                }
             }
 
-            string fileName = pathParts.Last();
+            RpfFile rpfFile = new RpfFile(physicalRpfPath, physicalRpfPath);
+            rpfFile.ScanStructure(null, e => Console.Error.WriteLine($"[Scan Error] {e}"));
+
+            if (rpfFile.Root == null)
+                throw new Exception($"Failed to scan RPF: {physicalRpfPath}");
+
+            foreach (var group in nestedGroups)
+            {
+                string nestedRpfInternalPath = group.Key;
+                var nestedUpdates = group.Value;
+                string tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+                string tempRpfPath = Path.Combine(tempDir, Path.GetFileName(nestedRpfInternalPath));
+
+                try
+                {
+                    Directory.CreateDirectory(tempDir);
+                    
+                    Console.Error.WriteLine($"[RpfEditor] Processing nested RPF: {nestedRpfInternalPath} ({nestedUpdates.Count} files)");
+                    
+                    ExtractFileFromRpf(rpfFile, nestedRpfInternalPath, tempRpfPath);
+                    
+                    InstallBatch(tempRpfPath, nestedUpdates, onBytesWritten);
+
+                    directFiles[nestedRpfInternalPath] = tempRpfPath;
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[RpfEditor] Nested RPF Error: {ex.Message}");
+                    throw;
+                }
+            }
+
+            foreach (var item in directFiles)
+            {
+                string internalPath = item.Key;
+                string sourcePath = item.Value;
+                byte[] data = File.ReadAllBytes(sourcePath);
+
+                InjectFile(rpfFile, internalPath, data);
+                
+                // Якщо це не вкладений RPF, звітуємо про прогрес
+                // Вкладені RPF звітують самі рекурсивно
+                if (!internalPath.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase))
+                {
+                    onBytesWritten?.Invoke(data.Length);
+                }
+            }
+
+            foreach (var group in nestedGroups)
+            {
+                 string tempPath = directFiles[group.Key];
+                 string tempDir = Path.GetDirectoryName(tempPath);
+                 if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
+
+        private void InjectFile(RpfFile rpfFile, string internalPath, byte[] data)
+        {
+            string[] parts = internalPath.Split('/');
+            string fileName = parts.Last();
 
             RpfDirectoryEntry currentDir = rpfFile.Root;
-            for (int i = 0; i < pathParts.Length - 1; i++)
+            for (int i = 0; i < parts.Length - 1; i++)
             {
-                string part = pathParts[i];
-                var subDir = currentDir.Directories.FirstOrDefault(d => d.Name.Equals(part, StringComparison.OrdinalIgnoreCase));
-
-                if (subDir == null)
-                {
-                    string available = string.Join(", ", currentDir.Directories.Select(d => d.Name));
-                    throw new Exception($"Folder '{part}' not found inside '{physicalRpfPath}'. Available folders: [{available}]");
-                }
+                var subDir = currentDir.Directories.FirstOrDefault(d => d.Name.Equals(parts[i], StringComparison.OrdinalIgnoreCase));
+                if (subDir == null) throw new Exception($"Path not found: {parts[i]}");
                 currentDir = subDir;
             }
 
-            byte[] newFileBytes = File.ReadAllBytes(replacementFilePath);
-            Console.Error.WriteLine($"[RpfEditor] Writing file: {fileName} ({newFileBytes.Length} bytes)");
-
-            try
-            {
-                RpfFile.CreateFile(currentDir, fileName, newFileBytes);
-                Console.Error.WriteLine("[RpfEditor] Write successful!");
-            }
-            catch (Exception ex)
-            {
-                throw new Exception($"Error writing to RPF: {ex.Message}");
-            }
+            RpfFile.CreateFile(currentDir, fileName, data);
         }
 
-        private void HandleNestedRpf(string parentRpfPath, string[] pathParts, int rpfIndex, string sourceFile)
+        private void ExtractFileFromRpf(RpfFile rpfFile, string internalPath, string outputPath)
         {
-            string nestedRpfInternalPath = string.Join("/", pathParts.Take(rpfIndex + 1));
-            string nestedRpfName = pathParts[rpfIndex];
-            string remainingPath = string.Join("/", pathParts.Skip(rpfIndex + 1));
-
-            Console.Error.WriteLine($"[RpfEditor] Detected nested RPF: {nestedRpfName}");
-
-            string tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-            string tempRpfPath = Path.Combine(tempDir, nestedRpfName);
-
-            try
-            {
-                Directory.CreateDirectory(tempDir);
-
-                ExtractFileFromRpf(parentRpfPath, nestedRpfInternalPath, tempRpfPath);
-
-                FileInfo tempInfo = new FileInfo(tempRpfPath);
-                if (tempInfo.Length == 0)
-                    throw new Exception($"Extracted nested RPF {nestedRpfName} is empty. Extraction failed.");
-
-                Console.Error.WriteLine($"[RpfEditor] Editing nested RPF...");
-
-                InstallMod(tempRpfPath, remainingPath, sourceFile);
-
-                Console.Error.WriteLine($"[RpfEditor] Repacking nested RPF back to {parentRpfPath}...");
-                InstallMod(parentRpfPath, nestedRpfInternalPath, tempRpfPath);
-            }
-            finally
-            {
-                if (Directory.Exists(tempDir))
-                    Directory.Delete(tempDir, true);
-            }
-        }
-
-        private void ExtractFileFromRpf(string physicalRpfPath, string internalPath, string outputPath)
-        {
-            RpfFile rpfFile = new RpfFile(physicalRpfPath, physicalRpfPath);
-
-            rpfFile.ScanStructure(null, err => Console.Error.WriteLine($"[Extract Error] {err}"));
-
-            if (rpfFile.Root == null) throw new Exception($"Cannot open RPF for extraction: {physicalRpfPath}");
-
             string[] parts = internalPath.Split('/');
             string fileName = parts.Last();
 
@@ -183,9 +166,14 @@ namespace Obriy.Core.Services
             if (entry == null) throw new Exception($"File not found in RPF: {fileName}");
 
             byte[] data = rpfFile.ExtractFile(entry);
-            if (data == null) throw new Exception($"Failed to extract bytes for {fileName} (data was null).");
-
             File.WriteAllBytes(outputPath, data);
+        }
+
+        // Залишаємо старий метод для сумісності, якщо він десь викликається
+        public void InstallMod(string physicalRpfPath, string internalPath, string replacementFilePath)
+        {
+            var dict = new Dictionary<string, string> { { internalPath, replacementFilePath } };
+            InstallBatch(physicalRpfPath, dict);
         }
     }
 }

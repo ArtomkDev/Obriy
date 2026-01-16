@@ -29,3 +29,4 @@ D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\refint\Obriy.Core.d
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\Obriy.Core.pdb
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\Obriy.Core.genruntimeconfig.cache
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\ref\Obriy.Core.dll
+D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\CodeWalker.Core.dll

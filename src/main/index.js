@@ -2,8 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { uninstallMod, validateGamePath } from './services/EngineService'
-// ВАЖЛИВО: Імпортуємо CloudModService
+import { uninstallMod, validateGamePath, startBackendProcess } from './services/EngineService'
 import { installCloudMod, getModCatalog, getModDetails } from './services/CloudModService'
 import updaterPkg from 'electron-updater'
 import log from 'electron-log'
@@ -205,9 +204,15 @@ app.whenReady().then(() => {
      return validateGamePath(path)
   })
 
-  // --- CLOUD & MODS HANDLERS (ОНОВЛЕНО) ---
-  
-  // 1. Отримати каталог
+  ipcMain.handle('start-backend', async () => {
+    try {
+      await startBackendProcess()
+      return true
+    } catch (e) {
+      throw new Error(`Failed to start backend: ${e.message}`)
+    }
+  })
+
   ipcMain.handle('get-mod-catalog', async () => {
     try {
       return await getModCatalog()
@@ -217,7 +222,6 @@ app.whenReady().then(() => {
     }
   })
 
-  // 2. Отримати деталі мода
   ipcMain.handle('get-mod-details', async (_, modId) => {
     try {
       return await getModDetails(modId)
@@ -227,29 +231,22 @@ app.whenReady().then(() => {
     }
   })
 
-  // 3. Інсталяція
   ipcMain.handle('install-mod', async (_, modId) => {
     try {
-      console.log(`[IPC] Starting installation for Mod ID: ${modId}`)
-      
-      // --- ВИПРАВЛЕННЯ: Отримуємо шлях до гри ---
       const gamePath = store.get('gta_path')
       
       if (!gamePath) {
-          throw new Error('Шлях до гри не налаштовано! Будь ласка, перейдіть у налаштування.')
+          throw new Error('Game path not configured')
       }
       
-      // Передаємо gamePath у функцію
       const result = await installCloudMod(modId, gamePath)
-      
       return { success: true, data: result }
     } catch (error) {
-      console.error('[IPC] Install Error:', error)
+      console.error('Install Error:', error)
       return { success: false, error: error.message }
     }
   })
 
-  // 4. Видалення
   ipcMain.handle('uninstall-mod', async (event, gamePath, instructions, modId) => {
     return await uninstallMod(event.sender, gamePath, instructions, modId)
   })

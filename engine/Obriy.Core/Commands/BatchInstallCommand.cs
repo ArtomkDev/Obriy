@@ -18,13 +18,11 @@ namespace Obriy.Core.Commands
 
         public object Execute(string[] args)
         {
-            // Налаштування миттєвого виводу в консоль (без буферизації)
             var writer = new StreamWriter(Console.OpenStandardOutput());
             writer.AutoFlush = true;
             Console.SetOut(writer);
 
             if (args.Length < 1) return Error("Manifest path required");
-
             string manifestPath = args[0];
             if (!File.Exists(manifestPath)) return Error("Manifest file not found");
 
@@ -36,65 +34,53 @@ namespace Obriy.Core.Commands
                 
                 var editor = new RpfEditor();
                 
-                // 1. Рахуємо загальну вагу всіх файлів (в байтах)
                 long totalBytes = 0;
-                var fileSizes = new List<long>();
+                var operationsByRpf = new Dictionary<string, Dictionary<string, string>>();
 
                 foreach (var item in items)
                 {
                     if (File.Exists(item.SourceFilePath))
                     {
-                        long size = new FileInfo(item.SourceFilePath).Length;
-                        totalBytes += size;
-                        fileSizes.Add(size);
-                    }
-                    else
-                    {
-                        fileSizes.Add(0);
+                        totalBytes += new FileInfo(item.SourceFilePath).Length;
+                        
+                        var pathInfo = SplitPath(item.TargetPath);
+                        if (!operationsByRpf.ContainsKey(pathInfo.PhysicalPath))
+                            operationsByRpf[pathInfo.PhysicalPath] = new Dictionary<string, string>();
+
+                        operationsByRpf[pathInfo.PhysicalPath][pathInfo.InternalPath] = item.SourceFilePath;
                     }
                 }
 
-                // Захист від ділення на нуль, якщо файли пусті
                 if (totalBytes == 0) totalBytes = 1;
-
                 long processedBytes = 0;
                 int lastReportedPercent = -1;
 
-                Console.Error.WriteLine($"[Batch] Processing {items.Count} files. Total size: {totalBytes / 1024} KB");
+                Console.Error.WriteLine($"[Batch] Grouped into {operationsByRpf.Count} RPF transactions. Total size: {totalBytes / 1024} KB");
 
-                for (int i = 0; i < items.Count; i++)
+                foreach (var kvp in operationsByRpf)
                 {
-                    var item = items[i];
-                    long currentFileSize = fileSizes[i];
+                    string physicalRpf = kvp.Key;
+                    var updates = kvp.Value;
 
-                    // Інсталюємо файл
-                    var pathInfo = SplitPath(item.TargetPath);
-                    editor.InstallMod(pathInfo.PhysicalPath, pathInfo.InternalPath, item.SourceFilePath);
+                    Console.Error.WriteLine($"[Batch] Processing RPF: {Path.GetFileName(physicalRpf)} ({updates.Count} items)");
 
-                    // 2. Оновлюємо прогрес на основі ваги
-                    processedBytes += currentFileSize;
-                    
-                    int currentPercent = (int)((double)processedBytes / totalBytes * 100.0);
-
-                    // Відправляємо прогрес, тільки якщо він змінився або це фінал
-                    if (currentPercent > lastReportedPercent || i == items.Count - 1)
+                    editor.InstallBatch(physicalRpf, updates, (bytesWritten) => 
                     {
-                        var progressMessage = new 
-                        { 
-                            type = "progress", 
-                            value = currentPercent 
-                        };
+                        processedBytes += bytesWritten;
+                        int currentPercent = (int)((double)processedBytes / totalBytes * 100.0);
 
-                        Console.WriteLine(JsonSerializer.Serialize(progressMessage));
-                        lastReportedPercent = currentPercent;
-                    }
+                        if (currentPercent > lastReportedPercent || processedBytes >= totalBytes)
+                        {
+                            Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = currentPercent }));
+                            lastReportedPercent = currentPercent;
+                        }
+                    });
                 }
 
                 try { File.Delete(manifestPath); } catch { }
 
                 var success = new { status = "success", processed = items.Count };
                 Console.WriteLine(JsonSerializer.Serialize(success));
-                
                 return success;
             }
             catch (Exception ex)

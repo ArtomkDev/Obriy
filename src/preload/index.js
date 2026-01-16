@@ -3,6 +3,8 @@ import { electronAPI } from '@electron-toolkit/preload'
 
 const api = {
   // --- Core Engine ---
+  startBackend: () => ipcRenderer.invoke('start-backend'), // NEW
+  
   installMod: (modId) => ipcRenderer.invoke('install-mod', modId),
   uninstallMod: (gamePath, instructions, modId) => ipcRenderer.invoke('uninstall-mod', gamePath, instructions, modId),
   
