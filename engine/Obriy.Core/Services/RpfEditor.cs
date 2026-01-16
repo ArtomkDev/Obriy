@@ -8,49 +8,18 @@ namespace Obriy.Core.Services
 {
     public class RpfEditor
     {
-        public RpfEditor(string pathToGameFolder = null)
+        public void InstallMod(string physicalRpfPath, string internalPath, string replacementFilePath)
         {
-            if (GTA5Keys.PC_AES_KEY != null && GTA5Keys.PC_AES_KEY.Length > 0)
-                return;
-
-            string basePath = AppDomain.CurrentDomain.BaseDirectory;
-            string keysPath = Path.Combine(basePath, "keys");
-            string aesKeyFile = Path.Combine(keysPath, "gtav_aes_key.dat");
-
-            if (!File.Exists(aesKeyFile))
-            {
-                keysPath = basePath;
-                aesKeyFile = Path.Combine(keysPath, "gtav_aes_key.dat");
-            }
-
-            if (File.Exists(aesKeyFile))
-            {
-                try
-                {
-                    GTA5Keys.PC_AES_KEY = File.ReadAllBytes(aesKeyFile);
-                    GTA5Keys.PC_LUT = File.ReadAllBytes(Path.Combine(keysPath, "gtav_hash_lut.dat"));
-                    GTA5Keys.PC_NG_KEYS = CryptoIO.ReadNgKeys(Path.Combine(keysPath, "gtav_ng_key.dat"));
-                    GTA5Keys.PC_NG_DECRYPT_TABLES = CryptoIO.ReadNgTables(Path.Combine(keysPath, "gtav_ng_decrypt_tables.dat"));
-                    GTA5Keys.PC_NG_ENCRYPT_TABLES = CryptoIO.ReadNgTables(Path.Combine(keysPath, "gtav_ng_encrypt_tables.dat"));
-                    GTA5Keys.PC_NG_ENCRYPT_LUTs = CryptoIO.ReadNgLuts(Path.Combine(keysPath, "gtav_ng_encrypt_luts.dat"));
-                }
-                catch (Exception ex)
-                {
-                    Console.Error.WriteLine($"[RpfEditor] Error loading keys: {ex.Message}");
-                    throw;
-                }
-            }
-            else if (!string.IsNullOrEmpty(pathToGameFolder) && File.Exists(Path.Combine(pathToGameFolder, "GTA5.exe")))
-            {
-                byte[] exeData = File.ReadAllBytes(Path.Combine(pathToGameFolder, "GTA5.exe"));
-                GTA5Keys.GenerateV2(exeData, null);
-            }
+            var dict = new Dictionary<string, string> { { internalPath, replacementFilePath } };
+            InstallBatch(physicalRpfPath, dict, null);
         }
 
-        public void InstallBatch(string physicalRpfPath, Dictionary<string, string> files, Action<long> onBytesWritten = null)
+        public void InstallBatch(string physicalRpfPath, Dictionary<string, string> files, Action<int> onProgress)
         {
             if (!File.Exists(physicalRpfPath))
                 throw new FileNotFoundException($"RPF file not found: {physicalRpfPath}");
+
+            BackupFile(physicalRpfPath);
 
             var directFiles = new Dictionary<string, string>();
             var nestedGroups = new Dictionary<string, Dictionary<string, string>>();
@@ -77,11 +46,14 @@ namespace Obriy.Core.Services
                 }
             }
 
-            RpfFile rpfFile = new RpfFile(physicalRpfPath, physicalRpfPath);
-            rpfFile.ScanStructure(null, e => Console.Error.WriteLine($"[Scan Error] {e}"));
+            // [ВАЖЛИВО] Повідомляємо про початок відкриття (+50 балів). Це зрушить прогрес з 0%.
+            onProgress?.Invoke(50);
 
-            if (rpfFile.Root == null)
-                throw new Exception($"Failed to scan RPF: {physicalRpfPath}");
+            // Це блокуюча операція (2-3 секунди)
+            RpfFile rpfFile = RpfSession.GetOrOpen(physicalRpfPath);
+
+            // Повідомляємо про завершення відкриття (+950 балів). Це стрибок до ~50-70%.
+            onProgress?.Invoke(950);
 
             foreach (var group in nestedGroups)
             {
@@ -94,11 +66,15 @@ namespace Obriy.Core.Services
                 {
                     Directory.CreateDirectory(tempDir);
                     
-                    Console.Error.WriteLine($"[RpfEditor] Processing nested RPF: {nestedRpfInternalPath} ({nestedUpdates.Count} files)");
+                    Console.Error.WriteLine($"[RpfEditor] Processing nested RPF: {nestedRpfInternalPath}");
+                    
+                    // +100 балів за розпакування
+                    onProgress?.Invoke(100);
                     
                     ExtractFileFromRpf(rpfFile, nestedRpfInternalPath, tempRpfPath);
                     
-                    InstallBatch(tempRpfPath, nestedUpdates, onBytesWritten);
+                    // Рекурсія
+                    InstallBatch(tempRpfPath, nestedUpdates, onProgress);
 
                     directFiles[nestedRpfInternalPath] = tempRpfPath;
                 }
@@ -107,22 +83,24 @@ namespace Obriy.Core.Services
                     Console.Error.WriteLine($"[RpfEditor] Nested RPF Error: {ex.Message}");
                     throw;
                 }
+                finally 
+                {
+                    RpfSession.Unload(tempRpfPath);
+                }
             }
 
             foreach (var item in directFiles)
             {
                 string internalPath = item.Key;
                 string sourcePath = item.Value;
-                byte[] data = File.ReadAllBytes(sourcePath);
+                
+                bool isRpf = internalPath.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase);
+                if (isRpf) onProgress?.Invoke(100); // +100 за запакування RPF
 
+                byte[] data = File.ReadAllBytes(sourcePath);
                 InjectFile(rpfFile, internalPath, data);
                 
-                // Якщо це не вкладений RPF, звітуємо про прогрес
-                // Вкладені RPF звітують самі рекурсивно
-                if (!internalPath.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase))
-                {
-                    onBytesWritten?.Invoke(data.Length);
-                }
+                if (!isRpf) onProgress?.Invoke(10); // +10 за файл
             }
 
             foreach (var group in nestedGroups)
@@ -130,6 +108,15 @@ namespace Obriy.Core.Services
                  string tempPath = directFiles[group.Key];
                  string tempDir = Path.GetDirectoryName(tempPath);
                  if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+        }
+
+        private void BackupFile(string path)
+        {
+            string backupPath = path + ".bak";
+            if (!File.Exists(backupPath))
+            {
+                try { File.Copy(path, backupPath); } catch { }
             }
         }
 
@@ -145,7 +132,6 @@ namespace Obriy.Core.Services
                 if (subDir == null) throw new Exception($"Path not found: {parts[i]}");
                 currentDir = subDir;
             }
-
             RpfFile.CreateFile(currentDir, fileName, data);
         }
 
@@ -168,12 +154,5 @@ namespace Obriy.Core.Services
             byte[] data = rpfFile.ExtractFile(entry);
             File.WriteAllBytes(outputPath, data);
         }
-
-        // Залишаємо старий метод для сумісності, якщо він десь викликається
-        public void InstallMod(string physicalRpfPath, string internalPath, string replacementFilePath)
-        {
-            var dict = new Dictionary<string, string> { { internalPath, replacementFilePath } };
-            InstallBatch(physicalRpfPath, dict);
-        }
     }
-}
+} 

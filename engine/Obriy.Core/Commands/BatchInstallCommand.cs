@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Linq;
 
 namespace Obriy.Core.Commands
 {
@@ -33,43 +34,77 @@ namespace Obriy.Core.Commands
                 var items = JsonSerializer.Deserialize<List<BatchItem>>(jsonContent, options);
                 
                 var editor = new RpfEditor();
-                
-                long totalBytes = 0;
                 var operationsByRpf = new Dictionary<string, Dictionary<string, string>>();
+                
+                // --- НОВА ЛОГІКА (WEIGHTED PROGRESS) ---
+                long totalWorkUnits = 0;
+                const int WEIGHT_RPF_OPEN = 1000;      // Бали за відкриття архіву
+                const int WEIGHT_RPF_EXTRACT = 100;    // Бали за розпакування вкладеного
+                const int WEIGHT_RPF_REPACK = 100;     // Бали за запакування вкладеного
+                const int WEIGHT_FILE = 10;            // Бали за звичайний файл
 
                 foreach (var item in items)
                 {
                     if (File.Exists(item.SourceFilePath))
                     {
-                        totalBytes += new FileInfo(item.SourceFilePath).Length;
-                        
                         var pathInfo = SplitPath(item.TargetPath);
+                        
                         if (!operationsByRpf.ContainsKey(pathInfo.PhysicalPath))
+                        {
                             operationsByRpf[pathInfo.PhysicalPath] = new Dictionary<string, string>();
+                            // Додаємо вагу за відкриття кореневого RPF
+                            totalWorkUnits += WEIGHT_RPF_OPEN; 
+                        }
 
                         operationsByRpf[pathInfo.PhysicalPath][pathInfo.InternalPath] = item.SourceFilePath;
+                        totalWorkUnits += WEIGHT_FILE;
                     }
                 }
 
-                if (totalBytes == 0) totalBytes = 1;
-                long processedBytes = 0;
+                // Додаємо вагу за вкладені архіви
+                foreach(var rpfGroup in operationsByRpf.Values)
+                {
+                    var uniqueNestedRpfs = new HashSet<string>();
+                    foreach(var internalPath in rpfGroup.Keys)
+                    {
+                        int idx = internalPath.IndexOf(".rpf/", StringComparison.OrdinalIgnoreCase);
+                        if (idx != -1)
+                        {
+                            string nestedName = internalPath.Substring(0, idx + 4);
+                            uniqueNestedRpfs.Add(nestedName);
+                        }
+                    }
+                    
+                    // За кожен вкладений RPF ми нараховуємо бали за повний цикл роботи
+                    long nestedCost = WEIGHT_RPF_EXTRACT + WEIGHT_RPF_OPEN + WEIGHT_RPF_REPACK;
+                    totalWorkUnits += (uniqueNestedRpfs.Count * nestedCost);
+                }
+
+                if (totalWorkUnits == 0) totalWorkUnits = 1;
+                
+                long processedWorkUnits = 0;
                 int lastReportedPercent = -1;
 
-                Console.Error.WriteLine($"[Batch] Grouped into {operationsByRpf.Count} RPF transactions. Total size: {totalBytes / 1024} KB");
+                // Примусово показуємо 0% на старті
+                Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = 0 }));
 
                 foreach (var kvp in operationsByRpf)
                 {
                     string physicalRpf = kvp.Key;
                     var updates = kvp.Value;
 
-                    Console.Error.WriteLine($"[Batch] Processing RPF: {Path.GetFileName(physicalRpf)} ({updates.Count} items)");
+                    Console.Error.WriteLine($"[Batch] Processing RPF: {Path.GetFileName(physicalRpf)}");
 
-                    editor.InstallBatch(physicalRpf, updates, (bytesWritten) => 
+                    // Передаємо callback, який додає бали (weight)
+                    editor.InstallBatch(physicalRpf, updates, (weight) => 
                     {
-                        processedBytes += bytesWritten;
-                        int currentPercent = (int)((double)processedBytes / totalBytes * 100.0);
+                        processedWorkUnits += weight;
+                        
+                        if (processedWorkUnits > totalWorkUnits) processedWorkUnits = totalWorkUnits;
 
-                        if (currentPercent > lastReportedPercent || processedBytes >= totalBytes)
+                        int currentPercent = (int)((double)processedWorkUnits / totalWorkUnits * 100.0);
+
+                        if (currentPercent > lastReportedPercent)
                         {
                             Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = currentPercent }));
                             lastReportedPercent = currentPercent;

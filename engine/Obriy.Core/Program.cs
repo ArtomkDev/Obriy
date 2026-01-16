@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Obriy.Core.Commands;
 using CodeWalker.GameFiles;
 using CodeWalker.Utils;
+using Obriy.Core.Services;
 
 namespace Obriy.Core
 {
@@ -25,9 +26,7 @@ namespace Obriy.Core
 
             try 
             {
-                string keyPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "keys");
-                GTA5Keys.LoadFromPath(keyPath);
-                
+                InitializeGameKeys();
                 PrintJson(new { status = "ready", message = "Backend initialized" });
             }
             catch (Exception ex)
@@ -67,6 +66,10 @@ namespace Obriy.Core
                         case "install-batch":
                             command = new BatchInstallCommand();
                             break;
+                        case "clear-cache":
+                            RpfSession.Clear();
+                            PrintJson(new { status = "success", message = "Cache cleared" });
+                            continue;
                         case "ping":
                             PrintJson(new { status = "success", message = "pong" });
                             continue;
@@ -88,10 +91,37 @@ namespace Obriy.Core
             }
         }
 
+        static void InitializeGameKeys()
+        {
+            string basePath = AppDomain.CurrentDomain.BaseDirectory;
+            string keyPath = Path.Combine(basePath, "keys");
+            string aesKeyFile = Path.Combine(keyPath, "gtav_aes_key.dat");
+
+            if (!File.Exists(aesKeyFile))
+            {
+                 // Fallback to base dir if not in keys subdir
+                 keyPath = basePath;
+                 aesKeyFile = Path.Combine(keyPath, "gtav_aes_key.dat");
+            }
+
+            if (!File.Exists(aesKeyFile))
+            {
+                throw new FileNotFoundException("GTA V AES Key not found. Please place gtav_aes_key.dat in the keys folder.");
+            }
+
+            GTA5Keys.PC_AES_KEY = File.ReadAllBytes(aesKeyFile);
+            GTA5Keys.PC_LUT = File.ReadAllBytes(Path.Combine(keyPath, "gtav_hash_lut.dat"));
+            GTA5Keys.PC_NG_KEYS = CryptoIO.ReadNgKeys(Path.Combine(keyPath, "gtav_ng_key.dat"));
+            GTA5Keys.PC_NG_DECRYPT_TABLES = CryptoIO.ReadNgTables(Path.Combine(keyPath, "gtav_ng_decrypt_tables.dat"));
+            GTA5Keys.PC_NG_ENCRYPT_TABLES = CryptoIO.ReadNgTables(Path.Combine(keyPath, "gtav_ng_encrypt_tables.dat"));
+            GTA5Keys.PC_NG_ENCRYPT_LUTs = CryptoIO.ReadNgLuts(Path.Combine(keyPath, "gtav_ng_encrypt_luts.dat"));
+        }
+
         static void PrintJson(object data)
         {
             string json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = false });
             Console.WriteLine(json);
+            Console.Out.Flush();
         }
     }
 }
