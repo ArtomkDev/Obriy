@@ -1,6 +1,6 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useInstaller } from '../context/InstallerContext' 
+import { useInstaller } from '../context/InstallerContext'
 import ProgressBar from './ProgressBar'
 
 const DownloadIcon = ({ className }) => (
@@ -17,14 +17,14 @@ const RefreshIcon = ({ className }) => (
 
 export default function ModCard({ mod }) {
   const navigate = useNavigate()
-  const { getModStatus, getModProgress, startInstall, isModInstalled, startUninstall } = useInstaller() 
-  
+  const { getModStatus, getModProgress, startInstall, isModInstalled, startUninstall } = useInstaller()
+
   const status = getModStatus(mod.id)
   const progress = getModProgress(mod.id)
   const isInstalledInRegistry = isModInstalled(mod.id)
 
-  const activePercent = status === 'downloading' 
-    ? Math.round(progress.download) 
+  const activePercent = status === 'downloading'
+    ? Math.round(progress.download)
     : Math.round(progress.install)
 
   const handleCardClick = () => {
@@ -32,38 +32,36 @@ export default function ModCard({ mod }) {
   }
 
   const handleInstallClick = (e) => {
-    e.stopPropagation() 
-    
+    e.stopPropagation()
+
     if (isInstalledInRegistry && status === 'idle') {
-        // Якщо вже встановлено і немає активних задач -> перевстановлення
-        startInstall(mod)
+      startInstall(mod)
     } else if (status === 'idle' || status === 'error') {
-        startInstall(mod)
+      startInstall(mod)
     }
   }
 
   const handleUninstallClick = (e) => {
-      e.stopPropagation()
-      if (status === 'idle') {
-          startUninstall(mod)
-      }
+    e.stopPropagation()
+    if (status === 'idle') {
+      startUninstall(mod)
+    }
   }
 
   const isProcessing = ['downloading', 'installing', 'uninstalling', 'queued', 'queued_download', 'queued_uninstall'].includes(status)
-  
-  // Кнопка показується як "Installed", якщо мод у реєстрі, АЛЕ ми зараз не виконуємо над ним операцій (щоб не плутати користувача під час видалення)
+
   const showAsInstalled = isInstalledInRegistry && !isProcessing
 
   return (
-    <div 
+    <div
       onClick={handleCardClick}
       className="group relative aspect-video rounded-xl overflow-hidden cursor-pointer bg-[#121214] ring-1 ring-white/10 hover:ring-indigo-500/50 transition-all duration-500 hover:shadow-[0_0_20px_rgba(79,70,229,0.2)] hover:scale-[1.01]"
     >
-      
+
       <div className="absolute inset-0">
-        <img 
-          src={mod.thumbnail} 
-          alt={mod.title} 
+        <img
+          src={mod.thumbnail}
+          alt={mod.title}
           className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 opacity-70 group-hover:opacity-90"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" />
@@ -71,76 +69,76 @@ export default function ModCard({ mod }) {
 
       <div className="absolute inset-0 p-5 flex items-end justify-between z-20">
         <div className="flex-1 pr-4">
-            <h3 className="text-lg font-black text-white uppercase tracking-tighter leading-none drop-shadow-lg line-clamp-2 group-hover:text-indigo-100 transition-colors">
-              {mod.title}
-            </h3>
-            
-            {(status !== 'idle' || showAsInstalled) && (
-                <div className={`text-[10px] font-bold uppercase tracking-widest mt-2 animate-fade-in flex items-center gap-2
+          <h3 className="text-lg font-black text-white uppercase tracking-tighter leading-none drop-shadow-lg line-clamp-2 group-hover:text-indigo-100 transition-colors">
+            {mod.title}
+          </h3>
+
+          {(status !== 'idle' || showAsInstalled) && (
+            <div className={`text-[10px] font-bold uppercase tracking-widest mt-2 animate-fade-in flex items-center gap-2
                     ${status === 'downloading' && 'text-blue-400'}
                     ${status === 'installing' && 'text-indigo-400'}
                     ${showAsInstalled && 'text-emerald-400'}
                     ${status === 'error' && 'text-rose-400'}
                 `}>
-                    
-                    <span>
-                      {status === 'queued_download' && 'Waiting...'}
-                      {status === 'downloading' && 'Downloading...'}
-                      {status === 'queued' && 'In Queue...'}
-                      {status === 'installing' && 'Installing...'}
-                      {status === 'queued_uninstall' && 'Queued Uninstall...'}
-                      {status === 'uninstalling' && 'Uninstalling...'}
-                      {showAsInstalled && status === 'idle' && 'Installed'}
-                      {status === 'error' && 'Failed'}
-                    </span>
-                    
-                     {isProcessing && (status !== 'queued' && status !== 'queued_download' && status !== 'queued_uninstall') && (
-                        <span className="opacity-60 tabular-nums">{activePercent}%</span>
-                     )}
-                </div>
-            )}
-        </div>
-        
-        <div className="flex gap-2">
-            {showAsInstalled && (
-                 <button 
-                    onClick={handleUninstallClick}
-                    className="shrink-0 w-10 h-10 flex items-center justify-center rounded-lg border bg-red-500/10 border-red-500/50 text-red-500 hover:bg-red-500 hover:text-white transition-all duration-300 shadow-lg backdrop-blur-md"
-                    title="Видалити"
-                 >
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-                        <path fillRule="evenodd" d="M16.5 4.478v.227a48.816 48.816 0 0 1 3.878.512.75.75 0 1 1-.256 1.478l-.209-.035-1.005 13.07a3 3 0 0 1-2.991 2.77H8.084a3 3 0 0 1-2.991-2.77L4.087 6.66l-.209.035a.75.75 0 0 1-.256-1.478A48.567 48.567 0 0 1 7.5 4.705v-.227c0-1.564 1.213-2.9 2.816-2.951a52.662 52.662 0 0 1 3.369 0c1.603.051 2.815 1.387 2.815 2.951Zm-6.136-1.452a51.196 51.196 0 0 1 3.273 0C14.39 3.05 15 3.684 15 4.478v.113a49.488 49.488 0 0 0-6 0v-.113c0-.794.609-1.428 1.364-1.452Zm-3.536 4.569a.75.75 0 0 0-1.5 0v9.25a.75.75 0 0 0 1.5 0v-9.25Zm4.364 0a.75.75 0 0 0-1.5 0v9.25a.75.75 0 0 0 1.5 0v-9.25Zm4.364 0a.75.75 0 0 0-1.5 0v9.25a.75.75 0 0 0 1.5 0v-9.25Z" clipRule="evenodd" />
-                    </svg>
-                 </button>
-            )}
 
-            <button 
-                onClick={handleInstallClick}
-                disabled={isProcessing}
-                className={`shrink-0 w-10 h-10 flex items-center justify-center rounded-lg border backdrop-blur-md transition-all duration-300 shadow-lg
-                    ${showAsInstalled 
-                        ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-500 hover:bg-emerald-500 hover:text-black hover:shadow-[0_0_15px_rgba(16,185,129,0.4)]' 
-                        : isProcessing
-                            ? 'bg-white/5 border-white/10 text-white/30 cursor-wait'
-                            : 'bg-white/10 hover:bg-indigo-600 border-white/20 hover:border-indigo-500 text-white hover:scale-110 hover:shadow-indigo-500/50'
-                    }
-                `}
-                title={showAsInstalled ? "Перевстановити" : "Встановити"}
+              <span>
+                {status === 'queued_download' && 'Waiting...'}
+                {status === 'downloading' && 'Downloading...'}
+                {status === 'queued' && 'In Queue...'}
+                {status === 'installing' && 'Installing...'}
+                {status === 'queued_uninstall' && 'Queued Uninstall...'}
+                {status === 'uninstalling' && 'Uninstalling...'}
+                {showAsInstalled && status === 'idle' && 'Installed'}
+                {status === 'error' && 'Failed'}
+              </span>
+
+              {isProcessing && (status !== 'queued' && status !== 'queued_download' && status !== 'queued_uninstall') && (
+                <span className="opacity-60 tabular-nums">{activePercent}%</span>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-2">
+          {showAsInstalled && (
+            <button
+              onClick={handleUninstallClick}
+              className="shrink-0 w-10 h-10 flex items-center justify-center rounded-lg border bg-red-500/10 border-red-500/50 text-red-500 hover:bg-red-500 hover:text-white transition-all duration-300 shadow-lg backdrop-blur-md"
+              title="Видалити"
             >
-                {showAsInstalled ? <RefreshIcon className="w-5 h-5" /> : <DownloadIcon className="w-5 h-5" />}
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                <path fillRule="evenodd" d="M16.5 4.478v.227a48.816 48.816 0 0 1 3.878.512.75.75 0 1 1-.256 1.478l-.209-.035-1.005 13.07a3 3 0 0 1-2.991 2.77H8.084a3 3 0 0 1-2.991-2.77L4.087 6.66l-.209.035a.75.75 0 0 1-.256-1.478A48.567 48.567 0 0 1 7.5 4.705v-.227c0-1.564 1.213-2.9 2.816-2.951a52.662 52.662 0 0 1 3.369 0c1.603.051 2.815 1.387 2.815 2.951Zm-6.136-1.452a51.196 51.196 0 0 1 3.273 0C14.39 3.05 15 3.684 15 4.478v.113a49.488 49.488 0 0 0-6 0v-.113c0-.794.609-1.428 1.364-1.452Zm-3.536 4.569a.75.75 0 0 0-1.5 0v9.25a.75.75 0 0 0 1.5 0v-9.25Zm4.364 0a.75.75 0 0 0-1.5 0v9.25a.75.75 0 0 0 1.5 0v-9.25Zm4.364 0a.75.75 0 0 0-1.5 0v9.25a.75.75 0 0 0 1.5 0v-9.25Z" clipRule="evenodd" />
+              </svg>
             </button>
+          )}
+
+          <button
+            onClick={handleInstallClick}
+            disabled={isProcessing}
+            className={`shrink-0 w-10 h-10 flex items-center justify-center rounded-lg border backdrop-blur-md transition-all duration-300 shadow-lg
+                    ${showAsInstalled
+                ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-500 hover:bg-emerald-500 hover:text-black hover:shadow-[0_0_15px_rgba(16,185,129,0.4)]'
+                : isProcessing
+                  ? 'bg-white/5 border-white/10 text-white/30 cursor-wait'
+                  : 'bg-white/10 hover:bg-indigo-600 border-white/20 hover:border-indigo-500 text-white hover:scale-110 hover:shadow-indigo-500/50'
+              }
+                `}
+            title={showAsInstalled ? "Перевстановити" : "Встановити"}
+          >
+            {showAsInstalled ? <RefreshIcon className="w-5 h-5" /> : <DownloadIcon className="w-5 h-5" />}
+          </button>
         </div>
       </div>
 
       {status !== 'idle' && (
-          <div className="absolute bottom-0 left-0 right-0 z-30">
-              <ProgressBar 
-                downloadProgress={progress.download}
-                installProgress={progress.install}
-                status={status}
-                className="h-1.5 rounded-none bg-black/20"
-              />
-          </div>
+        <div className="absolute bottom-0 left-0 right-0 z-30">
+          <ProgressBar
+            downloadProgress={progress.download}
+            installProgress={progress.install}
+            status={status}
+            className="h-1.5 rounded-none bg-black/20"
+          />
+        </div>
       )}
 
     </div>

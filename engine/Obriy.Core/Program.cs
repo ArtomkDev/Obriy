@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Obriy.Core.Commands;
 using CodeWalker.Utils;
 using CodeWalker.GameFiles;
+using System.Collections.Generic;
 
 namespace Obriy.Core
 {
@@ -50,6 +51,8 @@ namespace Obriy.Core
             Console.OutputEncoding = Encoding.UTF8;
             Console.InputEncoding = Encoding.UTF8;
 
+            string gamePath = AppDomain.CurrentDomain.BaseDirectory; 
+
             try 
             {
                 GameEnvironment.Initialize();
@@ -76,7 +79,7 @@ namespace Obriy.Core
                     var request = JsonSerializer.Deserialize<CommandRequest>(input, options);
                     if (request == null) continue;
 
-                    ICommand command = CreateCommand(request.Command);
+                    ICommand command = CreateCommand(request.Command, gamePath);
 
                     if (command != null)
                     {
@@ -94,13 +97,13 @@ namespace Obriy.Core
             }
         }
 
-        static ICommand CreateCommand(string commandName)
+        static ICommand CreateCommand(string commandName, string gamePath)
         {
             return commandName switch
             {
                 "validate-path" => new ValidateGamePathCommand(),
                 "install-mod" => new InstallModCommand(),
-                "uninstall-mod" => new InstallModCommand(),
+                "uninstall-mod" => new UninstallModCommand(gamePath),
                 "install-batch" => new BatchInstallCommand(),
                 "get-active-mods" => new GetActiveModsCommand(),
                 "ping" => new PingCommand(),

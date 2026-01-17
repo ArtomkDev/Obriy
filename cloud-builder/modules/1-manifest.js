@@ -1,10 +1,18 @@
 const fs = require('fs-extra');
 const path = require('path');
-const config = require('../config');
 
-module.exports = async function buildManifest(modId, modData) {
+module.exports = async function buildManifest(modId, config) {
     console.log(`[Manifest] Building manifest for ${modId}...`);
 
+    // 1. Шляхи
+    const modSourceDir = path.join(config.paths.modsSource, modId);
+    const manifestPath = path.join(modSourceDir, 'manifest.json');
+
+    if (!fs.existsSync(manifestPath)) {
+        throw new Error(`Manifest not found at: ${manifestPath}`);
+    }
+
+    const modData = await fs.readJson(manifestPath);
     const templateName = modData.instructionSet;
     const templatePath = path.join(config.paths.templates, `${templateName}.json`);
 
@@ -13,57 +21,60 @@ module.exports = async function buildManifest(modId, modData) {
     }
 
     const template = await fs.readJson(templatePath);
-    // Головна папка, де лежать файли саме цього мода
-    const modFilesPath = path.join(config.paths.modsSource, modId, 'mod');
+    const modFilesPath = path.join(modSourceDir, 'mod');
 
     if (!fs.existsSync(modFilesPath)) {
-         throw new Error(`Mod folder not found at: ${modFilesPath}`);
+         throw new Error(`Mod files folder not found at: ${modFilesPath}`);
     }
+
+    // Змінна для підрахунку загального розміру
+    let totalInstallSize = 0;
 
     // Трансформація інструкцій
     const finalInstructions = await Promise.all(template.map(async (step) => {
-        // Якщо це не заміна файлів (наприклад, видалення), пропускаємо логіку сканування
         if (step.type !== 'replace') return step;
 
-        // ЛОГІКА ЗМІНЕНА ТУТ:
-        // Якщо в шаблоні не вказано sourceFile, вважаємо, що файли лежать у корені (пуста строка)
         const sourceSubPath = step.sourceFile || ""; 
-        
-        // Формуємо повний шлях для сканування: .../mods/21/mod/ + "" (або "models")
         const fullSourcePath = path.join(modFilesPath, sourceSubPath);
 
         if (!fs.existsSync(fullSourcePath)) {
-            // Якщо папка, вказана в інструкції, не існує - це критична помилка
-            throw new Error(`Source folder/path not found inside mod directory: '${sourceSubPath}' (Looked at: ${fullSourcePath})`);
+            throw new Error(`Source path not found: '${sourceSubPath}'`);
         }
 
-        // Скануємо файли
         const files = await fs.readdir(fullSourcePath);
         
-        // Фільтруємо сміття (системні файли macOS/Windows)
         const validFiles = files.filter(f => 
             f !== '.DS_Store' && 
             f !== 'Thumbs.db' && 
             !f.endsWith('.db') &&
-            !fs.statSync(path.join(fullSourcePath, f)).isDirectory() // Ігноруємо вкладені папки, беремо тільки файли
+            !fs.statSync(path.join(fullSourcePath, f)).isDirectory()
         );
 
+        // --- НОВА ЛОГІКА: Рахуємо розмір файлів ---
+        for (const file of validFiles) {
+            const filePath = path.join(fullSourcePath, file);
+            const stats = await fs.stat(filePath);
+            totalInstallSize += stats.size;
+        }
+        // ------------------------------------------
+
         if (validFiles.length === 0) {
-             console.warn(`   ⚠️ WARNING: No files found in '${sourceSubPath || "root"}' for mod ${modId}`);
+             console.warn(`   ⚠️ WARNING: No files found in '${sourceSubPath || "root"}'`);
         } else {
-             console.log(`   -> Found ${validFiles.length} files in '${sourceSubPath || "mod root"}'`);
+             console.log(`   -> Validated ${validFiles.length} files in '${sourceSubPath || "mod root"}'`);
         }
 
-        // Повертаємо оновлену інструкцію для хмари
         return {
             type: 'replace_batch',
             targetPath: step.targetPath,
-            sourceSubPath: sourceSubPath, // Передаємо "" або назву підпапки, щоб клієнт знав, де шукати в архіві
-            files: validFiles
+            sourceSubPath: sourceSubPath,
+            vanilla: templateName
+            // files: validFiles <-- Масив видалено, як ти і просив
         };
     }));
 
-    // Формуємо фінальний об'єкт
+    console.log(`   -> Total Install Size: ${(totalInstallSize / 1024 / 1024).toFixed(2)} MB`);
+
     const cloudManifest = {
         id: modData.id,
         name: modData.name,
@@ -71,12 +82,12 @@ module.exports = async function buildManifest(modId, modData) {
         description: modData.description,
         changelog: modData.changelog,
         category: modData.category,
-        tags: modData.tags,
+        tags: modData.tags || [],
         releaseDate: new Date().toISOString(),
+        installSize: totalInstallSize, // <-- Додано розмір у байтах
         instructionSet: finalInstructions
     };
 
-    // Зберігаємо в dist
     const outputDir = path.join(config.paths.modsDist, modId);
     await fs.ensureDir(outputDir);
     await fs.writeJson(path.join(outputDir, 'manifest.json'), cloudManifest, { spaces: 2 });

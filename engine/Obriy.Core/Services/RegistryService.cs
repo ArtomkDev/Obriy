@@ -29,7 +29,6 @@ namespace Obriy.Core.Services
                 }
                 catch
                 {
-                    // Якщо файл пошкоджений, створюємо новий
                     _currentRegistryData = new RegistryData();
                 }
             }
@@ -42,8 +41,7 @@ namespace Obriy.Core.Services
         public void RegisterFileOwnership(string relativeRpfPath, string internalPath, string modId)
         {
             string uniqueFileKey = $"{relativeRpfPath}|{internalPath}";
-            
-            // [ОПТИМІЗАЦІЯ] Прибрано Console.Error.WriteLine, яке гальмувало процес
+
             if (_currentRegistryData.Registry.ContainsKey(uniqueFileKey))
             {
                 _currentRegistryData.Registry[uniqueFileKey] = modId;
@@ -59,28 +57,43 @@ namespace Obriy.Core.Services
             return _currentRegistryData.Registry.Values.Distinct().ToList();
         }
 
+        public List<string> GetInstalledFilesByModId(string modId)
+        {
+            return _currentRegistryData.Registry
+                .Where(entry => entry.Value == modId)
+                .Select(entry => entry.Key)
+                .ToList();
+        }
+
+        public void RemoveFilesFromRegistry(IEnumerable<string> fileKeys)
+        {
+            foreach (var key in fileKeys)
+            {
+                if (_currentRegistryData.Registry.ContainsKey(key))
+                {
+                    _currentRegistryData.Registry.Remove(key);
+                }
+            }
+        }
+
         public void SaveRegistry()
         {
             try
             {
-                // Використовуємо тимчасовий файл для безпечного запису (atomic save)
                 string tempPath = _registryFilePath + ".tmp";
-                
                 var options = new JsonSerializerOptions { WriteIndented = true };
                 string jsonOutput = JsonSerializer.Serialize(_currentRegistryData, options);
-                
+
                 File.WriteAllText(tempPath, jsonOutput);
-                
+
                 if (File.Exists(_registryFilePath))
                     File.Delete(_registryFilePath);
-                    
+
                 File.Move(tempPath, _registryFilePath);
-                
-                Console.Error.WriteLine($"[Registry] Saved {_currentRegistryData.Registry.Count} entries.");
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[Registry] Save Error: {ex.Message}");
+                Console.Error.WriteLine($"Registry Save Error: {ex.Message}");
             }
         }
     }
