@@ -49,8 +49,6 @@ namespace Obriy.Core.Commands
                 string rootForEditor = !string.IsNullOrEmpty(gameRootPath) ? gameRootPath : AppDomain.CurrentDomain.BaseDirectory;
                 
                 var editor = new RpfEditor(rootForEditor);
-
-                // [FIX] Використовуємо StringComparer.OrdinalIgnoreCase, щоб уникнути дублювання RPF через різний регістр шляхів
                 var operationsByRpf = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
                 
                 RegistryService registryService = null;
@@ -67,8 +65,8 @@ namespace Obriy.Core.Commands
                 }
                 
                 long totalWorkUnits = 0;
-                const int WEIGHT_RPF_OPEN = 1000;
-                const int WEIGHT_FILE = 10;
+                const int WEIGHT_RPF_OPEN = 20; 
+                const int WEIGHT_FILE = 100;
 
                 foreach (var item in items)
                 {
@@ -77,8 +75,6 @@ namespace Obriy.Core.Commands
                         try 
                         {
                             var pathInfo = SplitPath(item.TargetPath);
-                            
-                            // Нормалізація шляху для ключа словника
                             string physicalKey = Path.GetFullPath(pathInfo.PhysicalPath);
 
                             if (!operationsByRpf.ContainsKey(physicalKey))
@@ -112,16 +108,19 @@ namespace Obriy.Core.Commands
                         editor.InstallBatch(physicalRpf, updates, (weight) => 
                         {
                             processedWorkUnits += weight;
+                            
+                            // Захист від переповнення (візуально не більше 99%, поки не закінчимо все)
                             if (processedWorkUnits > totalWorkUnits) processedWorkUnits = totalWorkUnits;
                             
                             int currentPercent = (int)((double)processedWorkUnits / totalWorkUnits * 100.0);
+                            if (currentPercent > 99 && processedWorkUnits < totalWorkUnits) currentPercent = 99;
 
                             if (currentPercent > lastReportedPercent)
                             {
                                 Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = currentPercent }));
                                 lastReportedPercent = currentPercent;
                             }
-                        });
+                        }, true); // true = це кореневий RPF, враховуємо вагу відкриття
 
                         if (registryService != null)
                         {
@@ -146,6 +145,8 @@ namespace Obriy.Core.Commands
 
                 try { File.Delete(manifestPath); } catch { }
 
+                Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = 100 }));
+
                 var success = new { 
                     status = "success", 
                     processed = items.Count,
@@ -169,7 +170,6 @@ namespace Obriy.Core.Commands
 
         private (string PhysicalPath, string InternalPath) SplitPath(string fullPath)
         {
-            // Нормалізуємо шлях перед обробкою, щоб усунути проблеми з слешами
             string currentPath = Path.GetFullPath(fullPath);
             string internalParts = "";
 
@@ -181,7 +181,6 @@ namespace Obriy.Core.Commands
                 string fileName = Path.GetFileName(currentPath);
                 string directory = Path.GetDirectoryName(currentPath);
 
-                // Захист від нескінченного циклу у корені диска
                 if (string.IsNullOrEmpty(directory) || directory.Equals(currentPath, StringComparison.OrdinalIgnoreCase)) break;
 
                 internalParts = Path.Combine(fileName, internalParts);
