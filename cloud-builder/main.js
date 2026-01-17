@@ -7,12 +7,12 @@ const buildManifest = require('./modules/1-manifest');
 const packageMod = require('./modules/2-packager');
 const processAssets = require('./modules/3-assets');
 const updateCatalog = require('./modules/4-catalog');
-const uploadToCloud = require('./modules/5-upload'); // <--- Імпорт нового модуля
+const uploadToCloud = require('./modules/5-upload');
 
 // Аргументи: node main.js 21 --upload
 const args = process.argv.slice(2);
 const modId = args[0];
-const shouldUpload = args.includes('--upload'); // Перевіряємо прапорець
+const shouldUpload = args.includes('--upload');
 
 if (!modId || modId.startsWith('--')) {
     console.error('❌ Error: Please provide a Mod ID (e.g., node main.js 21)'.red);
@@ -24,8 +24,9 @@ if (!modId || modId.startsWith('--')) {
         console.log(`🚀 STARTING BUILD FOR MOD ID: ${modId}`.bgBlue.white);
         const startTime = Date.now();
 
-        // Перевірка наявності мода
+        // Шляхи до конкретного мода
         const modSourcePath = path.join(config.paths.modsSource, modId);
+        const modDistPath = path.join(config.paths.modsDist, modId); // Шлях призначення
         const manifestPath = path.join(modSourcePath, 'manifest.json');
 
         if (!fs.existsSync(manifestPath)) {
@@ -39,8 +40,11 @@ if (!modId || modId.startsWith('--')) {
         // 1. Маніфест
         const cloudManifest = await buildManifest(modId, localManifest);
 
-        // 2. Ассети
-        await processAssets(modId);
+        // 2. Ассети (ВИПРАВЛЕНО: передаємо шляхи, а не просто ID)
+        await processAssets({
+            inputDir: modSourcePath,
+            outputDir: modDistPath
+        });
 
         // 3. Упаковка (ZIP)
         await packageMod(modId);
@@ -49,10 +53,9 @@ if (!modId || modId.startsWith('--')) {
         await updateCatalog(cloudManifest);
 
         // 5. Завантаження (Тільки якщо є прапорець --upload)
-        // 5. Завантаження (Тільки якщо є прапорець --upload)
         if (shouldUpload) {
             console.log('\n📦 Deployment requested...'.magenta);
-            await uploadToCloud(modId); // <--- ДОДАЙТЕ modId В ДУЖКИ
+            await uploadToCloud(modId);
         } else {
             console.log('\n⚠️  Skipping Cloud Upload. Use --upload to deploy.'.gray);
         }

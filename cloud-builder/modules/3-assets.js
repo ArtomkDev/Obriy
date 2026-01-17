@@ -1,69 +1,108 @@
 const fs = require('fs-extra');
 const path = require('path');
-const config = require('../config');
+const sharp = require('sharp');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegPath = require('ffmpeg-static');
+const mime = require('mime-types');
 
-module.exports = async function processAssets(modId) {
-    console.log(`[Assets] Processing media for ${modId}...`);
+// Налаштовуємо шлях до ffmpeg (щоб працювало на будь-якій системі)
+ffmpeg.setFfmpegPath(ffmpegPath);
 
-    const sourcePath = path.join(config.paths.modsSource, modId);
-    // Шукаємо папку media (де лежать 1.jpg, 2.mp4...)
-    const mediaSourcePath = path.join(sourcePath, 'media'); 
-    
-    // Куди будемо зберігати
-    const destPath = path.join(config.paths.modsDist, modId, 'assets');
-    const galleryDestPath = path.join(destPath, 'gallery');
+module.exports = async (config) => {
+    console.log('[Assets] Starting media processing...');
 
-    // Очищаємо/створюємо папки призначення
-    await fs.ensureDir(destPath);
-    await fs.emptyDir(galleryDestPath); // Чистимо галерею перед записом
+    const srcDir = path.join(config.inputDir, 'media'); // Папка, де лежать вихідні фото/відео
+    const distDir = path.join(config.outputDir, 'assets');
 
-    if (!fs.existsSync(mediaSourcePath)) {
-        console.warn(`   ⚠️ WARNING: 'media' folder not found for ${modId}`);
-        return;
+    // 1. Очистка та підготовка папки призначення
+    await fs.emptyDir(distDir);
+
+    if (!fs.existsSync(srcDir)) {
+        console.warn('[Assets] Media folder not found, skipping.');
+        return [];
     }
 
-    // 1. Отримуємо файли і СОРТУЄМО їх правильно (1, 2, 3... 10)
-    const files = await fs.readdir(mediaSourcePath);
+    // 2. Отримуємо всі файли та сортуємо їх за алфавітом
+    const rawFiles = await fs.readdir(srcDir);
+    const files = rawFiles
+        .filter(f => f !== '.DS_Store') // Ігноруємо системні файли
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+
+    if (files.length === 0) {
+        console.warn('[Assets] No media files found.');
+        return [];
+    }
+
+    const processedAssets = [];
+
+    // 3. Перевірка першого файлу (Прев'ю)
+    const firstFile = files[0];
+    const firstMime = mime.lookup(firstFile);
     
-    // Сортування natural (щоб 2.jpg йшло перед 10.jpg)
-    const sortedFiles = files.sort((a, b) => 
-        a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
-    );
+    if (!firstMime || !firstMime.startsWith('image/')) {
+        throw new Error(`[Assets] CRITICAL ERROR: The first file (${firstFile}) must be an IMAGE suitable for a preview. Found: ${firstMime}`);
+    }
 
-    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.bmp'];
-    let thumbnailCreated = false;
-    let itemsCount = 0;
+    // 4. Обробка файлів по черзі
+    let counter = 1; // Починаємо з 1
 
-    for (const file of sortedFiles) {
-        const fullSourcePath = path.join(mediaSourcePath, file);
-        const stats = await fs.stat(fullSourcePath);
+    for (const fileName of files) {
+        const inputPath = path.join(srcDir, fileName);
+        const mimeType = mime.lookup(fileName);
 
-        // Пропускаємо папки та системні файли
-        if (stats.isDirectory() || file.startsWith('.')) continue;
+        if (!mimeType) {
+            console.warn(`[Assets] Skipping unknown file type: ${fileName}`);
+            continue;
+        }
 
-        const ext = path.extname(file).toLowerCase();
+        try {
+            if (mimeType.startsWith('image/')) {
+                // === ОБРОБКА ФОТО (WebP) ===
+                const outName = `${counter}.webp`;
+                const outPath = path.join(distDir, outName);
 
-        // 2. Копіюємо ВСЕ (і картинки, і відео) в папку gallery
-        // Зберігаємо оригінальну назву (1.jpg, 2.mp4)
-        await fs.copy(fullSourcePath, path.join(galleryDestPath, file));
-        itemsCount++;
+                console.log(`[Assets] Processing Image: ${fileName} -> ${outName}`);
 
-        // 3. ЛОГІКА ОБКЛАДИНКИ:
-        // Якщо обкладинка ще не створена І поточний файл - це картинка
-        if (!thumbnailCreated && imageExtensions.includes(ext)) {
-            // Копіюємо цей файл як thumbnail.jpg в корінь assets
-            // (перейменовуємо розширення на .jpg для уніфікації, або залишаємо як є)
-            const thumbName = `thumbnail${ext}`; // наприклад thumbnail.png
-            await fs.copy(fullSourcePath, path.join(destPath, thumbName));
-            
-            console.log(`   -> 🖼️ Selected cover: '${file}' (saved as ${thumbName})`);
-            thumbnailCreated = true;
+                await sharp(inputPath)
+                    .webp({ quality: 80 }) // Оптимальна якість/розмір
+                    .toFile(outPath);
+
+                processedAssets.push(outName);
+
+            } else if (mimeType.startsWith('video/')) {
+                // === ОБРОБКА ВІДЕО (MP4) ===
+                const outName = `${counter}.mp4`;
+                const outPath = path.join(distDir, outName);
+
+                console.log(`[Assets] Processing Video: ${fileName} -> ${outName}`);
+
+                await new Promise((resolve, reject) => {
+                    ffmpeg(inputPath)
+                        .output(outPath)
+                        .videoCodec('libx264') // Стандартний кодек, грає всюди
+                        .audioCodec('aac')
+                        .size('?x720') // Зменшуємо до 720p для економії (або прибери цей рядок для оригіналу)
+                        .on('end', resolve)
+                        .on('error', reject)
+                        .run();
+                });
+
+                processedAssets.push(outName);
+            } else {
+                console.warn(`[Assets] Skipping unsupported format: ${fileName} (${mimeType})`);
+                // Не інкрементуємо каунтер, якщо файл пропущено
+                continue;
+            }
+
+            // Збільшуємо номер тільки якщо файл успішно оброблено
+            counter++;
+
+        } catch (err) {
+            console.error(`[Assets] Failed to process ${fileName}:`, err.message);
+            throw err; // Зупиняємо білд при помилці
         }
     }
 
-    if (!thumbnailCreated) {
-        console.warn(`   ⚠️ WARNING: Media folder has files, but NO IMAGES found for thumbnail!`);
-    } else {
-        console.log(`   -> Processed ${itemsCount} media files (Videos & Images)`);
-    }
+    console.log(`[Assets] Processed ${processedAssets.length} files successfully.`);
+    return processedAssets;
 };
