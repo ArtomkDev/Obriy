@@ -49,9 +49,10 @@ namespace Obriy.Core.Commands
                 string rootForEditor = !string.IsNullOrEmpty(gameRootPath) ? gameRootPath : AppDomain.CurrentDomain.BaseDirectory;
                 
                 var editor = new RpfEditor(rootForEditor);
-                var operationsByRpf = new Dictionary<string, Dictionary<string, string>>();
+
+                // [FIX] Використовуємо StringComparer.OrdinalIgnoreCase, щоб уникнути дублювання RPF через різний регістр шляхів
+                var operationsByRpf = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
                 
-                // Ініціалізація реєстру
                 RegistryService registryService = null;
                 if (!string.IsNullOrEmpty(modId))
                 {
@@ -65,7 +66,6 @@ namespace Obriy.Core.Commands
                     }
                 }
                 
-                // Підготовка операцій (групування)
                 long totalWorkUnits = 0;
                 const int WEIGHT_RPF_OPEN = 1000;
                 const int WEIGHT_FILE = 10;
@@ -77,12 +77,16 @@ namespace Obriy.Core.Commands
                         try 
                         {
                             var pathInfo = SplitPath(item.TargetPath);
-                            if (!operationsByRpf.ContainsKey(pathInfo.PhysicalPath))
+                            
+                            // Нормалізація шляху для ключа словника
+                            string physicalKey = Path.GetFullPath(pathInfo.PhysicalPath);
+
+                            if (!operationsByRpf.ContainsKey(physicalKey))
                             {
-                                operationsByRpf[pathInfo.PhysicalPath] = new Dictionary<string, string>();
+                                operationsByRpf[physicalKey] = new Dictionary<string, string>();
                                 totalWorkUnits += WEIGHT_RPF_OPEN; 
                             }
-                            operationsByRpf[pathInfo.PhysicalPath][pathInfo.InternalPath] = item.SourceFilePath;
+                            operationsByRpf[physicalKey][pathInfo.InternalPath] = item.SourceFilePath;
                             totalWorkUnits += WEIGHT_FILE;
                         }
                         catch {}
@@ -94,7 +98,6 @@ namespace Obriy.Core.Commands
                 long processedWorkUnits = 0;
                 int lastReportedPercent = -1;
 
-                // Повідомляємо старт
                 Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = 0 }));
 
                 foreach (var kvp in operationsByRpf)
@@ -106,7 +109,6 @@ namespace Obriy.Core.Commands
 
                     try
                     {
-                        // 1. Інсталяція
                         editor.InstallBatch(physicalRpf, updates, (weight) => 
                         {
                             processedWorkUnits += weight;
@@ -114,7 +116,6 @@ namespace Obriy.Core.Commands
                             
                             int currentPercent = (int)((double)processedWorkUnits / totalWorkUnits * 100.0);
 
-                            // Оновлюємо прогрес ТІЛЬКИ якщо змінився відсоток (це зменшує спам в консоль)
                             if (currentPercent > lastReportedPercent)
                             {
                                 Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = currentPercent }));
@@ -122,7 +123,6 @@ namespace Obriy.Core.Commands
                             }
                         });
 
-                        // 2. Реєстрація (швидка, без логів на кожен файл)
                         if (registryService != null)
                         {
                             string relativeRpf = Path.GetRelativePath(rootForEditor, physicalRpf).Replace("\\", "/");
@@ -139,7 +139,6 @@ namespace Obriy.Core.Commands
                     }
                 }
 
-                // Збереження реєстру
                 if (registryService != null)
                 {
                     registryService.SaveRegistry();
@@ -170,7 +169,8 @@ namespace Obriy.Core.Commands
 
         private (string PhysicalPath, string InternalPath) SplitPath(string fullPath)
         {
-            string currentPath = fullPath;
+            // Нормалізуємо шлях перед обробкою, щоб усунути проблеми з слешами
+            string currentPath = Path.GetFullPath(fullPath);
             string internalParts = "";
 
             while (!string.IsNullOrEmpty(currentPath))
@@ -181,7 +181,8 @@ namespace Obriy.Core.Commands
                 string fileName = Path.GetFileName(currentPath);
                 string directory = Path.GetDirectoryName(currentPath);
 
-                if (string.IsNullOrEmpty(directory) || directory == currentPath) break;
+                // Захист від нескінченного циклу у корені диска
+                if (string.IsNullOrEmpty(directory) || directory.Equals(currentPath, StringComparison.OrdinalIgnoreCase)) break;
 
                 internalParts = Path.Combine(fileName, internalParts);
                 currentPath = directory;

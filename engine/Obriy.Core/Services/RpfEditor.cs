@@ -10,13 +10,11 @@ namespace Obriy.Core.Services
     {
         private readonly string _gameRootPath;
 
-        // [FIX] Додано конструктор, який вимагають команди InstallModCommand та BatchInstallCommand
         public RpfEditor(string gameRootPath)
         {
             _gameRootPath = gameRootPath;
         }
 
-        // [FIX] Додано метод для прямої заміни файлу (вимагає InstallModCommand)
         public bool ReplaceFileInRpf(string relativeRpfPath, string fileName, byte[] content)
         {
             try
@@ -31,11 +29,8 @@ namespace Obriy.Core.Services
 
                 BackupFile(fullRpfPath);
 
-                // Відкриваємо RPF через сесію (кешування)
                 RpfFile rpfFile = RpfSession.GetOrOpen(fullRpfPath);
-
-                // Записуємо файл
-                InjectFile(rpfFile, fileName, content);
+                InjectFileDirect(rpfFile, fileName, content);
 
                 return true;
             }
@@ -90,6 +85,7 @@ namespace Obriy.Core.Services
 
             onProgress?.Invoke(950);
 
+            // 1. Обробка вкладених RPF
             foreach (var group in nestedGroups)
             {
                 string nestedRpfInternalPath = group.Key;
@@ -100,14 +96,12 @@ namespace Obriy.Core.Services
                 try
                 {
                     Directory.CreateDirectory(tempDir);
-                    
                     Console.Error.WriteLine($"[RpfEditor] Processing nested RPF: {nestedRpfInternalPath}");
                     
                     onProgress?.Invoke(100);
                     
                     ExtractFileFromRpf(rpfFile, nestedRpfInternalPath, tempRpfPath);
                     
-                    // Рекурсивний виклик, передаємо null в якості прогресу для вкладених, або можна адаптувати
                     InstallBatch(tempRpfPath, nestedUpdates, null);
 
                     directFiles[nestedRpfInternalPath] = tempRpfPath;
@@ -123,18 +117,42 @@ namespace Obriy.Core.Services
                 }
             }
 
+            // 2. Оптимізована вставка прямих файлів (Direct Files)
+            // Групуємо файли по директоріях, щоб мінімізувати прохід по дереву RPF
+            var filesByDirectory = new Dictionary<string, List<KeyValuePair<string, string>>>();
+
             foreach (var item in directFiles)
             {
                 string internalPath = item.Key;
-                string sourcePath = item.Value;
-                
-                bool isRpf = internalPath.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase);
-                if (isRpf) onProgress?.Invoke(100);
+                string dirPath = Path.GetDirectoryName(internalPath)?.Replace('\\', '/') ?? "";
+                string fileName = Path.GetFileName(internalPath);
 
-                byte[] data = File.ReadAllBytes(sourcePath);
-                InjectFile(rpfFile, internalPath, data);
-                
-                if (!isRpf) onProgress?.Invoke(10);
+                if (!filesByDirectory.ContainsKey(dirPath))
+                    filesByDirectory[dirPath] = new List<KeyValuePair<string, string>>();
+
+                filesByDirectory[dirPath].Add(new KeyValuePair<string, string>(fileName, item.Value));
+            }
+
+            foreach (var dirGroup in filesByDirectory)
+            {
+                string directoryPath = dirGroup.Key;
+                var filesInDir = dirGroup.Value;
+
+                RpfDirectoryEntry targetDir = GetDirectory(rpfFile, directoryPath);
+
+                foreach (var fileTask in filesInDir)
+                {
+                    string fileName = fileTask.Key;
+                    string sourcePath = fileTask.Value;
+                    
+                    bool isRpf = fileName.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase);
+                    if (isRpf) onProgress?.Invoke(100);
+
+                    byte[] data = File.ReadAllBytes(sourcePath);
+                    RpfFile.CreateFile(targetDir, fileName, data);
+                    
+                    if (!isRpf) onProgress?.Invoke(10);
+                }
             }
 
             foreach (var group in nestedGroups)
@@ -154,33 +172,42 @@ namespace Obriy.Core.Services
             }
         }
 
-        private void InjectFile(RpfFile rpfFile, string internalPath, byte[] data)
+        // [OPTIMIZATION] Знаходимо директорію один раз. Якщо шлях порожній, повертаємо корінь.
+        private RpfDirectoryEntry GetDirectory(RpfFile rpfFile, string directoryPath)
         {
-            string[] parts = internalPath.Split('/');
-            string fileName = parts.Last();
+            if (string.IsNullOrEmpty(directoryPath)) return rpfFile.Root;
 
+            string[] parts = directoryPath.Split('/');
             RpfDirectoryEntry currentDir = rpfFile.Root;
-            for (int i = 0; i < parts.Length - 1; i++)
+
+            foreach (var part in parts)
             {
-                var subDir = currentDir.Directories.FirstOrDefault(d => d.Name.Equals(parts[i], StringComparison.OrdinalIgnoreCase));
-                if (subDir == null) throw new Exception($"Path not found: {parts[i]}");
+                if (string.IsNullOrEmpty(part)) continue;
+                
+                var subDir = currentDir.Directories.FirstOrDefault(d => d.Name.Equals(part, StringComparison.OrdinalIgnoreCase));
+                if (subDir == null) throw new Exception($"Directory path not found: {part} in {directoryPath}");
                 currentDir = subDir;
             }
-            RpfFile.CreateFile(currentDir, fileName, data);
+            return currentDir;
+        }
+
+        // Цей метод залишаємо для сумісності з ReplaceFileInRpf (поодинока заміна)
+        private void InjectFileDirect(RpfFile rpfFile, string fileName, byte[] data)
+        {
+             // Якщо fileName містить шлях, розбиваємо його
+             string dirPath = Path.GetDirectoryName(fileName)?.Replace('\\', '/');
+             string nameOnly = Path.GetFileName(fileName);
+             
+             RpfDirectoryEntry dir = GetDirectory(rpfFile, dirPath);
+             RpfFile.CreateFile(dir, nameOnly, data);
         }
 
         private void ExtractFileFromRpf(RpfFile rpfFile, string internalPath, string outputPath)
         {
-            string[] parts = internalPath.Split('/');
-            string fileName = parts.Last();
+            string dirPath = Path.GetDirectoryName(internalPath)?.Replace('\\', '/');
+            string fileName = Path.GetFileName(internalPath);
 
-            RpfDirectoryEntry currentDir = rpfFile.Root;
-            for (int i = 0; i < parts.Length - 1; i++)
-            {
-                var subDir = currentDir.Directories.FirstOrDefault(d => d.Name.Equals(parts[i], StringComparison.OrdinalIgnoreCase));
-                if (subDir == null) throw new Exception($"Path not found during extraction: {parts[i]}");
-                currentDir = subDir;
-            }
+            RpfDirectoryEntry currentDir = GetDirectory(rpfFile, dirPath);
 
             var entry = currentDir.Files.FirstOrDefault(f => f.Name.Equals(fileName, StringComparison.OrdinalIgnoreCase));
             if (entry == null) throw new Exception($"File not found in RPF: {fileName}");
