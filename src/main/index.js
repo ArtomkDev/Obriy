@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { uninstallMod, validateGamePath, startBackendProcess } from './services/EngineService'
+import { uninstallMod, validateGamePath, startBackendProcess, getActiveMods, startRegistryWatcher } from './services/EngineService'
 import { installCloudMod, getModCatalog, getModDetails } from './services/CloudModService'
 import updaterPkg from 'electron-updater'
 import log from 'electron-log'
@@ -107,6 +107,12 @@ function createMainWindow() {
     if (loaderWindow && !loaderWindow.isDestroyed()) {
       loaderWindow.close()
     }
+    
+    // START WATCHER ON WINDOW READY
+    const savedPath = store.get('gta_path')
+    if (savedPath) {
+        startRegistryWatcher(mainWindow, savedPath)
+    }
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -169,6 +175,10 @@ app.whenReady().then(() => {
   
   ipcMain.handle('store:set', (_, key, value) => {
     store.set(key, value)
+    // Якщо оновили шлях до гри, перезапускаємо вотчер
+    if (key === 'gta_path' && mainWindow) {
+        startRegistryWatcher(mainWindow, value)
+    }
     return true
   })
 
@@ -192,6 +202,8 @@ app.whenReady().then(() => {
       const result = await validateGamePath(selectedPath)
       if (result.isValid) {
         const finalPath = result.exePath ? dirname(result.exePath) : selectedPath
+        // Також запускаємо спостерігач, якщо шлях вибрано
+        if (mainWindow) startRegistryWatcher(mainWindow, finalPath)
         return { success: true, path: finalPath }
       }
       return { success: false, error: 'GTA5.exe not found in this directory' }
@@ -220,6 +232,12 @@ app.whenReady().then(() => {
       console.error('Catalog Fetch Error:', error)
       return []
     }
+  })
+
+  ipcMain.handle('get-active-mods', async () => {
+      const gamePath = store.get('gta_path')
+      if (!gamePath) return []
+      return await getActiveMods(gamePath)
   })
 
   ipcMain.handle('get-mod-details', async (_, modId) => {
