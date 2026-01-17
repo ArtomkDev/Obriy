@@ -1,65 +1,74 @@
-using Obriy.Core.Services;
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
 using System.Text.Json;
+using Obriy.Core.Services;
 
 namespace Obriy.Core.Commands
 {
     public class InstallModCommand : ICommand
     {
-        public string Name => "install-rpf";
+        public string CommandName => "install-mod";
 
-        public object Execute(string[] args)
+        public async Task ExecuteAsync(string[] args)
         {
-            if (args.Length < 3)
+            if (args.Length < 4)
             {
-                var err = new { error = "Usage: install-rpf <full_target_path> <source_file>" };
-                Console.WriteLine(JsonSerializer.Serialize(err));
-                return err;
+                Console.WriteLine(JsonSerializer.Serialize(new { status = "error", message = "Not enough arguments" }));
+                return;
             }
 
-            string fullTargetPath = args[1];
-            string sourceFile = args[2];
+            string gameDirectoryPath = args[0];
+            string modFilesSourcePath = args[1];
+            string targetRpfRelativePath = args[2];
+            string modIdentifier = args[3];
+
+            RegistryService registryService = new RegistryService(AppDomain.CurrentDomain.BaseDirectory);
+            RpfEditor rpfEditor = new RpfEditor(gameDirectoryPath);
 
             try
             {
-                var pathInfo = SplitPath(fullTargetPath);
-                
-                var editor = new RpfEditor();
-                editor.InstallMod(pathInfo.PhysicalPath, pathInfo.InternalPath, sourceFile);
-                
-                var success = new { status = "success" };
-                Console.WriteLine(JsonSerializer.Serialize(success)); 
-                return success;
+                string[] filesToInstall = Directory.GetFiles(modFilesSourcePath);
+                List<string> successfullyInstalledFiles = new List<string>();
+
+                foreach (string filePath in filesToInstall)
+                {
+                    string fileName = Path.GetFileName(filePath);
+                    byte[] fileBytes = await File.ReadAllBytesAsync(filePath);
+
+                    bool isSuccess = rpfEditor.ReplaceFileInRpf(targetRpfRelativePath, fileName, fileBytes);
+
+                    if (isSuccess)
+                    {
+                        registryService.RegisterFileOwnership(targetRpfRelativePath, fileName, modIdentifier);
+                        successfullyInstalledFiles.Add(fileName);
+                        Console.Error.WriteLine($"Installed: {fileName}");
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"Failed: {fileName}");
+                    }
+                }
+
+                registryService.SaveRegistry();
+
+                Console.WriteLine(JsonSerializer.Serialize(new
+                {
+                    status = "success",
+                    installedFiles = successfullyInstalledFiles,
+                    activeMods = registryService.GetActiveModIds()
+                }));
             }
             catch (Exception ex)
             {
-                var err = new { error = ex.Message, trace = ex.StackTrace };
-                Console.WriteLine(JsonSerializer.Serialize(err));
-                return err;
-            }
-        }
-
-        private (string PhysicalPath, string InternalPath) SplitPath(string fullPath)
-        {
-            string currentPath = fullPath;
-            string internalParts = "";
-
-            while (!string.IsNullOrEmpty(currentPath))
-            {
-                if (File.Exists(currentPath))
+                Console.WriteLine(JsonSerializer.Serialize(new
                 {
-                    return (currentPath, internalParts.TrimStart('/', '\\'));
-                }
-
-                string fileName = Path.GetFileName(currentPath);
-                string directory = Path.GetDirectoryName(currentPath);
-
-                internalParts = Path.Combine(fileName, internalParts);
-                currentPath = directory;
+                    status = "error",
+                    message = ex.Message,
+                    trace = ex.StackTrace
+                }));
             }
-
-            throw new FileNotFoundException($"Could not find a valid RPF root in path: {fullPath}");
         }
     }
 }

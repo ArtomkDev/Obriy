@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Threading.Tasks;
 using System.Linq;
 
 namespace Obriy.Core.Commands
@@ -15,17 +16,29 @@ namespace Obriy.Core.Commands
 
     public class BatchInstallCommand : ICommand
     {
-        public string Name => "install-batch";
+        public string CommandName => "install-batch";
 
-        public object Execute(string[] args)
+        public Task ExecuteAsync(string[] args)
         {
             var writer = new StreamWriter(Console.OpenStandardOutput());
             writer.AutoFlush = true;
             Console.SetOut(writer);
 
-            if (args.Length < 1) return Error("Manifest path required");
+            if (args.Length < 1) 
+            {
+                Error("Manifest path required");
+                return Task.CompletedTask;
+            }
+
             string manifestPath = args[0];
-            if (!File.Exists(manifestPath)) return Error("Manifest file not found");
+            string modId = args.Length > 1 ? args[1] : null;
+            string gameRootPath = args.Length > 2 ? args[2] : null;
+
+            if (!File.Exists(manifestPath)) 
+            {
+                Error($"Manifest file not found: {manifestPath}");
+                return Task.CompletedTask;
+            }
 
             try
             {
@@ -33,51 +46,47 @@ namespace Obriy.Core.Commands
                 var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
                 var items = JsonSerializer.Deserialize<List<BatchItem>>(jsonContent, options);
                 
-                var editor = new RpfEditor();
+                string rootForEditor = !string.IsNullOrEmpty(gameRootPath) ? gameRootPath : AppDomain.CurrentDomain.BaseDirectory;
+                
+                var editor = new RpfEditor(rootForEditor);
                 var operationsByRpf = new Dictionary<string, Dictionary<string, string>>();
                 
-                // --- НОВА ЛОГІКА (WEIGHTED PROGRESS) ---
+                // Ініціалізація реєстру
+                RegistryService registryService = null;
+                if (!string.IsNullOrEmpty(modId))
+                {
+                    try 
+                    {
+                        registryService = new RegistryService(AppDomain.CurrentDomain.BaseDirectory);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"[Batch] Registry Init Warning: {ex.Message}");
+                    }
+                }
+                
+                // Підготовка операцій (групування)
                 long totalWorkUnits = 0;
-                const int WEIGHT_RPF_OPEN = 1000;      // Бали за відкриття архіву
-                const int WEIGHT_RPF_EXTRACT = 100;    // Бали за розпакування вкладеного
-                const int WEIGHT_RPF_REPACK = 100;     // Бали за запакування вкладеного
-                const int WEIGHT_FILE = 10;            // Бали за звичайний файл
+                const int WEIGHT_RPF_OPEN = 1000;
+                const int WEIGHT_FILE = 10;
 
                 foreach (var item in items)
                 {
                     if (File.Exists(item.SourceFilePath))
                     {
-                        var pathInfo = SplitPath(item.TargetPath);
-                        
-                        if (!operationsByRpf.ContainsKey(pathInfo.PhysicalPath))
+                        try 
                         {
-                            operationsByRpf[pathInfo.PhysicalPath] = new Dictionary<string, string>();
-                            // Додаємо вагу за відкриття кореневого RPF
-                            totalWorkUnits += WEIGHT_RPF_OPEN; 
+                            var pathInfo = SplitPath(item.TargetPath);
+                            if (!operationsByRpf.ContainsKey(pathInfo.PhysicalPath))
+                            {
+                                operationsByRpf[pathInfo.PhysicalPath] = new Dictionary<string, string>();
+                                totalWorkUnits += WEIGHT_RPF_OPEN; 
+                            }
+                            operationsByRpf[pathInfo.PhysicalPath][pathInfo.InternalPath] = item.SourceFilePath;
+                            totalWorkUnits += WEIGHT_FILE;
                         }
-
-                        operationsByRpf[pathInfo.PhysicalPath][pathInfo.InternalPath] = item.SourceFilePath;
-                        totalWorkUnits += WEIGHT_FILE;
+                        catch {}
                     }
-                }
-
-                // Додаємо вагу за вкладені архіви
-                foreach(var rpfGroup in operationsByRpf.Values)
-                {
-                    var uniqueNestedRpfs = new HashSet<string>();
-                    foreach(var internalPath in rpfGroup.Keys)
-                    {
-                        int idx = internalPath.IndexOf(".rpf/", StringComparison.OrdinalIgnoreCase);
-                        if (idx != -1)
-                        {
-                            string nestedName = internalPath.Substring(0, idx + 4);
-                            uniqueNestedRpfs.Add(nestedName);
-                        }
-                    }
-                    
-                    // За кожен вкладений RPF ми нараховуємо бали за повний цикл роботи
-                    long nestedCost = WEIGHT_RPF_EXTRACT + WEIGHT_RPF_OPEN + WEIGHT_RPF_REPACK;
-                    totalWorkUnits += (uniqueNestedRpfs.Count * nestedCost);
                 }
 
                 if (totalWorkUnits == 0) totalWorkUnits = 1;
@@ -85,7 +94,7 @@ namespace Obriy.Core.Commands
                 long processedWorkUnits = 0;
                 int lastReportedPercent = -1;
 
-                // Примусово показуємо 0% на старті
+                // Повідомляємо старт
                 Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = 0 }));
 
                 foreach (var kvp in operationsByRpf)
@@ -93,42 +102,70 @@ namespace Obriy.Core.Commands
                     string physicalRpf = kvp.Key;
                     var updates = kvp.Value;
 
-                    Console.Error.WriteLine($"[Batch] Processing RPF: {Path.GetFileName(physicalRpf)}");
+                    Console.Error.WriteLine($"[Batch] Installing to: {Path.GetFileName(physicalRpf)} ({updates.Count} files)");
 
-                    // Передаємо callback, який додає бали (weight)
-                    editor.InstallBatch(physicalRpf, updates, (weight) => 
+                    try
                     {
-                        processedWorkUnits += weight;
-                        
-                        if (processedWorkUnits > totalWorkUnits) processedWorkUnits = totalWorkUnits;
-
-                        int currentPercent = (int)((double)processedWorkUnits / totalWorkUnits * 100.0);
-
-                        if (currentPercent > lastReportedPercent)
+                        // 1. Інсталяція
+                        editor.InstallBatch(physicalRpf, updates, (weight) => 
                         {
-                            Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = currentPercent }));
-                            lastReportedPercent = currentPercent;
+                            processedWorkUnits += weight;
+                            if (processedWorkUnits > totalWorkUnits) processedWorkUnits = totalWorkUnits;
+                            
+                            int currentPercent = (int)((double)processedWorkUnits / totalWorkUnits * 100.0);
+
+                            // Оновлюємо прогрес ТІЛЬКИ якщо змінився відсоток (це зменшує спам в консоль)
+                            if (currentPercent > lastReportedPercent)
+                            {
+                                Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = currentPercent }));
+                                lastReportedPercent = currentPercent;
+                            }
+                        });
+
+                        // 2. Реєстрація (швидка, без логів на кожен файл)
+                        if (registryService != null)
+                        {
+                            string relativeRpf = Path.GetRelativePath(rootForEditor, physicalRpf).Replace("\\", "/");
+                            foreach (var fileUpdate in updates)
+                            {
+                                string internalPath = fileUpdate.Key.Replace("\\", "/");
+                                registryService.RegisterFileOwnership(relativeRpf, internalPath, modId);
+                            }
                         }
-                    });
+                    }
+                    catch (Exception rpfEx)
+                    {
+                        Console.Error.WriteLine($"[Batch] Error processing {Path.GetFileName(physicalRpf)}: {rpfEx.Message}");
+                    }
+                }
+
+                // Збереження реєстру
+                if (registryService != null)
+                {
+                    registryService.SaveRegistry();
                 }
 
                 try { File.Delete(manifestPath); } catch { }
 
-                var success = new { status = "success", processed = items.Count };
+                var success = new { 
+                    status = "success", 
+                    processed = items.Count,
+                    activeMods = registryService != null ? registryService.GetActiveModIds() : new List<string>()
+                };
                 Console.WriteLine(JsonSerializer.Serialize(success));
-                return success;
             }
             catch (Exception ex)
             {
-                return Error(ex.Message, ex.StackTrace);
+                Error(ex.Message, ex.StackTrace);
             }
+            
+            return Task.CompletedTask;
         }
 
-        private object Error(string msg, string trace = null)
+        private void Error(string msg, string trace = null)
         {
             var err = new { status = "error", message = msg, trace = trace };
             Console.WriteLine(JsonSerializer.Serialize(err));
-            return err;
         }
 
         private (string PhysicalPath, string InternalPath) SplitPath(string fullPath)

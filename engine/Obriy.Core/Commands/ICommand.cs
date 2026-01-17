@@ -1,7 +1,10 @@
-namespace Obriy.Core.Commands;
+using System.Threading.Tasks;
 
-public interface ICommand
+namespace Obriy.Core.Commands
 {
-    string Name { get; }
-    object Execute(string[] args);
+    public interface ICommand
+    {
+        string CommandName { get; }
+        Task ExecuteAsync(string[] args);
+    }
 }

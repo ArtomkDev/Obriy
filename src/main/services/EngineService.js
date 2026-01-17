@@ -31,6 +31,7 @@ export function startBackendProcess() {
         return
     }
 
+    // Запуск бекенд-процесу
     backendProcess = spawn(enginePath, [], {
       cwd: workingDirectory,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -60,6 +61,7 @@ export function startBackendProcess() {
 
     backendProcess.stdout.on('data', initListener)
     
+    // Логування помилок/повідомлень від C# в консоль Electron
     backendProcess.stderr.on('data', (data) => {
       console.error(`[Core Log]: ${data.toString()}`)
     })
@@ -90,6 +92,9 @@ function sendCommand(commandName, args, eventSender, modId) {
     }
 
     const executePromise = new Promise((resolve, reject) => {
+      // [DEBUG] Цей лог покаже, що ми реально відправляємо в C#
+      console.log(`[IPC] Sending Command: ${commandName}`, args);
+
       const request = JSON.stringify({ Command: commandName, Args: args }) + '\n'
       let buffer = ''
       
@@ -238,8 +243,10 @@ function prepareBatchItems(instructionSet, gameRootPath, isUninstall) {
     return batchItems;
 }
 
-export async function executeBatch(manifestPath, eventSender) {
-    return await sendCommand('install-batch', [manifestPath], eventSender);
+export async function executeBatch(manifestPath, eventSender, modId = null, gameRootPath = null) {
+    // [FIX] Передаємо 3 аргументи і тут для сумісності
+    const args = [manifestPath, String(modId || ""), gameRootPath || ""];
+    return await sendCommand('install-batch', args, eventSender, modId);
 }
 
 export const validateGamePath = async (gamePath) => {
@@ -253,6 +260,7 @@ export const validateGamePath = async (gamePath) => {
     return await sendCommand('validate-path', [gamePath])
 }
 
+// [ГОЛОВНЕ ВИПРАВЛЕННЯ ТУТ]
 export async function installMod(eventSender, gameRootPath, instructionSet, modId, archiveUrl) {
     
     const tempDir = path.join(app.getPath('temp'), 'obriy_install', modId);
@@ -283,7 +291,21 @@ export async function installMod(eventSender, gameRootPath, instructionSet, modI
         const manifestPath = path.join(os.tmpdir(), `obriy_batch_${Date.now()}.json`);
         fs.writeFileSync(manifestPath, JSON.stringify(batchItems, null, 2));
 
-        const result = await sendCommand('install-batch', [manifestPath], eventSender, modId);
+        // [CRITICAL FIX] Формуємо масив з 3 аргументів
+        // 1. Шлях до маніфесту
+        // 2. ID моду
+        // 3. Шлях до гри
+        const safeModId = String(modId);
+        const safeGamePath = gameRootPath;
+
+        console.log(`[JS DEBUG] Calling install-batch. ModID: ${safeModId}, GameRoot: ${safeGamePath}`);
+
+        const result = await sendCommand(
+            'install-batch', 
+            [manifestPath, safeModId, safeGamePath], 
+            eventSender, 
+            modId
+        );
         
         try { fs.unlinkSync(manifestPath); } catch {}
         return result;
@@ -303,7 +325,10 @@ export async function uninstallMod(eventSender, gameRootPath, instructionSet, mo
         const manifestPath = path.join(os.tmpdir(), `obriy_batch_uninstall_${Date.now()}.json`);
         fs.writeFileSync(manifestPath, JSON.stringify(batchItems, null, 2));
 
-        const result = await sendCommand('install-batch', [manifestPath], eventSender, modId);
+        // Для видалення теж передаємо параметри, щоб бекенд знав контекст (хоча для видалення це менш критично зараз)
+        const args = [manifestPath, String(modId), gameRootPath];
+        
+        const result = await sendCommand('install-batch', args, eventSender, modId);
         
         try { fs.unlinkSync(manifestPath); } catch {}
         return result;

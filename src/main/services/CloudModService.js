@@ -2,7 +2,6 @@ import { app, BrowserWindow } from 'electron'
 import path from 'path'
 import fs from 'fs-extra'
 import AdmZip from 'adm-zip'
-// ВИПРАВЛЕНО: Імпорт executeBatch замість runEngine
 import { executeBatch } from './EngineService'
 
 const CLOUD_URL = 'https://pub-af821b9413f74a56ad45f675b24a2fac.r2.dev/v1'
@@ -74,8 +73,19 @@ export async function installCloudMod(modId, gamePath) {
   console.log(`[Cloud] Dispatching ${engineInstructions.length} operations to Engine`)
   sendProgress('install', 50)
 
-  // ВИПРАВЛЕНО: Виклик executeBatch, передаємо тільки шлях
-  const result = await executeBatch(saveTempManifest(engineInstructions))
+  // Отримуємо поточне вікно, щоб EngineService міг слати прогрес інсталяції
+  const windows = BrowserWindow.getAllWindows()
+  const sender = windows.length > 0 ? windows[0].webContents : null
+
+  // [ВИПРАВЛЕНО ТУТ] 
+  // Раніше було: executeBatch(saveTempManifest(...)) — аргументи modId та gamePath губилися!
+  // Тепер: Передаємо всі 4 аргументи, які очікує EngineService.
+  const result = await executeBatch(
+    saveTempManifest(engineInstructions), // Arg 1: manifestPath
+    sender,                               // Arg 2: eventSender
+    modId,                                // Arg 3: modId
+    gamePath                              // Arg 4: gameRootPath
+  )
 
   sendProgress('install', 100)
   return result
@@ -93,7 +103,6 @@ async function downloadFileWithProgress(url, destPath, onProgress) {
 
   const totalBytes = Number(response.headers.get('content-length') || 0)
   const fileStream = fs.createWriteStream(destPath)
-  // Важливо: getReader доступний тільки в середовищах де fetch підтримує streams (Electron/Node 18+)
   const reader = response.body.getReader()
   
   let receivedBytes = 0

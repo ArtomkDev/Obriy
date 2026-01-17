@@ -1,43 +1,35 @@
-using System.Diagnostics;
+using System;
 using System.IO;
+using System.Threading.Tasks;
+using System.Text.Json;
 
-namespace Obriy.Core.Commands;
-
-public class ValidateGamePathCommand : ICommand
+namespace Obriy.Core.Commands
 {
-    public string Name => "validate-path";
-
-    public object Execute(string[] args)
+    public class ValidateGamePathCommand : ICommand
     {
-        if (args.Length == 0)
-        {
-            throw new ArgumentException("Game path not provided");
-        }
+        public string CommandName => "validate-path";
 
-        string inputPath = args[0];
-        // Перевіряємо, чи користувач вибрав папку або сам exe файл
-        string exePath = inputPath.EndsWith("GTA5.exe", StringComparison.OrdinalIgnoreCase)
-            ? inputPath
-            : Path.Combine(inputPath, "GTA5.exe");
-
-        if (!File.Exists(exePath))
+        public Task ExecuteAsync(string[] args)
         {
-            return new 
+            string path = args.Length > 0 ? args[0] : "";
+            
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                Console.WriteLine(JsonSerializer.Serialize(new { status = "error", message = "Path is empty" }));
+                return Task.CompletedTask;
+            }
+
+            string exePath = Path.Combine(path, "GTA5.exe");
+            bool exists = File.Exists(exePath);
+
+            Console.WriteLine(JsonSerializer.Serialize(new 
             { 
-                isValid = false, 
-                error = "GTA5.exe not found in the specified directory" 
-            };
+                status = exists ? "success" : "error", 
+                isValid = exists,
+                checkedPath = exePath 
+            }));
+
+            return Task.CompletedTask;
         }
-
-        var versionInfo = FileVersionInfo.GetVersionInfo(exePath);
-        // Форматуємо версію, замінюючи коми на крапки (наприклад, 1.0.2944.0)
-        string gameVersion = versionInfo.FileVersion?.Replace(", ", ".") ?? "Unknown";
-
-        return new 
-        { 
-            isValid = true, 
-            version = gameVersion, 
-            exePath = exePath
-        };
     }
 }

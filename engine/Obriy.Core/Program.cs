@@ -4,20 +4,17 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Obriy.Core.Commands;
-using Obriy.Core.Services;
 using CodeWalker.Utils;
 using CodeWalker.GameFiles;
 
 namespace Obriy.Core
 {
-    // Клас для десеріалізації вхідних команд JSON
     class CommandRequest 
     {
         public string Command { get; set; }
         public string[] Args { get; set; }
     }
 
-    // Централізоване середовище гри
     public static class GameEnvironment
     {
         public static void Initialize()
@@ -25,7 +22,6 @@ namespace Obriy.Core
             string basePath = AppDomain.CurrentDomain.BaseDirectory;
             string keysDirectory = Path.Combine(basePath, "keys");
             
-            // Спроба знайти ключі в папці keys або в корені
             string aesKeyPath = Path.Combine(keysDirectory, "gtav_aes_key.dat");
             if (!File.Exists(aesKeyPath))
             {
@@ -35,10 +31,9 @@ namespace Obriy.Core
 
             if (!File.Exists(aesKeyPath))
             {
-                throw new FileNotFoundException($"GTA V AES Key not found at {aesKeyPath}. Verify keys directory content.");
+                throw new FileNotFoundException($"GTA V AES Key not found at {aesKeyPath}");
             }
 
-            // Завантаження ключів у глобальний стат CodeWalker через наш локальний CryptoIO
             GTA5Keys.PC_AES_KEY = File.ReadAllBytes(aesKeyPath);
             GTA5Keys.PC_LUT = File.ReadAllBytes(Path.Combine(keysDirectory, "gtav_hash_lut.dat"));
             GTA5Keys.PC_NG_KEYS = CryptoIO.ReadNgKeys(Path.Combine(keysDirectory, "gtav_ng_key.dat"));
@@ -52,19 +47,16 @@ namespace Obriy.Core
     {
         static async Task Main(string[] args)
         {
-            // Налаштування кодування для коректної роботи JSON через stdin/stdout
             Console.OutputEncoding = Encoding.UTF8;
             Console.InputEncoding = Encoding.UTF8;
 
             try 
             {
-                // Ініціалізація ключів перед будь-якою роботою
                 GameEnvironment.Initialize();
                 PrintJson(new { status = "ready", message = "Backend initialized" });
             }
             catch (Exception ex)
             {
-                // Критична помилка (наприклад, немає ключів) -> повідомляємо Electron
                 Console.Error.WriteLine($"Fatal Startup Error: {ex.Message}");
                 PrintJson(new { status = "fatal", error = ex.Message });
                 return;
@@ -72,7 +64,6 @@ namespace Obriy.Core
 
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
 
-            // Основний цикл обробки команд
             while (true)
             {
                 string input = await Console.In.ReadLineAsync();
@@ -89,8 +80,7 @@ namespace Obriy.Core
 
                     if (command != null)
                     {
-                        var result = command.Execute(request.Args);
-                        PrintJson(result);
+                        await command.ExecuteAsync(request.Args);
                     }
                     else 
                     {
@@ -99,13 +89,11 @@ namespace Obriy.Core
                 }
                 catch (Exception ex)
                 {
-                     // Перехоплення помилок виконання конкретної команди
-                     PrintJson(new { status = "error", error = ex.Message, trace = ex.StackTrace });
+                    PrintJson(new { status = "error", error = ex.Message, trace = ex.StackTrace });
                 }
             }
         }
 
-        // Фабрика команд
         static ICommand CreateCommand(string commandName)
         {
             return commandName switch
@@ -114,12 +102,12 @@ namespace Obriy.Core
                 "install-mod" => new InstallModCommand(),
                 "uninstall-mod" => new InstallModCommand(),
                 "install-batch" => new BatchInstallCommand(),
+                "get-active-mods" => new GetActiveModsCommand(),
                 "ping" => new PingCommand(),
                 _ => null
             };
         }
 
-        // Допоміжний метод для виводу JSON
         static void PrintJson(object data)
         {
             string json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = false });
@@ -128,7 +116,6 @@ namespace Obriy.Core
         }
     }
 
-    // Локальна реалізація читання бінарних файлів ключів (поліфіл для CryptoIO)
     public static class CryptoIO
     {
         public static byte[][] ReadNgKeys(string path)
@@ -192,24 +179,20 @@ namespace Obriy.Core
                     luts[i] = new GTA5NGLUT[16];
                     for(int j=0; j<16; j++)
                     {
-                        // [FIX] Створюємо об'єкт без параметрів
                         luts[i][j] = new GTA5NGLUT();
 
-                        // 1. Читаємо LUT0 (256 масивів по 256 байт)
                         luts[i][j].LUT0 = new byte[256][];
                         for (int k = 0; k < 256; k++)
                         {
                             luts[i][j].LUT0[k] = br.ReadBytes(256);
                         }
 
-                        // 2. Читаємо LUT1 (256 масивів по 256 байт)
                         luts[i][j].LUT1 = new byte[256][];
                         for (int k = 0; k < 256; k++)
                         {
                             luts[i][j].LUT1[k] = br.ReadBytes(256);
                         }
 
-                        // 3. Читаємо Indices (65536 байт)
                         luts[i][j].Indices = br.ReadBytes(65536);
                     }
                 }

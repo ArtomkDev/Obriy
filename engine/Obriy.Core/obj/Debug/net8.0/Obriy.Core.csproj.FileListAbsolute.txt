@@ -16,6 +16,7 @@ D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\SharpDX.dll
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\SharpDX.Mathematics.dll
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\System.Drawing.Common.dll
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\runtimes\win\lib\net8.0\Microsoft.Win32.SystemEvents.dll
+D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\CodeWalker.Core.dll
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\CodeWalker.Core.pdb
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\Obriy.Core.csproj.AssemblyReference.cache
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\Obriy.Core.GeneratedMSBuildEditorConfig.editorconfig
@@ -29,4 +30,3 @@ D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\refint\Obriy.Core.d
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\Obriy.Core.pdb
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\Obriy.Core.genruntimeconfig.cache
 D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\obj\Debug\net8.0\ref\Obriy.Core.dll
-D:\GitHub\ArtomkDev\Obriy\engine\Obriy.Core\bin\Debug\net8.0\CodeWalker.Core.dll

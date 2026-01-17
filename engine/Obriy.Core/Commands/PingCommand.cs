@@ -1,16 +1,17 @@
-namespace Obriy.Core.Commands;
+using System;
+using System.Threading.Tasks;
+using System.Text.Json;
 
-public class PingCommand : ICommand
+namespace Obriy.Core.Commands
 {
-    public string Name => "ping";
-
-    public object Execute(string[] args)
+    public class PingCommand : ICommand
     {
-        return new 
-        { 
-            status = "success", 
-            message = "Obriy Engine Connected", 
-            version = "1.0.0" 
-        };
+        public string CommandName => "ping";
+
+        public Task ExecuteAsync(string[] args)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new { status = "success", message = "pong" }));
+            return Task.CompletedTask;
+        }
     }
 }

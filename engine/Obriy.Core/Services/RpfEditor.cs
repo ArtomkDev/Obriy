@@ -8,6 +8,44 @@ namespace Obriy.Core.Services
 {
     public class RpfEditor
     {
+        private readonly string _gameRootPath;
+
+        // [FIX] Додано конструктор, який вимагають команди InstallModCommand та BatchInstallCommand
+        public RpfEditor(string gameRootPath)
+        {
+            _gameRootPath = gameRootPath;
+        }
+
+        // [FIX] Додано метод для прямої заміни файлу (вимагає InstallModCommand)
+        public bool ReplaceFileInRpf(string relativeRpfPath, string fileName, byte[] content)
+        {
+            try
+            {
+                string fullRpfPath = Path.Combine(_gameRootPath, relativeRpfPath);
+
+                if (!File.Exists(fullRpfPath))
+                {
+                    Console.Error.WriteLine($"[RpfEditor] Target RPF not found: {fullRpfPath}");
+                    return false;
+                }
+
+                BackupFile(fullRpfPath);
+
+                // Відкриваємо RPF через сесію (кешування)
+                RpfFile rpfFile = RpfSession.GetOrOpen(fullRpfPath);
+
+                // Записуємо файл
+                InjectFile(rpfFile, fileName, content);
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[RpfEditor] Replace Error: {ex.Message}");
+                return false;
+            }
+        }
+
         public void InstallMod(string physicalRpfPath, string internalPath, string replacementFilePath)
         {
             var dict = new Dictionary<string, string> { { internalPath, replacementFilePath } };
@@ -46,13 +84,10 @@ namespace Obriy.Core.Services
                 }
             }
 
-            // [ВАЖЛИВО] Повідомляємо про початок відкриття (+50 балів). Це зрушить прогрес з 0%.
             onProgress?.Invoke(50);
 
-            // Це блокуюча операція (2-3 секунди)
             RpfFile rpfFile = RpfSession.GetOrOpen(physicalRpfPath);
 
-            // Повідомляємо про завершення відкриття (+950 балів). Це стрибок до ~50-70%.
             onProgress?.Invoke(950);
 
             foreach (var group in nestedGroups)
@@ -68,13 +103,12 @@ namespace Obriy.Core.Services
                     
                     Console.Error.WriteLine($"[RpfEditor] Processing nested RPF: {nestedRpfInternalPath}");
                     
-                    // +100 балів за розпакування
                     onProgress?.Invoke(100);
                     
                     ExtractFileFromRpf(rpfFile, nestedRpfInternalPath, tempRpfPath);
                     
-                    // Рекурсія
-                    InstallBatch(tempRpfPath, nestedUpdates, onProgress);
+                    // Рекурсивний виклик, передаємо null в якості прогресу для вкладених, або можна адаптувати
+                    InstallBatch(tempRpfPath, nestedUpdates, null);
 
                     directFiles[nestedRpfInternalPath] = tempRpfPath;
                 }
@@ -95,12 +129,12 @@ namespace Obriy.Core.Services
                 string sourcePath = item.Value;
                 
                 bool isRpf = internalPath.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase);
-                if (isRpf) onProgress?.Invoke(100); // +100 за запакування RPF
+                if (isRpf) onProgress?.Invoke(100);
 
                 byte[] data = File.ReadAllBytes(sourcePath);
                 InjectFile(rpfFile, internalPath, data);
                 
-                if (!isRpf) onProgress?.Invoke(10); // +10 за файл
+                if (!isRpf) onProgress?.Invoke(10);
             }
 
             foreach (var group in nestedGroups)
@@ -155,4 +189,4 @@ namespace Obriy.Core.Services
             File.WriteAllBytes(outputPath, data);
         }
     }
-} 
+}
