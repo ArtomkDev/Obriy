@@ -2,18 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { 
-  uninstallMod, 
-  validateGamePath, 
-  startBackendProcess, 
-  getActiveMods, 
-  startRegistryWatcher 
-} from './services/EngineService'
-import { 
-  installCloudModification, 
-  fetchRemoteModCatalog, 
-  fetchRemoteModDetails 
-} from './services/CloudModService'
+import * as ModManager from './services/ModManagerService'
 import updaterPkg from 'electron-updater'
 import log from 'electron-log'
 import Store from 'electron-store'
@@ -120,7 +109,7 @@ function createMainWindow() {
     
     const savedPath = store.get('gta_path')
     if (savedPath) {
-        startRegistryWatcher(mainWindow, savedPath)
+        ModManager.startRegistryWatcher(mainWindow, savedPath)
     }
   })
 
@@ -185,7 +174,7 @@ app.whenReady().then(() => {
   ipcMain.handle('store:set', (_, key, value) => {
     store.set(key, value)
     if (key === 'gta_path' && mainWindow) {
-        startRegistryWatcher(mainWindow, value)
+        ModManager.startRegistryWatcher(mainWindow, value)
     }
     return true
   })
@@ -207,10 +196,11 @@ app.whenReady().then(() => {
 
     const selectedPath = filePaths[0]
     try {
-      const validationResult = await validateGamePath(selectedPath)
+      const validationResult = await ModManager.validateGamePath(selectedPath)
+      
       if (validationResult.isValid) {
         const directoryPath = validationResult.exePath ? dirname(validationResult.exePath) : selectedPath
-        if (mainWindow) startRegistryWatcher(mainWindow, directoryPath)
+        if (mainWindow) ModManager.startRegistryWatcher(mainWindow, directoryPath)
         return { success: true, path: directoryPath }
       }
       return { success: false, error: 'GTA5.exe not found in this directory' }
@@ -220,12 +210,12 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('validate-game-path', async (_, path) => {
-      return validateGamePath(path)
+      return await ModManager.validateGamePath(path)
   })
 
   ipcMain.handle('start-backend', async () => {
     try {
-      await startBackendProcess()
+      await ModManager.ensureBackendReady()
       return true
     } catch (backendError) {
       throw new Error(`Failed to start backend: ${backendError.message}`)
@@ -234,7 +224,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle('get-mod-catalog', async () => {
     try {
-      return await fetchRemoteModCatalog()
+      return await ModManager.getMarketplaceCatalog()
     } catch (networkError) {
       console.error(networkError.message)
       return []
@@ -244,12 +234,12 @@ app.whenReady().then(() => {
   ipcMain.handle('get-active-mods', async () => {
       const gameDirectory = store.get('gta_path')
       if (!gameDirectory) return []
-      return await getActiveMods(gameDirectory)
+      return await ModManager.getActiveMods(gameDirectory)
   })
 
   ipcMain.handle('get-mod-details', async (_, modId) => {
     try {
-      return await fetchRemoteModDetails(modId)
+      return await ModManager.getModDetails(modId)
     } catch (detailError) {
       console.error(detailError.message)
       return null
@@ -264,16 +254,16 @@ app.whenReady().then(() => {
           throw new Error('Game path not configured')
       }
       
-      const installationResult = await installCloudModification(modId, gameDirectory)
-      return { success: true, data: installationResult }
+      const result = await ModManager.installMod(modId, gameDirectory)
+      return { success: true, data: result }
     } catch (installationError) {
       console.error(installationError.message)
       return { success: false, error: installationError.message }
     }
   })
 
-  ipcMain.handle('uninstall-mod', async (event, gamePath, instructions, modId) => {
-    return await uninstallMod(event.sender, gamePath, instructions, modId)
+  ipcMain.handle('uninstall-mod', async (_, gamePath, instructions, modId) => {
+    return await ModManager.uninstallMod(modId, gamePath)
   })
 
   app.on('activate', () => {
