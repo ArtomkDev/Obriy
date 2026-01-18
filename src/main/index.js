@@ -6,9 +6,58 @@ import * as ModManager from './services/ModManagerService'
 import updaterPkg from 'electron-updater'
 import log from 'electron-log'
 import Store from 'electron-store'
+import fs from 'fs'
+import crypto from 'crypto' // Додаємо модуль криптографії
 
 const { autoUpdater } = updaterPkg
-const store = new Store()
+
+// СЕКРЕТНИЙ КЛЮЧ ДЛЯ ПІДПИСУ КОНФІГУ
+// Це запобігає ручній зміні ID у файлі config.json
+const INTEGRITY_SALT = "Obriy_System_Secure_v1_DoNotEdit_8822"
+
+// --- Функції захисту даних ---
+
+function signAuthData(data) {
+  if (!data || typeof data !== 'object') return data
+  // Видаляємо старий підпис, якщо є
+  const { _integrity, ...cleanData } = data
+  
+  // Створюємо рядок для хешування (ID + Username + Salt)
+  // Сортуємо ключі, щоб порядок в JSON не впливав на хеш
+  const payload = JSON.stringify(cleanData, Object.keys(cleanData).sort()) + INTEGRITY_SALT
+  
+  // Генеруємо SHA-256 підпис
+  const hash = crypto.createHash('sha256').update(payload).digest('hex')
+  
+  return { ...cleanData, _integrity: hash }
+}
+
+function validateAuthData(data) {
+  if (!data || !data._integrity) return false
+  
+  const { _integrity, ...cleanData } = data
+  const expectedData = signAuthData(cleanData)
+  
+  return _integrity === expectedData._integrity
+}
+
+// --- Ініціалізація Store ---
+
+let store
+try {
+    store = new Store({ clearInvalidConfig: true })
+} catch (error) {
+    console.error('[Main] Config corrupted. Resetting...', error)
+    try {
+        const configPath = join(app.getPath('userData'), 'config.json')
+        if (fs.existsSync(configPath)) {
+            fs.unlinkSync(configPath)
+        }
+    } catch (e) {
+        console.error('[Main] Failed to delete config:', e)
+    }
+    store = new Store()
+}
 
 let loaderWindow = null
 let mainWindow = null
@@ -169,9 +218,31 @@ app.whenReady().then(() => {
 
   ipcMain.handle('get-app-version', () => app.getVersion())
 
-  ipcMain.handle('store:get', (_, key) => store.get(key))
+  // --- ЗАХИЩЕНІ HANDLERS STORE ---
+
+  ipcMain.handle('store:get', (_, key) => {
+    const value = store.get(key)
+    
+    // Якщо запитують дані користувача, перевіряємо їх цілісність
+    if (key === 'auth_user' && value) {
+        if (!validateAuthData(value)) {
+            console.error('[Security] DETECTED CONFIG TAMPERING! Resetting auth_user.')
+            // Видаляємо пошкоджені дані. Frontend побачить null і покаже реєстрацію.
+            store.delete('auth_user')
+            return null
+        }
+    }
+    return value
+  })
   
   ipcMain.handle('store:set', (_, key, value) => {
+    // Якщо зберігаємо користувача, автоматично підписуємо дані
+    if (key === 'auth_user') {
+        const signedValue = signAuthData(value)
+        store.set(key, signedValue)
+        return true
+    }
+
     store.set(key, value)
     if (key === 'gta_path' && mainWindow) {
         ModManager.startRegistryWatcher(mainWindow, value)

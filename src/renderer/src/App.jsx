@@ -43,14 +43,21 @@ function LoaderWindowContent() {
   const [isAuthLoading, setIsAuthLoading] = useState(true)
   const [backendInitializationError, setBackendInitializationError] = useState(null)
 
-  // 1. Перевірка збереженої авторизації при завантаженні
+  // 1. ЖОРСТКА Перевірка збереженої авторизації при завантаженні
   useEffect(() => {
     if (window.api) {
       window.api.getStoreValue('auth_user')
         .then(savedUser => {
-          if (savedUser) {
+          // ВАЖЛИВО: Перевіряємо не просто наявність об'єкта, а наявність ID
+          // Це запобігає пропуску авторизації при порожньому об'єкті {}
+          if (savedUser && savedUser.id) {
             setUser(savedUser)
+          } else {
+            setUser(null) // Примусово скидаємо, якщо дані биті
           }
+        })
+        .catch(() => {
+          setUser(null)
         })
         .finally(() => setIsAuthLoading(false))
     } else {
@@ -58,14 +65,16 @@ function LoaderWindowContent() {
     }
   }, [])
 
-  // 2. Логіка запуску бекенду після проходження всіх перевірок
+  // 2. Логіка запуску бекенду
   useEffect(() => {
     const performSystemBoot = async () => {
-      // Запускаємо ядро тільки якщо: шлях обрано, оновлень немає і користувач авторизований
-      if (isSetupComplete && !isCheckingUpdate && user) {
+      // Запускаємо ядро тільки якщо:
+      // 1. Шлях до гри обрано (isSetupComplete)
+      // 2. Оновлення не йде (!isCheckingUpdate)
+      // 3. Користувач існує І має ID (user?.id) - ЖОРСТКА УМОВА
+      if (isSetupComplete && !isCheckingUpdate && user?.id) {
         try {
           await window.api.startBackend()
-          // Невелика затримка для візуальної плавності перед відкриттям головного вікна
           setTimeout(() => window.api.launchMainApp(), 800)
         } catch (bootException) {
           setBackendInitializationError(bootException.message)
@@ -77,12 +86,21 @@ function LoaderWindowContent() {
 
   // Функція збереження даних користувача після успішної реєстрації
   const handleAuthComplete = (userData) => {
-    setUser(userData)
-    if (window.api) {
-      window.api.setStoreValue('auth_user', userData)
+    if (userData && userData.id) {
+      setUser(userData)
+      if (window.api) {
+        window.api.setStoreValue('auth_user', userData)
+      }
     }
   }
 
+  // ПРІОРИТЕТ ВІДОБРАЖЕННЯ ЕКРАНІВ (ORDER OF OPERATIONS)
+  // 1. Updater (найвищий пріоритет)
+  // 2. Setup (якщо не налаштовано)
+  // 3. Auth Loading (спіннер поки читаємо диск)
+  // 4. Registration (якщо немає юзера)
+  // 5. Kernel (якщо все ок)
+  
   return (
     <div className="h-screen flex flex-col bg-zinc-950 border border-zinc-800 overflow-hidden shadow-2xl">
       <div className="flex-1 flex flex-col p-6">
@@ -94,7 +112,7 @@ function LoaderWindowContent() {
           <div className="flex-1 flex items-center justify-center text-white/20 animate-pulse text-xs uppercase tracking-widest">
             Перевірка сесії...
           </div>
-        ) : !user ? (
+        ) : !user || !user.id ? ( // Додаткова перевірка !user.id для гарантії
           <RegistrationScreen onVerificationComplete={handleAuthComplete} />
         ) : (
           <KernelInitializationDisplay executionError={backendInitializationError} />
@@ -128,14 +146,12 @@ function MainWindowContent() {
 function App() {
   const [applicationCurrentHash, setApplicationCurrentHash] = useState(window.location.hash)
 
-  // Синхронізація інтерфейсу з хешем URL (Electron використовує HashRouter)
   useEffect(() => {
     const handleHashSync = () => setApplicationCurrentHash(window.location.hash)
     window.addEventListener('hashchange', handleHashSync)
     return () => window.removeEventListener('hashchange', handleHashSync)
   }, [])
 
-  // Визначаємо, який інтерфейс показувати: Loader чи Main
   const TargetInterface = applicationCurrentHash === '#loader' ? LoaderWindowContent : MainWindowContent
 
   return (

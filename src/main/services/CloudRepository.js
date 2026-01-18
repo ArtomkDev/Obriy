@@ -1,9 +1,28 @@
 import fs from 'fs'
+import path from 'path'
+import { app } from 'electron' // Додано для доступу до шляхів
 import { pipeline } from 'stream/promises'
 import { Transform } from 'stream'
 import Store from 'electron-store'
 
-const store = new Store()
+// БЕЗПЕЧНА ІНІЦІАЛІЗАЦІЯ STORE
+// Якщо файл конфігу битий, ми його просто видаляємо
+let store
+try {
+    store = new Store({ clearInvalidConfig: true })
+} catch (error) {
+    console.error('[CloudRepository] Config corrupted. Resetting...')
+    try {
+        const configPath = path.join(app.getPath('userData'), 'config.json')
+        if (fs.existsSync(configPath)) {
+            fs.unlinkSync(configPath)
+        }
+    } catch (unlinkErr) {
+        console.error('[CloudRepository] Failed to delete corrupt config:', unlinkErr)
+    }
+    store = new Store() // Створюємо чистий store
+}
+
 const GATEWAY_URL = 'https://obriy-auth.artomk-dev.workers.dev'
 
 export async function getCatalog() {
@@ -42,13 +61,11 @@ export async function downloadFile(remotePath, localDestPath, onProgress) {
   let receivedBytes = 0
   let lastUpdate = 0
 
-  // Трансформ-стрім для підрахунку прогресу без блокування
   const progressMonitor = new Transform({
     transform(chunk, encoding, callback) {
       receivedBytes += chunk.length
       
       const now = Date.now()
-      // Тротлінг: оновлюємо UI не частіше 10 разів на секунду
       if (onProgress && totalBytes > 0 && (now - lastUpdate > 100 || receivedBytes === totalBytes)) {
         onProgress(Math.round((receivedBytes / totalBytes) * 100))
         lastUpdate = now
@@ -60,7 +77,6 @@ export async function downloadFile(remotePath, localDestPath, onProgress) {
 
   const fileStream = fs.createWriteStream(localDestPath)
   
-  // Pipeline автоматично керує потоком і закриває файл при помилках
   await pipeline(
     response.body,
     progressMonitor,
@@ -79,6 +95,7 @@ async function performRequest(endpoint) {
 }
 
 function getAuthHeaders() {
+  // Тут store вже гарантовано ініціалізований
   const user = store.get('auth_user')
   return {
     'X-User-Id': user?.id || ''
