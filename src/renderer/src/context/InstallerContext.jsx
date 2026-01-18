@@ -271,9 +271,29 @@ export function InstallerProvider({ children }) {
   const toggleManager = () => setManagerOpen(!isManagerOpen)
   
   const getModStatus = (modId) => {
-      if (tasks[modId]) return tasks[modId].status
-      return 'idle'
+    const id = modId?.toString()
+    
+    // 1. Перевіряємо, чи є активне завдання (завантаження/встановлення/черга)
+    if (tasks[id]) return tasks[id].status
+    
+    // 2. Перевіряємо, чи є ID в масиві встановлених (синхронізація з ModsPage)
+    // Використовуємо installedModIds, оскільки це реальна назва стейту у вашому файлі
+    const isInstalled = installedModIds.some(installedId => installedId.toString() === id)
+    
+    if (isInstalled) return 'success'
+    
+    return 'idle'
   }
+
+  const refreshInstalledMods = useCallback(async () => {
+    if (!window.api || !gamePath) return
+    try {
+      const mods = await window.api.invoke('get-active-mods', gamePath)
+      if (Array.isArray(mods)) setInstalledModIds(mods)
+    } catch (err) {
+      console.error("Manual refresh failed:", err)
+    }
+  }, [gamePath])
   
   const getModProgress = (modId) => {
     const task = tasks[modId]
@@ -304,7 +324,8 @@ export function InstallerProvider({ children }) {
       toggleManager, 
       getModStatus, 
       getModProgress,
-      isModInstalled 
+      isModInstalled,
+      refreshInstalledMods
     }}>
       {children}
     </InstallerContext.Provider>

@@ -6,7 +6,6 @@ import { executeBatch } from './EngineService'
 
 const CLOUD_URL = 'https://pub-af821b9413f74a56ad45f675b24a2fac.r2.dev/v1'
 
-// ... getModCatalog та getModDetails без змін ...
 export async function getModCatalog() {
   const url = `${CLOUD_URL}/catalog/index.json?t=${Date.now()}`
   const data = await fetchJson(url)
@@ -22,20 +21,81 @@ export async function getModCatalog() {
 }
 
 export async function getModDetails(modId) {
-  const url = `${CLOUD_URL}/mods/${modId}/manifest.json?t=${Date.now()}`
-  const data = await fetchJson(url)
   const timestamp = Date.now()
   const assetsRoot = `${CLOUD_URL}/mods/${modId}/assets`
-  const processedMedia = (data.media || ['1.webp']).map(filename => {
-    const isVideo = filename.toLowerCase().endsWith('.mp4')
-    return {
-      type: isVideo ? 'video' : 'image',
-      source: `${assetsRoot}/${filename}?t=${timestamp}`,
-      thumbnail: `${assetsRoot}/1.webp?t=${timestamp}`
-    }
-  })
-  return { ...data, id: modId, title: data.name, thumbnail: `${assetsRoot}/1.webp?t=${timestamp}`, media: processedMedia }
+  
+  const url = `${CLOUD_URL}/mods/${modId}/manifest.json?t=${timestamp}`
+  let data = {}
+  try {
+    data = await fetchJson(url)
+  } catch (err) {
+    console.warn(`Manifest fetch error for ${modId}`)
+  }
+
+  const processedMedia = await probeMediaFiles(assetsRoot, timestamp)
+
+  return { 
+    ...data, 
+    id: modId.toString(), 
+    title: data.name || "Unknown Mod",
+    installSize: data.installSize || 0,
+    thumbnail: `${assetsRoot}/1.webp?t=${timestamp}`, 
+    media: processedMedia 
+  }
 }
+
+// Функція-сканер: перевіряє 1.webp/mp4, 2.webp/mp4 і т.д.
+async function probeMediaFiles(assetsRoot, timestamp) {
+    const media = []
+    const MAX_PROBE = 10 // Перевіряємо максимум 10 слайдів, щоб не вантажити мережу
+    
+    for (let i = 1; i <= MAX_PROBE; i++) {
+        // Формуємо URL для перевірки
+        const videoUrl = `${assetsRoot}/${i}.mp4`
+        const imageUrl = `${assetsRoot}/${i}.webp`
+        
+        // Паралельна перевірка наявності файлів (HEAD запит)
+        const [videoExists, imageExists] = await Promise.all([
+            checkResourceExists(videoUrl),
+            checkResourceExists(imageUrl)
+        ])
+
+        if (videoExists) {
+            media.push({
+                type: 'video',
+                source: `${videoUrl}?t=${timestamp}`,
+                thumbnail: `${assetsRoot}/1.webp?t=${timestamp}`
+            })
+        } else if (imageExists) {
+            media.push({
+                type: 'image',
+                source: `${imageUrl}?t=${timestamp}`
+            })
+        } else {
+            // Якщо для номера i (наприклад, 3) немає ні фото, ні відео — зупиняємо цикл
+            // (Але якщо це 1-й елемент і його немає, цикл теж перерветься, тоді спрацює fallback внизу)
+            if (i > 1) break 
+        }
+    }
+    
+    // Fallback: якщо сканер нічого не знайшов, додаємо хоча б 1.webp
+    if (media.length === 0) {
+        media.push({ type: 'image', source: `${assetsRoot}/1.webp?t=${timestamp}` })
+    }
+    
+    return media
+}
+
+// Допоміжна функція перевірки існування файлу
+async function checkResourceExists(url) {
+    try {
+        const response = await fetch(url, { method: 'HEAD' })
+        return response.ok
+    } catch {
+        return false
+    }
+}
+// ==========================================
 
 export async function installCloudMod(modId, gamePath) {
   const userDataPath = app.getPath('userData')
@@ -62,7 +122,6 @@ export async function installCloudMod(modId, gamePath) {
   zip.extractAllTo(cacheDir, true)
 
   const manifest = await fs.readJson(manifestPath)
-  // ПЕРЕДАЄМО cacheDir ДЛЯ СКАНУВАННЯ ФАЙЛІВ
   const engineInstructions = transformInstructions(manifest.instructionSet, cacheDir, gamePath)
 
   const windows = BrowserWindow.getAllWindows()
@@ -106,7 +165,6 @@ function sendProgress(type, value) {
   if (windows.length > 0) windows[0].webContents.send('installation-progress', { type, value })
 }
 
-// === ВИПРАВЛЕННЯ: СКАНУВАННЯ ПАПКИ ===
 function transformInstructions(cloudInstructions, modCachePath, gamePath) {
   const flattened = []
   if (!cloudInstructions) return flattened
@@ -116,7 +174,6 @@ function transformInstructions(cloudInstructions, modCachePath, gamePath) {
       const sourceSubDir = instruction.sourceSubPath || ''
       const absoluteSourceDir = path.join(modCachePath, sourceSubDir)
       
-      // Скануємо всі файли у папці, бо files[] більше немає
       if (fs.existsSync(absoluteSourceDir)) {
            const fileList = fs.readdirSync(absoluteSourceDir).filter(file => {
                if (file === 'manifest.json' || file === 'payload.zip') return false

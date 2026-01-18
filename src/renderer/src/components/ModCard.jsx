@@ -19,9 +19,10 @@ export default function ModCard({ mod }) {
   const navigate = useNavigate()
   const { getModStatus, getModProgress, startInstall, isModInstalled, startUninstall } = useInstaller()
 
-  const status = getModStatus(mod.id)
-  const progress = getModProgress(mod.id)
-  const isInstalledInRegistry = isModInstalled(mod.id)
+  const modIdString = mod.id.toString()
+  const status = getModStatus(modIdString)
+  const progress = getModProgress(modIdString)
+  const isInstalledInRegistry = isModInstalled(modIdString)
 
   const activePercent = status === 'downloading'
     ? Math.round(progress.download)
@@ -33,23 +34,16 @@ export default function ModCard({ mod }) {
 
   const handleInstallClick = (e) => {
     e.stopPropagation()
-
-    if (isInstalledInRegistry && status === 'idle') {
-      startInstall(mod)
-    } else if (status === 'idle' || status === 'error') {
-      startInstall(mod)
-    }
+    startInstall(mod)
   }
 
   const handleUninstallClick = (e) => {
     e.stopPropagation()
-    if (status === 'idle') {
-      startUninstall(mod)
-    }
+    startUninstall(mod)
   }
 
   const isProcessing = ['downloading', 'installing', 'uninstalling', 'queued', 'queued_download', 'queued_uninstall'].includes(status)
-
+  
   const showAsInstalled = isInstalledInRegistry && !isProcessing
 
   return (
@@ -57,11 +51,10 @@ export default function ModCard({ mod }) {
       onClick={handleCardClick}
       className="group relative aspect-video rounded-xl overflow-hidden cursor-pointer bg-[#121214] ring-1 ring-white/10 hover:ring-indigo-500/50 transition-all duration-500 hover:shadow-[0_0_20px_rgba(79,70,229,0.2)] hover:scale-[1.01]"
     >
-
       <div className="absolute inset-0">
         <img
-          src={mod.thumbnail}
-          alt={mod.title}
+          src={mod.image || mod.thumbnail}
+          alt={mod.name}
           className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 opacity-70 group-hover:opacity-90"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" />
@@ -70,7 +63,7 @@ export default function ModCard({ mod }) {
       <div className="absolute inset-0 p-5 flex items-end justify-between z-20">
         <div className="flex-1 pr-4">
           <h3 className="text-lg font-black text-white uppercase tracking-tighter leading-none drop-shadow-lg line-clamp-2 group-hover:text-indigo-100 transition-colors">
-            {mod.title}
+            {mod.name}
           </h3>
 
           {(status !== 'idle' || showAsInstalled) && (
@@ -80,7 +73,6 @@ export default function ModCard({ mod }) {
                     ${showAsInstalled && 'text-emerald-400'}
                     ${status === 'error' && 'text-rose-400'}
                 `}>
-
               <span>
                 {status === 'queued_download' && 'Waiting...'}
                 {status === 'downloading' && 'Downloading...'}
@@ -103,6 +95,7 @@ export default function ModCard({ mod }) {
           {showAsInstalled && (
             <button
               onClick={handleUninstallClick}
+              disabled={isProcessing}
               className="shrink-0 w-10 h-10 flex items-center justify-center rounded-lg border bg-red-500/10 border-red-500/50 text-red-500 hover:bg-red-500 hover:text-white transition-all duration-300 shadow-lg backdrop-blur-md"
               title="Видалити"
             >
@@ -130,7 +123,7 @@ export default function ModCard({ mod }) {
         </div>
       </div>
 
-      {status !== 'idle' && (
+      {isProcessing && (
         <div className="absolute bottom-0 left-0 right-0 z-30">
           <ProgressBar
             downloadProgress={progress.download}
@@ -140,7 +133,6 @@ export default function ModCard({ mod }) {
           />
         </div>
       )}
-
     </div>
   )
 }
