@@ -85,7 +85,6 @@ namespace Obriy.Core.Services
 
             RpfFile rpfFile = RpfSession.GetOrOpen(physicalRpfPath);
 
-            // 1. Обробка вкладених RPF
             foreach (var group in nestedGroups)
             {
                 string nestedRpfInternalPath = group.Key;
@@ -98,7 +97,6 @@ namespace Obriy.Core.Services
                     Directory.CreateDirectory(tempDir);
                     ExtractFileFromRpf(rpfFile, nestedRpfInternalPath, tempRpfPath);
                     
-                    // Рекурсія
                     InstallBatch(tempRpfPath, nestedUpdates, onProgress, false);
 
                     directFiles[nestedRpfInternalPath] = tempRpfPath;
@@ -114,7 +112,6 @@ namespace Obriy.Core.Services
                 }
             }
 
-            // 2. Вставка файлів
             var filesByDirectory = new Dictionary<string, List<KeyValuePair<string, string>>>();
 
             foreach (var item in directFiles)
@@ -153,7 +150,6 @@ namespace Obriy.Core.Services
                 }
             }
             
-            // Очищення temp
             foreach (var group in nestedGroups)
             {
                  string tempPath = directFiles[group.Key];
@@ -165,9 +161,15 @@ namespace Obriy.Core.Services
         private void BackupFile(string path)
         {
             string backupPath = path + ".bak";
-            if (!File.Exists(backupPath))
+            if (File.Exists(backupPath)) return;
+            
+            try 
+            { 
+                File.Copy(path, backupPath); 
+            } 
+            catch (Exception ex)
             {
-                try { File.Copy(path, backupPath); } catch { }
+                Console.Error.WriteLine($"[RpfEditor] Backup Warning: {ex.Message}");
             }
         }
 
