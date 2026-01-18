@@ -8,6 +8,13 @@ using Obriy.Core.Services;
 
 namespace Obriy.Core.Commands
 {
+    // Оголошення допоміжного класу ПЕРЕД або ПІСЛЯ основного класу команди, але всередині namespace
+    public class UninstallRestoreItem
+    {
+        public string TargetPath { get; set; }
+        public string SourceFilePath { get; set; }
+    }
+
     public class UninstallModCommand : ICommand
     {
         public string CommandName => "uninstall-mod";
@@ -44,23 +51,27 @@ namespace Obriy.Core.Commands
                 var restoredFiles = new List<string>();
                 var failedFiles = new List<string>();
 
+                // === ЛОГІКА ПРОГРЕСУ ===
+                int totalFilesCount = restoreItems.Count;
+                int processedFiles = 0;
+                int lastReportedPercent = 0;
                 ReportProgress(0);
 
                 var operationsByRpf = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
                 var looseFiles = new List<UninstallRestoreItem>();
 
+                // Етап 1: Аналіз і групування (швидко)
                 foreach (var item in restoreItems)
                 {
                     if (!File.Exists(item.SourceFilePath)) 
                     {
                         failedFiles.Add(Path.GetFileName(item.TargetPath));
-                        Console.Error.WriteLine($"[Uninstall] Missing source file: {item.SourceFilePath}");
+                        processedFiles++;
                         continue;
                     }
 
                     try 
                     {
-                        // Використовуємо SplitPath, щоб знайти правильний RPF (наприклад dlc.rpf замість weapons.rpf)
                         var pathInfo = SplitPath(item.TargetPath);
                         
                         if (string.IsNullOrEmpty(pathInfo.InternalPath))
@@ -77,14 +88,14 @@ namespace Obriy.Core.Commands
                             operationsByRpf[pathInfo.PhysicalPath][internalKey] = item.SourceFilePath;
                         }
                     }
-                    catch (Exception ex)
+                    catch
                     {
                         failedFiles.Add(Path.GetFileName(item.TargetPath));
-                        Console.Error.WriteLine($"[Uninstall] Path logic error: {ex.Message}");
+                        processedFiles++;
                     }
                 }
 
-                // 1. Звичайні файли
+                // Етап 2: Звичайні файли
                 foreach (var f in looseFiles)
                 {
                     try
@@ -97,12 +108,11 @@ namespace Obriy.Core.Commands
                         failedFiles.Add(Path.GetFileName(f.TargetPath));
                         Console.Error.WriteLine($"[Failed File] {ex.Message}");
                     }
+                    processedFiles++;
+                    UpdateProgress(processedFiles, totalFilesCount, ref lastReportedPercent);
                 }
 
-                // 2. RPF файли (через InstallBatch)
-                int totalRpfCount = operationsByRpf.Count;
-                int processedRpfs = 0;
-
+                // Етап 3: RPF архіви
                 foreach (var kvp in operationsByRpf)
                 {
                     string physicalRpf = kvp.Key;
@@ -112,7 +122,11 @@ namespace Obriy.Core.Commands
                     {
                         Console.Error.WriteLine($"[RpfEditor] Processing archive: {Path.GetFileName(physicalRpf)} ({updates.Count} files)");
                         
-                        rpfEditor.InstallBatch(physicalRpf, updates, null, true);
+                        rpfEditor.InstallBatch(physicalRpf, updates, () => 
+                        {
+                            processedFiles++;
+                            UpdateProgress(processedFiles, totalFilesCount, ref lastReportedPercent);
+                        }, true);
 
                         foreach(var fileName in updates.Keys)
                         {
@@ -122,15 +136,13 @@ namespace Obriy.Core.Commands
                     catch (Exception ex)
                     {
                         Console.Error.WriteLine($"[Failed RPF] Error in {Path.GetFileName(physicalRpf)}: {ex.Message}");
+                        processedFiles += updates.Count; 
                         foreach(var fileName in updates.Keys)
                         {
                             failedFiles.Add(Path.GetFileName(fileName));
                         }
+                        UpdateProgress(processedFiles, totalFilesCount, ref lastReportedPercent);
                     }
-
-                    processedRpfs++;
-                    int progress = 10 + (int)((double)processedRpfs / totalRpfCount * 80);
-                    ReportProgress(progress);
                 }
                 
                 bool isCleanUninstall = failedFiles.Count == 0;
@@ -165,6 +177,18 @@ namespace Obriy.Core.Commands
             }
         }
 
+        private void UpdateProgress(int current, int total, ref int lastPercent)
+        {
+            if (total == 0) return;
+            double rawPercent = (double)current / total;
+            int displayPercent = (int)(rawPercent * 90); 
+            if (displayPercent > lastPercent)
+            {
+                lastPercent = displayPercent;
+                ReportProgress(displayPercent);
+            }
+        }
+
         private void ReportProgress(int percent)
         {
             Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = percent }));
@@ -188,28 +212,14 @@ namespace Obriy.Core.Commands
 
             while (!string.IsNullOrEmpty(currentPath))
             {
-                if (File.Exists(currentPath))
-                {
-                    return (currentPath, internalParts.TrimStart('/', '\\'));
-                }
-
+                if (File.Exists(currentPath)) return (currentPath, internalParts.TrimStart('/', '\\'));
                 string fileName = Path.GetFileName(currentPath);
                 string directory = Path.GetDirectoryName(currentPath);
-
-                if (string.IsNullOrEmpty(directory) || directory.Equals(currentPath, StringComparison.OrdinalIgnoreCase)) 
-                    break;
-
+                if (string.IsNullOrEmpty(directory) || directory.Equals(currentPath, StringComparison.OrdinalIgnoreCase)) break;
                 internalParts = Path.Combine(fileName, internalParts);
                 currentPath = directory;
             }
-            
             throw new FileNotFoundException($"Valid base RPF archive not found on disk for path: {fullPath}");
         }
-    }
-
-    public class UninstallRestoreItem
-    {
-        public string TargetPath { get; set; }
-        public string SourceFilePath { get; set; }
     }
 }

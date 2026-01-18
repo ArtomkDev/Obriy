@@ -9,8 +9,6 @@ namespace Obriy.Core.Services
     public class RpfEditor
     {
         private readonly string _gameRootPath;
-        private const int WEIGHT_RPF_OPEN = 20;
-        private const int WEIGHT_FILE = 100;
 
         public RpfEditor(string gameRootPath)
         {
@@ -49,7 +47,8 @@ namespace Obriy.Core.Services
             InstallBatch(physicalRpfPath, dict, null, true);
         }
 
-        public void InstallBatch(string physicalRpfPath, Dictionary<string, string> files, Action<int> onProgress, bool isRoot)
+        // Універсальний метод для встановлення та видалення
+        public void InstallBatch(string physicalRpfPath, Dictionary<string, string> files, Action onFileProcessed, bool isRoot)
         {
             if (!File.Exists(physicalRpfPath))
                 throw new FileNotFoundException($"RPF file not found: {physicalRpfPath}");
@@ -81,10 +80,9 @@ namespace Obriy.Core.Services
                 }
             }
 
-            if (isRoot) onProgress?.Invoke(WEIGHT_RPF_OPEN);
-
             RpfFile rpfFile = RpfSession.GetOrOpen(physicalRpfPath);
 
+            // 1. Обробка вкладених RPF (Рекурсія)
             foreach (var group in nestedGroups)
             {
                 string nestedRpfInternalPath = group.Key;
@@ -97,7 +95,8 @@ namespace Obriy.Core.Services
                     Directory.CreateDirectory(tempDir);
                     ExtractFileFromRpf(rpfFile, nestedRpfInternalPath, tempRpfPath);
                     
-                    InstallBatch(tempRpfPath, nestedUpdates, onProgress, false);
+                    // Рекурсивний виклик для вкладеного архіву
+                    InstallBatch(tempRpfPath, nestedUpdates, onFileProcessed, false);
 
                     directFiles[nestedRpfInternalPath] = tempRpfPath;
                 }
@@ -112,6 +111,7 @@ namespace Obriy.Core.Services
                 }
             }
 
+            // 2. Вставка файлів
             var filesByDirectory = new Dictionary<string, List<KeyValuePair<string, string>>>();
 
             foreach (var item in directFiles)
@@ -145,11 +145,12 @@ namespace Obriy.Core.Services
                     
                     if (!isIntermediateRpf)
                     {
-                        onProgress?.Invoke(WEIGHT_FILE);
+                        onFileProcessed?.Invoke();
                     }
                 }
             }
             
+            // Очищення тимчасових файлів
             foreach (var group in nestedGroups)
             {
                  string tempPath = directFiles[group.Key];
@@ -161,15 +162,9 @@ namespace Obriy.Core.Services
         private void BackupFile(string path)
         {
             string backupPath = path + ".bak";
-            if (File.Exists(backupPath)) return;
-            
-            try 
-            { 
-                File.Copy(path, backupPath); 
-            } 
-            catch (Exception ex)
+            if (!File.Exists(backupPath))
             {
-                Console.Error.WriteLine($"[RpfEditor] Backup Warning: {ex.Message}");
+                try { File.Copy(path, backupPath); } catch { }
             }
         }
 

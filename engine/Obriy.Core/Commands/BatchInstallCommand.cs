@@ -46,7 +46,6 @@ namespace Obriy.Core.Commands
                 var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
                 var items = JsonSerializer.Deserialize<List<BatchItem>>(jsonContent, options);
                 
-                // Визначаємо корінь гри
                 string rootForEditor = !string.IsNullOrEmpty(gameRootPath) ? gameRootPath : AppDomain.CurrentDomain.BaseDirectory;
                 
                 var editor = new RpfEditor(rootForEditor);
@@ -57,19 +56,14 @@ namespace Obriy.Core.Commands
                 {
                     try 
                     {
-                        // ВИПРАВЛЕНО: Реєстр створюється у папці гри, а не в папці програми
                         registryService = new RegistryService(rootForEditor);
                     }
-                    catch (Exception ex)
-                    {
-                        Console.Error.WriteLine($"[Batch] Registry Init Warning: {ex.Message}");
-                    }
+                    catch {}
                 }
                 
-                long totalWorkUnits = 0;
-                const int WEIGHT_RPF_OPEN = 20; 
-                const int WEIGHT_FILE = 100;
-
+                // === ПРОГРЕС ===
+                int totalFilesToInstall = 0;
+                
                 foreach (var item in items)
                 {
                     if (File.Exists(item.SourceFilePath))
@@ -82,18 +76,15 @@ namespace Obriy.Core.Commands
                             if (!operationsByRpf.ContainsKey(physicalKey))
                             {
                                 operationsByRpf[physicalKey] = new Dictionary<string, string>();
-                                totalWorkUnits += WEIGHT_RPF_OPEN; 
                             }
                             operationsByRpf[physicalKey][pathInfo.InternalPath] = item.SourceFilePath;
-                            totalWorkUnits += WEIGHT_FILE;
+                            totalFilesToInstall++; // Рахуємо реальні файли
                         }
                         catch {}
                     }
                 }
 
-                if (totalWorkUnits == 0) totalWorkUnits = 1;
-                
-                long processedWorkUnits = 0;
+                int processedFiles = 0;
                 int lastReportedPercent = -1;
 
                 Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = 0 }));
@@ -107,13 +98,12 @@ namespace Obriy.Core.Commands
 
                     try
                     {
-                        editor.InstallBatch(physicalRpf, updates, (weight) => 
+                        editor.InstallBatch(physicalRpf, updates, () => 
                         {
-                            processedWorkUnits += weight;
-                            if (processedWorkUnits > totalWorkUnits) processedWorkUnits = totalWorkUnits;
+                            processedFiles++;
                             
-                            int currentPercent = (int)((double)processedWorkUnits / totalWorkUnits * 100.0);
-                            if (currentPercent > 99 && processedWorkUnits < totalWorkUnits) currentPercent = 99;
+                            double rawPercent = (double)processedFiles / totalFilesToInstall;
+                            int currentPercent = (int)(rawPercent * 90); // Масштабуємо до 90%
 
                             if (currentPercent > lastReportedPercent)
                             {
@@ -135,6 +125,8 @@ namespace Obriy.Core.Commands
                     catch (Exception rpfEx)
                     {
                         Console.Error.WriteLine($"[Batch] Error processing {Path.GetFileName(physicalRpf)}: {rpfEx.Message}");
+                        // Якщо помилка, "закриваємо" прогрес цих файлів
+                        processedFiles += updates.Count; 
                     }
                 }
 

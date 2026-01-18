@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Obriy.Core")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+5fd19a930f45606cff9945b4725c0524f6ba147f")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+0ae104e6a22f611b0f3d948c069ae579ac1ef614")]
 [assembly: System.Reflection.AssemblyProductAttribute("Obriy.Core")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Obriy.Core")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
