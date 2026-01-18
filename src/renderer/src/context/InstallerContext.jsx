@@ -8,6 +8,9 @@ export function InstallerProvider({ children }) {
   const [updateStatus, setUpdateStatus] = useState('idle')
   const [installedModIds, setInstalledModIds] = useState([])
 
+  // --- НОВЕ: Стан користувача ---
+  const [currentUser, setCurrentUser] = useState(null)
+
   const [tasks, setTasks] = useState({})
   const [downloadQueue, setDownloadQueue] = useState([])
   const [processQueue, setProcessQueue] = useState([])
@@ -15,16 +18,22 @@ export function InstallerProvider({ children }) {
   const [isProcessing, setIsProcessing] = useState(false)
   const [isManagerOpen, setManagerOpen] = useState(false)
 
+  // Завантаження початкових налаштувань та даних користувача
   useEffect(() => {
     if (window.api) {
+      // Завантажуємо шлях до гри
       window.api.getStoreValue('gta_path')
         .then((savedPath) => {
-          if (savedPath) {
-            setGamePathState(savedPath)
-          }
+          if (savedPath) setGamePathState(savedPath)
         })
         .catch(err => console.error("Failed to load game path:", err))
         .finally(() => setIsPathLoaded(true))
+
+      // НОВЕ: Завантажуємо дані користувача зі сховища
+      window.api.getStoreValue('auth_user')
+        .then((savedUser) => {
+          if (savedUser) setCurrentUser(savedUser)
+        })
 
       const removeUpdateListener = window.api.onUpdateStatus((data) => {
         setUpdateStatus(data.status)
@@ -39,6 +48,7 @@ export function InstallerProvider({ children }) {
     }
   }, [])
 
+  // Синхронізація встановлених модів
   useEffect(() => {
     if (!window.api || !gamePath) return
 
@@ -59,7 +69,6 @@ export function InstallerProvider({ children }) {
 
   const setGamePath = (path) => {
     setGamePathState(path)
-    
     if (window.api) {
       if (path) {
         window.api.setStoreValue('gta_path', path)
@@ -69,6 +78,7 @@ export function InstallerProvider({ children }) {
     }
   }
 
+  // Обробка прогресу виконання завдань ядра
   useEffect(() => {
     if (!window.api) return
 
@@ -96,6 +106,7 @@ export function InstallerProvider({ children }) {
     }
   }, [])
 
+  // Черги завантаження та обробки
   useEffect(() => {
     if (!isDownloading && downloadQueue.length > 0) {
       const nextMod = downloadQueue[0]
@@ -126,6 +137,7 @@ export function InstallerProvider({ children }) {
       [taskId]: { ...prev[taskId], status: 'downloading', downloadProgress: 0 }
     }))
 
+    // Симуляція підготовки перед передачею в EngineService
     setTimeout(() => {
       setTasks(prev => ({
         ...prev,
@@ -164,7 +176,6 @@ export function InstallerProvider({ children }) {
 
     try {
       let result
-      
       if (isUninstall) {
         const currentPath = gamePath
         if (!currentPath) throw new Error("Game path not selected")
@@ -180,11 +191,9 @@ export function InstallerProvider({ children }) {
           return newTasks
         })
         
-        // Оновлюємо список активних модів примусово після успішної операції
         if (gamePath) {
              window.api.invoke('get-active-mods', gamePath).then(setInstalledModIds)
         }
-
       } else {
         throw new Error(result?.error || 'Operation failed')
       }
@@ -200,16 +209,20 @@ export function InstallerProvider({ children }) {
     }
   }
 
+  // --- ВИПРАВЛЕНО: Додана перевірка Premium ---
   const startInstall = useCallback((mod) => {
     const taskId = mod.id
+    
+    // Перевірка прав доступу (Premium статус)
+    if (mod.is_premium && !currentUser?.isPremium) {
+      console.warn("Access denied: Premium required for mod", taskId)
+      return // Блокуємо запуск інсталяції
+    }
+
     if (tasks[taskId] && ['downloading', 'installing', 'queued', 'queued_download', 'uninstalling'].includes(tasks[taskId].status)) return
 
     const finalInstructions = resolveInstructions(mod)
-
-    const taskObject = {
-      ...mod,
-      instructions: finalInstructions
-    }
+    const taskObject = { ...mod, instructions: finalInstructions }
 
     setTasks(prev => ({
       ...prev,
@@ -224,14 +237,13 @@ export function InstallerProvider({ children }) {
     }))
 
     setDownloadQueue(prev => [...prev, taskObject])
-  }, [tasks])
+  }, [tasks, currentUser])
 
   const startUninstall = useCallback((mod) => {
     const taskId = mod.id
     if (tasks[taskId] && ['downloading', 'installing', 'uninstalling', 'queued_uninstall'].includes(tasks[taskId].status)) return
 
     const finalInstructions = resolveInstructions(mod)
-    
     const taskObject = {
       ...mod,
       instructions: finalInstructions,
@@ -256,7 +268,6 @@ export function InstallerProvider({ children }) {
     setProcessQueue(prev => prev.filter(m => m.id !== taskId))
     
     const taskStatus = tasks[taskId]?.status
-
     setTasks(prev => {
       const newTasks = { ...prev }
       delete newTasks[taskId]
@@ -272,16 +283,9 @@ export function InstallerProvider({ children }) {
   
   const getModStatus = (modId) => {
     const id = modId?.toString()
-    
-    // 1. Перевіряємо, чи є активне завдання (завантаження/встановлення/черга)
     if (tasks[id]) return tasks[id].status
-    
-    // 2. Перевіряємо, чи є ID в масиві встановлених (синхронізація з ModsPage)
-    // Використовуємо installedModIds, оскільки це реальна назва стейту у вашому файлі
     const isInstalled = installedModIds.some(installedId => installedId.toString() === id)
-    
     if (isInstalled) return 'success'
-    
     return 'idle'
   }
 
@@ -300,9 +304,7 @@ export function InstallerProvider({ children }) {
     return task ? { download: task.downloadProgress, install: task.installProgress } : { download: 0, install: 0 }
   }
 
-  const isModInstalled = (modId) => {
-      return installedModIds.includes(modId)
-  }
+  const isModInstalled = (modId) => installedModIds.includes(modId)
 
   const isSetupComplete = isPathLoaded && !!gamePath
   const isCheckingUpdate = ['checking', 'available', 'downloading'].includes(updateStatus)
@@ -315,6 +317,8 @@ export function InstallerProvider({ children }) {
       isSetupComplete,
       isCheckingUpdate,
       updateStatus,
+      currentUser,      // Експортуємо поточного користувача
+      setCurrentUser,   // Дозволяємо оновлювати користувача (наприклад, після логіну)
       tasks, 
       startInstall, 
       startUninstall, 

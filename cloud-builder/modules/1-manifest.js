@@ -46,17 +46,17 @@ module.exports = async function buildManifest(modId, config) {
         const validFiles = files.filter(f => 
             f !== '.DS_Store' && 
             f !== 'Thumbs.db' && 
+            f !== 'Thumbs.db:encryptable' && // Додав ще один системний файл про всяк випадок
             !f.endsWith('.db') &&
             !fs.statSync(path.join(fullSourcePath, f)).isDirectory()
         );
 
-        // --- НОВА ЛОГІКА: Рахуємо розмір файлів ---
+        // Рахуємо розмір файлів
         for (const file of validFiles) {
             const filePath = path.join(fullSourcePath, file);
             const stats = await fs.stat(filePath);
             totalInstallSize += stats.size;
         }
-        // ------------------------------------------
 
         if (validFiles.length === 0) {
              console.warn(`   ⚠️ WARNING: No files found in '${sourceSubPath || "root"}'`);
@@ -69,12 +69,12 @@ module.exports = async function buildManifest(modId, config) {
             targetPath: step.targetPath,
             sourceSubPath: sourceSubPath,
             vanilla: templateName
-            // files: validFiles <-- Масив видалено, як ти і просив
         };
     }));
 
     console.log(`   -> Total Install Size: ${(totalInstallSize / 1024 / 1024).toFixed(2)} MB`);
 
+    // --- ФОРМУЄМО ХМАРНИЙ МАНІФЕСТ ---
     const cloudManifest = {
         id: modData.id,
         name: modData.name,
@@ -83,14 +83,22 @@ module.exports = async function buildManifest(modId, config) {
         changelog: modData.changelog,
         category: modData.category,
         tags: modData.tags || [],
+        
+        // НОВА ЛОГІКА: Преміум статус
+        // Якщо в локальному manifest.json є "is_premium": true, воно потрапить сюди
+        is_premium: modData.is_premium || false, 
+
         releaseDate: new Date().toISOString(),
-        installSize: totalInstallSize, // <-- Додано розмір у байтах
+        installSize: totalInstallSize,
         instructionSet: finalInstructions
     };
 
     const outputDir = path.join(config.paths.modsDist, modId);
     await fs.ensureDir(outputDir);
     await fs.writeJson(path.join(outputDir, 'manifest.json'), cloudManifest, { spaces: 2 });
+
+    console.log(`   -> Premium Status: ${cloudManifest.is_premium ? 'YES' : 'NO'}`);
+    console.log(`[Manifest] Done for ${modId}`);
 
     return cloudManifest;
 };

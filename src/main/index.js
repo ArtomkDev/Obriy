@@ -2,8 +2,18 @@ import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { uninstallMod, validateGamePath, startBackendProcess, getActiveMods, startRegistryWatcher } from './services/EngineService'
-import { installCloudMod, getModCatalog, getModDetails } from './services/CloudModService'
+import { 
+  uninstallMod, 
+  validateGamePath, 
+  startBackendProcess, 
+  getActiveMods, 
+  startRegistryWatcher 
+} from './services/EngineService'
+import { 
+  installCloudModification, 
+  fetchRemoteModCatalog, 
+  fetchRemoteModDetails 
+} from './services/CloudModService'
 import updaterPkg from 'electron-updater'
 import log from 'electron-log'
 import Store from 'electron-store'
@@ -108,7 +118,6 @@ function createMainWindow() {
       loaderWindow.close()
     }
     
-    // START WATCHER ON WINDOW READY
     const savedPath = store.get('gta_path')
     if (savedPath) {
         startRegistryWatcher(mainWindow, savedPath)
@@ -152,21 +161,21 @@ app.whenReady().then(() => {
   })
 
   ipcMain.on('window:minimize', () => {
-    const win = BrowserWindow.getFocusedWindow()
-    if (win) win.minimize()
+    const activeWindow = BrowserWindow.getFocusedWindow()
+    if (activeWindow) activeWindow.minimize()
   })
 
   ipcMain.on('window:maximize', () => {
-    const win = BrowserWindow.getFocusedWindow()
-    if (win && win.isResizable()) {
-      if (win.isMaximized()) win.unmaximize()
-      else win.maximize()
+    const activeWindow = BrowserWindow.getFocusedWindow()
+    if (activeWindow && activeWindow.isResizable()) {
+      if (activeWindow.isMaximized()) activeWindow.unmaximize()
+      else activeWindow.maximize()
     }
   })
 
   ipcMain.on('window:close', () => {
-    const win = BrowserWindow.getFocusedWindow()
-    if (win) win.close()
+    const activeWindow = BrowserWindow.getFocusedWindow()
+    if (activeWindow) activeWindow.close()
   })
 
   ipcMain.handle('get-app-version', () => app.getVersion())
@@ -175,7 +184,6 @@ app.whenReady().then(() => {
   
   ipcMain.handle('store:set', (_, key, value) => {
     store.set(key, value)
-    // Якщо оновили шлях до гри, перезапускаємо вотчер
     if (key === 'gta_path' && mainWindow) {
         startRegistryWatcher(mainWindow, value)
     }
@@ -188,8 +196,8 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('dialog:selectGameDirectory', async () => {
-    const win = BrowserWindow.getFocusedWindow()
-    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    const activeWindow = BrowserWindow.getFocusedWindow()
+    const { canceled, filePaths } = await dialog.showOpenDialog(activeWindow, {
       title: 'Select GTA V Directory',
       buttonLabel: 'Select Folder',
       properties: ['openDirectory']
@@ -199,69 +207,68 @@ app.whenReady().then(() => {
 
     const selectedPath = filePaths[0]
     try {
-      const result = await validateGamePath(selectedPath)
-      if (result.isValid) {
-        const finalPath = result.exePath ? dirname(result.exePath) : selectedPath
-        // Також запускаємо спостерігач, якщо шлях вибрано
-        if (mainWindow) startRegistryWatcher(mainWindow, finalPath)
-        return { success: true, path: finalPath }
+      const validationResult = await validateGamePath(selectedPath)
+      if (validationResult.isValid) {
+        const directoryPath = validationResult.exePath ? dirname(validationResult.exePath) : selectedPath
+        if (mainWindow) startRegistryWatcher(mainWindow, directoryPath)
+        return { success: true, path: directoryPath }
       }
       return { success: false, error: 'GTA5.exe not found in this directory' }
-    } catch (error) {
-      return { success: false, error: error.message }
+    } catch (processError) {
+      return { success: false, error: processError.message }
     }
   })
 
   ipcMain.handle('validate-game-path', async (_, path) => {
-     return validateGamePath(path)
+      return validateGamePath(path)
   })
 
   ipcMain.handle('start-backend', async () => {
     try {
       await startBackendProcess()
       return true
-    } catch (e) {
-      throw new Error(`Failed to start backend: ${e.message}`)
+    } catch (backendError) {
+      throw new Error(`Failed to start backend: ${backendError.message}`)
     }
   })
 
   ipcMain.handle('get-mod-catalog', async () => {
     try {
-      return await getModCatalog()
-    } catch (error) {
-      console.error('Catalog Fetch Error:', error)
+      return await fetchRemoteModCatalog()
+    } catch (networkError) {
+      console.error(networkError.message)
       return []
     }
   })
 
   ipcMain.handle('get-active-mods', async () => {
-      const gamePath = store.get('gta_path')
-      if (!gamePath) return []
-      return await getActiveMods(gamePath)
+      const gameDirectory = store.get('gta_path')
+      if (!gameDirectory) return []
+      return await getActiveMods(gameDirectory)
   })
 
   ipcMain.handle('get-mod-details', async (_, modId) => {
     try {
-      return await getModDetails(modId)
-    } catch (error) {
-      console.error('Details Fetch Error:', error)
+      return await fetchRemoteModDetails(modId)
+    } catch (detailError) {
+      console.error(detailError.message)
       return null
     }
   })
 
   ipcMain.handle('install-mod', async (_, modId) => {
     try {
-      const gamePath = store.get('gta_path')
+      const gameDirectory = store.get('gta_path')
       
-      if (!gamePath) {
+      if (!gameDirectory) {
           throw new Error('Game path not configured')
       }
       
-      const result = await installCloudMod(modId, gamePath)
-      return { success: true, data: result }
-    } catch (error) {
-      console.error('Install Error:', error)
-      return { success: false, error: error.message }
+      const installationResult = await installCloudModification(modId, gameDirectory)
+      return { success: true, data: installationResult }
+    } catch (installationError) {
+      console.error(installationError.message)
+      return { success: false, error: installationError.message }
     }
   })
 
@@ -292,17 +299,17 @@ autoUpdater.on('update-not-available', () => {
   }
 })
 
-autoUpdater.on('error', (err) => {
+autoUpdater.on('error', (updateError) => {
   if (loaderWindow && !loaderWindow.isDestroyed()) {
-    loaderWindow.webContents.send('update-status', { status: 'error', error: err.message })
+    loaderWindow.webContents.send('update-status', { status: 'error', error: updateError.message })
   }
 })
 
-autoUpdater.on('download-progress', (progressObj) => {
+autoUpdater.on('download-progress', (progressInfo) => {
   if (loaderWindow && !loaderWindow.isDestroyed()) {
     loaderWindow.webContents.send('update-status', { 
       status: 'downloading', 
-      progress: progressObj.percent 
+      progress: progressInfo.percent 
     })
   }
 })

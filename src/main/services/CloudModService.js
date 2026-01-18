@@ -2,198 +2,277 @@ import { app, BrowserWindow } from 'electron'
 import path from 'path'
 import fs from 'fs-extra'
 import AdmZip from 'adm-zip'
+import Store from 'electron-store'
 import { executeBatch } from './EngineService'
 
-const CLOUD_URL = 'https://pub-af821b9413f74a56ad45f675b24a2fac.r2.dev/v1'
+const store = new Store()
 
-export async function getModCatalog() {
-  const url = `${CLOUD_URL}/catalog/index.json?t=${Date.now()}`
-  const data = await fetchJson(url)
-  return data.map(item => ({
-    id: item.id,
-    name: item.n,
-    author: item.a,
-    category: item.c,
-    version: item.v,
-    tags: item.t || [],
-    image: `${CLOUD_URL}/mods/${item.id}/assets/1.webp?t=${Date.now()}`
+const OBRIY_API_GATEWAY = 'https://obriy-auth.artomk-dev.workers.dev'
+const ASSETS_PROXY = `${OBRIY_API_GATEWAY}/mods`
+
+// src/main/services/CloudModService.js
+
+export async function fetchRemoteModCatalog() {
+  const catalogRequestUrl = `${OBRIY_API_GATEWAY}/catalog?t=${Date.now()}`
+  const rawCatalogData = await performJsonRequest(catalogRequestUrl)
+  
+  return rawCatalogData.map(modItem => ({
+    id: String(modItem.id),
+    name: modItem.n || modItem.name || 'Untitled',
+    author: modItem.a || modItem.author || 'Unknown',
+    category: modItem.c || modItem.category || 'Misc',
+    version: modItem.v || modItem.version || '1.0',
+    tags: modItem.t || modItem.tags || [],
+    image: `${ASSETS_PROXY}/${modItem.id}/assets/1.webp`, 
+    is_premium: modItem.is_premium || false
   }))
 }
 
-export async function getModDetails(modId) {
-  const timestamp = Date.now()
-  const assetsRoot = `${CLOUD_URL}/mods/${modId}/assets`
+/**
+ * Отримує деталі конкретного моду через Gateway
+ */
+export async function fetchRemoteModDetails(modIdentifier) {
+  const currentTimestamp = Date.now()
+  const modAssetsDirectory = `${ASSETS_PROXY}/${modIdentifier}/assets`
+  const manifestRequestUrl = `${ASSETS_PROXY}/${modIdentifier}/manifest.json?t=${currentTimestamp}`
   
-  const url = `${CLOUD_URL}/mods/${modId}/manifest.json?t=${timestamp}`
-  let data = {}
+  let manifestData = {}
   try {
-    data = await fetchJson(url)
-  } catch (err) {
-    console.warn(`Manifest fetch error for ${modId}`)
+    // Маніфест теж вимагає авторизації, тому використовуємо performJsonRequest з true
+    manifestData = await performJsonRequest(manifestRequestUrl, true)
+  } catch (manifestFetchError) {
+    console.error("Failed to fetch manifest:", manifestFetchError.message)
   }
 
-  const processedMedia = await probeMediaFiles(assetsRoot, timestamp)
+  const discoveredMediaResources = await scanAvailableMedia(modIdentifier, currentTimestamp)
 
   return { 
-    ...data, 
-    id: modId.toString(), 
-    title: data.name || "Unknown Mod",
-    installSize: data.installSize || 0,
-    thumbnail: `${assetsRoot}/1.webp?t=${timestamp}`, 
-    media: processedMedia 
+    ...manifestData, 
+    id: modIdentifier.toString(), 
+    title: manifestData.name || "Unknown Modification",
+    installSize: manifestData.installSize || 0,
+    thumbnail: `${modAssetsDirectory}/1.webp`, 
+    media: discoveredMediaResources,
+    is_premium: manifestData.is_premium || false
   }
 }
 
-// Функція-сканер: перевіряє 1.webp/mp4, 2.webp/mp4 і т.д.
-async function probeMediaFiles(assetsRoot, timestamp) {
-    const media = []
-    const MAX_PROBE = 10 // Перевіряємо максимум 10 слайдів, щоб не вантажити мережу
-    
-    for (let i = 1; i <= MAX_PROBE; i++) {
-        // Формуємо URL для перевірки
-        const videoUrl = `${assetsRoot}/${i}.mp4`
-        const imageUrl = `${assetsRoot}/${i}.webp`
-        
-        // Паралельна перевірка наявності файлів (HEAD запит)
-        const [videoExists, imageExists] = await Promise.all([
-            checkResourceExists(videoUrl),
-            checkResourceExists(imageUrl)
-        ])
-
-        if (videoExists) {
-            media.push({
-                type: 'video',
-                source: `${videoUrl}?t=${timestamp}`,
-                thumbnail: `${assetsRoot}/1.webp?t=${timestamp}`
-            })
-        } else if (imageExists) {
-            media.push({
-                type: 'image',
-                source: `${imageUrl}?t=${timestamp}`
-            })
-        } else {
-            // Якщо для номера i (наприклад, 3) немає ні фото, ні відео — зупиняємо цикл
-            // (Але якщо це 1-й елемент і його немає, цикл теж перерветься, тоді спрацює fallback внизу)
-            if (i > 1) break 
-        }
-    }
-    
-    // Fallback: якщо сканер нічого не знайшов, додаємо хоча б 1.webp
-    if (media.length === 0) {
-        media.push({ type: 'image', source: `${assetsRoot}/1.webp?t=${timestamp}` })
-    }
-    
-    return media
-}
-
-// Допоміжна функція перевірки існування файлу
-async function checkResourceExists(url) {
-    try {
-        const response = await fetch(url, { method: 'HEAD' })
-        return response.ok
-    } catch {
-        return false
-    }
-}
-// ==========================================
-
-export async function installCloudMod(modId, gamePath) {
-  const userDataPath = app.getPath('userData')
-  const cacheDir = path.join(userDataPath, 'ModsCache', modId.toString())
-  const zipPath = path.join(cacheDir, 'payload.zip')
-  const manifestPath = path.join(cacheDir, 'manifest.json')
-
-  await fs.emptyDir(cacheDir)
-  const timestamp = Date.now()
+/**
+ * Сканування медіа через Gateway
+ */
+async function scanAvailableMedia(modId, requestTimestamp) {
+  const discoveredMedia = []
+  const assetsBaseUrl = `${ASSETS_PROXY}/${modId}/assets`
+  const maximumProbeIterations = 5 // Зменшено для швидкості, оскільки кожен запит йде через воркер
   
-  await downloadFileWithProgress(
-    `${CLOUD_URL}/mods/${modId}/payload.zip?t=${timestamp}`, 
-    zipPath,
-    (percent) => sendProgress('download', percent)
-  )
-  
-  await downloadFileWithProgress(
-    `${CLOUD_URL}/mods/${modId}/manifest.json?t=${timestamp}`, 
-    manifestPath,
-    () => {} 
-  )
+  for (let index = 1; index <= maximumProbeIterations; index++) {
+    const targetVideoUrl = `${assetsBaseUrl}/${index}.mp4`
+    const targetImageUrl = `${assetsBaseUrl}/${index}.webp`
+    
+    const [videoIsAvailable, imageIsAvailable] = await Promise.all([
+      verifyResourcePresence(targetVideoUrl),
+      verifyResourcePresence(targetImageUrl)
+    ])
 
-  const zip = new AdmZip(zipPath)
-  zip.extractAllTo(cacheDir, true)
-
-  const manifest = await fs.readJson(manifestPath)
-  const engineInstructions = transformInstructions(manifest.instructionSet, cacheDir, gamePath)
-
-  const windows = BrowserWindow.getAllWindows()
-  const sender = windows.length > 0 ? windows[0].webContents : null
-
-  const result = await executeBatch(
-    saveTempManifest(engineInstructions),
-    sender,
-    modId,
-    gamePath
-  )
-
-  sendProgress('install', 100)
-  return result
-}
-
-async function fetchJson(url) {
-  const response = await fetch(url)
-  if (!response.ok) throw new Error(`Cloud Error: ${response.statusText}`)
-  return await response.json()
-}
-
-async function downloadFileWithProgress(url, destPath, onProgress) {
-  const response = await fetch(url)
-  const totalBytes = Number(response.headers.get('content-length') || 0)
-  const fileStream = fs.createWriteStream(destPath)
-  const reader = response.body.getReader()
-  let receivedBytes = 0
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    receivedBytes += value.length
-    fileStream.write(Buffer.from(value))
-    if (totalBytes > 0) onProgress(Math.round((receivedBytes / totalBytes) * 100))
+    if (videoIsAvailable) {
+      discoveredMedia.push({
+        type: 'video',
+        source: `${targetVideoUrl}?t=${requestTimestamp}`,
+        thumbnail: `${assetsBaseUrl}/1.webp`
+      })
+    } else if (imageIsAvailable) {
+      discoveredMedia.push({
+        type: 'image',
+        source: `${targetImageUrl}?t=${requestTimestamp}`
+      })
+    } else if (index > 1) {
+      break 
+    }
   }
-  fileStream.end()
+  
+  if (discoveredMedia.length === 0) {
+    discoveredMedia.push({ type: 'image', source: `${assetsBaseUrl}/1.webp` })
+  }
+  return discoveredMedia
 }
 
-function sendProgress(type, value) {
-  const windows = BrowserWindow.getAllWindows()
-  if (windows.length > 0) windows[0].webContents.send('installation-progress', { type, value })
+/**
+ * Перевірка наявності ресурсу з передачею заголовка авторизації
+ */
+async function verifyResourcePresence(resourceUrl) {
+  const authUser = store.get('auth_user')
+  try {
+    const response = await fetch(resourceUrl, { 
+      method: 'HEAD',
+      headers: { 'X-User-Id': authUser?.id || '' }
+    })
+    return response.ok
+  } catch {
+    return false
+  }
 }
 
-function transformInstructions(cloudInstructions, modCachePath, gamePath) {
-  const flattened = []
-  if (!cloudInstructions) return flattened
+/**
+ * Встановлення моду з перевіркою прав доступу на сервері
+ */
+export async function installCloudModification(modIdentifier, gameRootPath) {
+  const applicationDataPath = app.getPath('userData')
+  const modificationCacheDirectory = path.join(applicationDataPath, 'ModsCache', modIdentifier.toString())
+  const temporaryArchiveFilePath = path.join(modificationCacheDirectory, 'payload.zip')
+  const localManifestFilePath = path.join(modificationCacheDirectory, 'manifest.json')
 
-  for (const instruction of cloudInstructions) {
-    if (instruction.type === 'replace_batch') {
-      const sourceSubDir = instruction.sourceSubPath || ''
-      const absoluteSourceDir = path.join(modCachePath, sourceSubDir)
+  await fs.emptyDir(modificationCacheDirectory)
+  const currentTimestamp = Date.now()
+  
+  const archiveDownloadUrl = `${ASSETS_PROXY}/${modIdentifier}/payload.zip?t=${currentTimestamp}`
+  const manifestDownloadUrl = `${ASSETS_PROXY}/${modIdentifier}/manifest.json?t=${currentTimestamp}`
+
+  try {
+    await downloadFileWithHeaders(
+      archiveDownloadUrl, 
+      temporaryArchiveFilePath,
+      (downloadPercentage) => broadcastInstallationProgress('download', downloadPercentage)
+    )
+    
+    await downloadFileWithHeaders(
+      manifestDownloadUrl, 
+      localManifestFilePath,
+      () => {} 
+    )
+
+    const modificationArchive = new AdmZip(temporaryArchiveFilePath)
+    modificationArchive.extractAllTo(modificationCacheDirectory, true)
+
+    const modManifestContent = await fs.readJson(localManifestFilePath)
+    const engineTaskInstructions = buildEngineInstructions(
+      modManifestContent.instructionSet, 
+      modificationCacheDirectory, 
+      gameRootPath
+    )
+
+    const executionResult = await executeBatch(
+      generateTemporaryTaskFile(engineTaskInstructions),
+      BrowserWindow.getAllWindows()[0]?.webContents,
+      modIdentifier,
+      gameRootPath
+    )
+
+    broadcastInstallationProgress('install', 100)
+    return executionResult
+
+  } catch (error) {
+    console.error("Installation failed:", error.message)
+    throw error
+  }
+}
+
+/**
+ * Виконання JSON запитів з опціональною авторизацією
+ */
+async function performJsonRequest(targetUrl, useAuth = false) {
+  const headers = {}
+  if (useAuth) {
+    const authUser = store.get('auth_user')
+    headers['X-User-Id'] = authUser?.id || ''
+  }
+
+  const networkResponse = await fetch(targetUrl, { headers })
+  if (!networkResponse.ok) {
+    throw new Error(`Obriy Gateway Error: ${networkResponse.statusText} (${networkResponse.status})`)
+  }
+  return await networkResponse.json()
+}
+
+/**
+ * Завантаження файлів із заголовком X-User-Id
+ */
+async function downloadFileWithHeaders(sourceUrl, destinationFilePath, progressCallback) {
+  const authUser = store.get('auth_user')
+  const userId = authUser?.id || ''
+
+  const fetchResponse = await fetch(sourceUrl, {
+    headers: { 'X-User-Id': userId }
+  })
+
+  if (fetchResponse.status === 403) {
+    throw new Error("ACCESS_DENIED: Потрібна Premium підписка для цього моду.")
+  }
+
+  if (!fetchResponse.ok) {
+    throw new Error(`Server Error: ${fetchResponse.status}`)
+  }
+
+  const totalExpectedBytes = Number(fetchResponse.headers.get('content-length') || 0)
+  const fileOutputStream = fs.createWriteStream(destinationFilePath)
+  const responseStreamReader = fetchResponse.body.getReader()
+  
+  let totalReceivedBytes = 0
+
+  try {
+    while (true) {
+      const { done, value } = await responseStreamReader.read()
+      if (done) break
+
+      totalReceivedBytes += value.length
+      // Додано await для коректного очікування запису, якщо файл великий
+      if (!fileOutputStream.write(Buffer.from(value))) {
+          await new Promise(resolve => fileOutputStream.once('drain', resolve));
+      }
+
+      if (totalExpectedBytes > 0) {
+        progressCallback(Math.round((totalReceivedBytes / totalExpectedBytes) * 100))
+      }
+    }
+  } finally {
+    fileOutputStream.end() // Завжди закриваємо файл, навіть при помилці
+  }
+}
+
+// --- Решта функцій (broadcast, buildEngine, etc.) ---
+
+function broadcastInstallationProgress(progressType, progressValue) {
+  const applicationWindows = BrowserWindow.getAllWindows()
+  if (applicationWindows.length > 0) {
+    applicationWindows[0].webContents.send('installation-progress', { 
+      type: progressType, 
+      value: progressValue 
+    })
+  }
+}
+
+function buildEngineInstructions(rawInstructions, cachePath, gameDirectory) {
+  const processedInstructions = []
+  if (!rawInstructions) return processedInstructions
+
+  for (const task of rawInstructions) {
+    if (task.type === 'replace_batch') {
+      const sourceSubPath = task.sourceSubPath || ''
+      const absoluteSourcePath = path.join(cachePath, sourceSubPath)
       
-      if (fs.existsSync(absoluteSourceDir)) {
-           const fileList = fs.readdirSync(absoluteSourceDir).filter(file => {
-               if (file === 'manifest.json' || file === 'payload.zip') return false
-               try { return fs.statSync(path.join(absoluteSourceDir, file)).isFile() } catch { return false }
+      if (fs.existsSync(absoluteSourcePath)) {
+           const directoryFiles = fs.readdirSync(absoluteSourcePath).filter(fileName => {
+               if (fileName === 'manifest.json' || fileName === 'payload.zip') return false
+               try { 
+                 return fs.statSync(path.join(absoluteSourcePath, fileName)).isFile() 
+               } catch { 
+                 return false 
+               }
            })
 
-           for (const fileName of fileList) {
-             flattened.push({
-               targetPath: path.join(gamePath, instruction.targetPath, fileName),
-               sourceFilePath: path.join(absoluteSourceDir, fileName)
+           for (const fileName of directoryFiles) {
+             processedInstructions.push({
+               targetPath: path.join(gameDirectory, task.targetPath, fileName),
+               sourceFilePath: path.join(absoluteSourcePath, fileName)
              })
            }
       }
     }
   }
-  return flattened
+  return processedInstructions
 }
 
-function saveTempManifest(instructions) {
-  const tempPath = path.join(app.getPath('userData'), 'temp_install_manifest.json')
-  fs.writeJsonSync(tempPath, instructions)
-  return tempPath
+function generateTemporaryTaskFile(taskPayload) {
+  const temporaryManifestPath = path.join(app.getPath('userData'), 'temp_install_manifest.json')
+  fs.writeJsonSync(temporaryManifestPath, taskPayload)
+  return temporaryManifestPath
 }

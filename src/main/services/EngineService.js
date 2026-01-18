@@ -5,10 +5,13 @@ import fs from 'fs'
 import fsp from 'fs/promises'
 import os from 'os'
 import AdmZip from 'adm-zip'
+import Store from 'electron-store' // Додано для отримання ID користувача
 
-const CLOUD_BASE_URL = 'https://pub-af821b9413f74a56ad45f675b24a2fac.r2.dev/v1'
-const CLOUD_VANILLA_URL = `${CLOUD_BASE_URL}/vanilla`
-const CLOUD_MODS_URL = `${CLOUD_BASE_URL}/mods`
+const store = new Store()
+// Всі запити тепер йдуть через Gateway
+const OBRIY_API_GATEWAY = 'https://obriy-auth.artomk-dev.workers.dev'
+const CLOUD_VANILLA_URL = `${OBRIY_API_GATEWAY}/vanilla` // Очікується підтримка в воркері
+const CLOUD_MODS_URL = `${OBRIY_API_GATEWAY}/mods`
 
 let backendProcess = null
 let isBackendReady = false
@@ -22,6 +25,14 @@ function getEnginePath() {
   return !app.isPackaged
     ? path.join(process.cwd(), 'engine/Obriy.Core/bin/Debug/net8.0/Obriy.Core.exe')
     : path.join(process.resourcesPath, 'engine/Obriy.Core.exe')
+}
+
+/**
+ * Отримує ID поточного авторизованого користувача
+ */
+function getUserId() {
+  const authUser = store.get('auth_user')
+  return authUser?.id || ''
 }
 
 export function startBackendProcess() {
@@ -144,9 +155,19 @@ function sendCommand(commandName, args, eventSender, modId) {
   return commandQueue
 }
 
+/**
+ * Виправлено: додано передачу заголовка X-User-Id
+ */
 async function downloadFile(url, destPath) {
   return new Promise((resolve, reject) => {
-    const request = net.request(url)
+    const request = net.request({
+        method: 'GET',
+        url: url
+    })
+
+    // Додаємо авторизацію для Gateway
+    request.setHeader('X-User-Id', getUserId())
+
     request.on('response', (response) => {
       if (response.statusCode !== 200) {
           response.resume();
@@ -168,12 +189,21 @@ async function downloadFile(url, destPath) {
   })
 }
 
+/**
+ * Виправлено: шлях до маніфесту тепер через Gateway
+ */
 async function fetchModManifest(modId) {
     return new Promise((resolve, reject) => {
         const url = `${CLOUD_MODS_URL}/${modId}/manifest.json`;
-        console.log(`[Cloud] Fetching manifest: ${url}`);
+        console.log(`[Cloud] Fetching manifest via gateway: ${url}`);
         
-        const request = net.request(url);
+        const request = net.request({
+            method: 'GET',
+            url: url
+        });
+
+        request.setHeader('X-User-Id', getUserId());
+
         request.on('response', (response) => {
             if (response.statusCode !== 200) {
                 response.resume();
@@ -185,7 +215,7 @@ async function fetchModManifest(modId) {
                 try {
                     resolve(JSON.parse(data));
                 } catch (e) {
-                    reject(new Error('Invalid JSON manifest from cloud'));
+                    reject(new Error('Invalid JSON manifest from gateway'));
                 }
             });
         });
@@ -271,8 +301,8 @@ export async function installMod(eventSender, gameRootPath, instructionSet, modI
 
     try {
         if (archiveUrl) {
-            const noCacheUrl = `${archiveUrl}?nocache=${Date.now()}`;
-            await downloadFile(noCacheUrl, zipPath);
+            // archiveUrl вже має бути сформований як Gateway URL у CloudModService
+            await downloadFile(archiveUrl, zipPath);
             const zip = new AdmZip(zipPath);
             zip.extractAllTo(extractPath, true);
         }
@@ -325,11 +355,10 @@ export async function uninstallMod(eventSender, gameRootPath, instructionSet, mo
 
         if (!instructionSet || instructionSet.length === 0) {
             try {
-                console.log(`[Uninstall] No local instructions. Fetching manifest from cloud...`);
+                console.log(`[Uninstall] No local instructions. Fetching manifest via gateway...`);
                 const manifest = await fetchModManifest(modId);
                 if (manifest && manifest.instructionSet) {
                     instructionSet = manifest.instructionSet;
-                    console.log(`[Uninstall] Manifest fetched successfully.`);
                 } else {
                     throw new Error('Manifest has no instructionSet');
                 }
@@ -346,8 +375,6 @@ export async function uninstallMod(eventSender, gameRootPath, instructionSet, mo
             return { status: 'error', message: 'Mod manifest missing "vanilla" category. Cannot determine restore source.' };
         }
 
-        console.log(`[Uninstall] Using vanilla category: ${vanillaCategory}`);
-
         await fsp.mkdir(tempDir, { recursive: true });
 
         const batchItems = [];
@@ -358,6 +385,7 @@ export async function uninstallMod(eventSender, gameRootPath, instructionSet, mo
             const fileName = path.basename(internalPath);
             
             const encodedFileName = encodeURIComponent(fileName);
+            // Виправлено: завантаження vanilla файлів через Gateway
             const url = `${CLOUD_VANILLA_URL}/${vanillaCategory}/${encodedFileName}`;
             const dest = path.join(tempDir, fileName);
 
@@ -378,16 +406,14 @@ export async function uninstallMod(eventSender, gameRootPath, instructionSet, mo
                     });
                 }
             } catch (err) {
-                console.error(`[Uninstall] Failed to download ${fileName}: ${err.message} (${url})`);
+                console.error(`[Uninstall] Failed to download vanilla ${fileName}: ${err.message}`);
             }
         });
 
         await Promise.all(downloadPromises);
 
-        console.log(`[Uninstall] Prepared ${batchItems.length} files for restoration.`);
-
         if (batchItems.length === 0) {
-             return { status: 'error', message: 'Failed to download vanilla files.' };
+             return { status: 'error', message: 'Failed to download vanilla files from gateway.' };
         }
 
         const manifestPath = path.join(tempDir, 'uninstall_list.json');

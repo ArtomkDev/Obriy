@@ -7,66 +7,111 @@ import WindowControls from './components/WindowControls'
 import ModsPage from './pages/ModsPage'
 import SettingsPage from './pages/SettingsPage'
 import ModDetailsPage from './pages/ModDetailsPage'
+import { RegistrationScreen } from './components/RegistrationScreen'
 import { InstallerProvider, useInstaller } from './context/InstallerContext'
 
+// Компонент екрану завантаження ядра
+function KernelInitializationDisplay({ executionError }) {
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center gap-4">
+      {executionError ? (
+        <div className="text-red-500 text-center">
+          <p className="font-bold italic uppercase tracking-tighter">Критична помилка ядра:</p>
+          <p className="text-xs opacity-80 font-mono mt-1">{executionError}</p>
+        </div>
+      ) : (
+        <>
+          <div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+          <div className="flex flex-col items-center">
+            <div className="text-white animate-pulse font-bold italic uppercase tracking-widest text-sm">
+              Ініціалізація Obriy Core
+            </div>
+            <div className="text-zinc-500 text-[10px] uppercase tracking-widest mt-1">
+              Підключення до файлової системи RAGE MP
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// Контент для вікна завантажувача (Loader)
 function LoaderWindowContent() {
   const { isSetupComplete, isCheckingUpdate } = useInstaller()
-  const [isBackendReady, setIsBackendReady] = useState(false)
-  const [initError, setInitError] = useState(null)
+  const [user, setUser] = useState(null)
+  const [isAuthLoading, setIsAuthLoading] = useState(true)
+  const [backendInitializationError, setBackendInitializationError] = useState(null)
 
+  // 1. Перевірка збереженої авторизації при завантаженні
   useEffect(() => {
-    const initBackend = async () => {
-      if (isSetupComplete && !isCheckingUpdate) {
+    if (window.api) {
+      window.api.getStoreValue('auth_user')
+        .then(savedUser => {
+          if (savedUser) {
+            setUser(savedUser)
+          }
+        })
+        .finally(() => setIsAuthLoading(false))
+    } else {
+      setIsAuthLoading(false)
+    }
+  }, [])
+
+  // 2. Логіка запуску бекенду після проходження всіх перевірок
+  useEffect(() => {
+    const performSystemBoot = async () => {
+      // Запускаємо ядро тільки якщо: шлях обрано, оновлень немає і користувач авторизований
+      if (isSetupComplete && !isCheckingUpdate && user) {
         try {
-            console.log('Requesting backend start...')
-            await window.api.startBackend()
-            setIsBackendReady(true)
-            // Затримка для плавності переходу
-            setTimeout(() => window.api.launchMainApp(), 500)
-        } catch (err) {
-            console.error(err)
-            setInitError(err.message)
+          await window.api.startBackend()
+          // Невелика затримка для візуальної плавності перед відкриттям головного вікна
+          setTimeout(() => window.api.launchMainApp(), 800)
+        } catch (bootException) {
+          setBackendInitializationError(bootException.message)
         }
       }
     }
-    initBackend()
-  }, [isSetupComplete, isCheckingUpdate])
+    performSystemBoot()
+  }, [isSetupComplete, isCheckingUpdate, user])
+
+  // Функція збереження даних користувача після успішної реєстрації
+  const handleAuthComplete = (userData) => {
+    setUser(userData)
+    if (window.api) {
+      window.api.setStoreValue('auth_user', userData)
+    }
+  }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-900 border border-gray-700 overflow-hidden">
+    <div className="h-screen flex flex-col bg-zinc-950 border border-zinc-800 overflow-hidden shadow-2xl">
       <div className="flex-1 flex flex-col p-6">
         {isCheckingUpdate ? (
           <UpdaterScreen />
         ) : !isSetupComplete ? (
           <SetupScreen />
-        ) : (
-          <div className="flex-1 flex flex-col items-center justify-center gap-4">
-             {initError ? (
-                <div className="text-red-500 text-center">
-                    <p className="font-bold">Помилка запуску ядра:</p>
-                    <p className="text-sm">{initError}</p>
-                </div>
-             ) : (
-                <>
-                    <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                    <div className="text-white animate-pulse font-medium">Ініціалізація ядра...</div>
-                    <div className="text-gray-500 text-xs">Завантаження таблиць шифрування</div>
-                </>
-             )}
+        ) : isAuthLoading ? (
+          <div className="flex-1 flex items-center justify-center text-white/20 animate-pulse text-xs uppercase tracking-widest">
+            Перевірка сесії...
           </div>
+        ) : !user ? (
+          <RegistrationScreen onVerificationComplete={handleAuthComplete} />
+        ) : (
+          <KernelInitializationDisplay executionError={backendInitializationError} />
         )}
       </div>
     </div>
   )
 }
 
+// Контент головного вікна додатку (Main)
 function MainWindowContent() {
   return (
-    <div className="flex h-screen bg-[#09090b] text-white overflow-hidden border border-gray-800">
+    <div className="flex h-screen bg-[#09090b] text-white overflow-hidden border border-zinc-800">
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0 bg-[#09090b]">
-        <WindowControls/>
-        <main className="flex-1 bg-gray-900/50 rounded-tl-3xl border-t border-l border-white/5 overflow-hidden flex flex-col relative shadow-2xl">
+        <WindowControls />
+        <main className="flex-1 bg-zinc-900/40 rounded-tl-[2rem] border-t border-l border-white/5 overflow-hidden flex flex-col relative shadow-inner">
           <Routes>
             <Route path="/" element={<Navigate to="/mods" replace />} />
             <Route path="/mods" element={<ModsPage />} />
@@ -81,25 +126,21 @@ function MainWindowContent() {
 }
 
 function App() {
-  const [currentHash, setCurrentHash] = useState(window.location.hash)
+  const [applicationCurrentHash, setApplicationCurrentHash] = useState(window.location.hash)
 
+  // Синхронізація інтерфейсу з хешем URL (Electron використовує HashRouter)
   useEffect(() => {
-    const handleHashChange = () => setCurrentHash(window.location.hash)
-    window.addEventListener('hashchange', handleHashChange)
-    return () => window.removeEventListener('hashchange', handleHashChange)
+    const handleHashSync = () => setApplicationCurrentHash(window.location.hash)
+    window.addEventListener('hashchange', handleHashSync)
+    return () => window.removeEventListener('hashchange', handleHashSync)
   }, [])
 
-  if (currentHash === '#loader') {
-    return (
-      <InstallerProvider>
-        <LoaderWindowContent />
-      </InstallerProvider>
-    )
-  }
+  // Визначаємо, який інтерфейс показувати: Loader чи Main
+  const TargetInterface = applicationCurrentHash === '#loader' ? LoaderWindowContent : MainWindowContent
 
   return (
     <InstallerProvider>
-      <MainWindowContent />
+      <TargetInterface />
     </InstallerProvider>
   )
 }
