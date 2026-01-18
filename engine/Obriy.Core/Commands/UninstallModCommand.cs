@@ -1,156 +1,167 @@
-using System.Text.Json;
-using CodeWalker.GameFiles;
 using Obriy.Core.Services;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text.Json;
+using System.Threading.Tasks;
 
-namespace Obriy.Core.Commands;
-
-public class UninstallModCommand : ICommand
+namespace Obriy.Core.Commands
 {
-    private readonly RegistryService _registryService;
-    private readonly string _gamePath;
-    private readonly HttpClient _httpClient;
-    private const string VanillaRepositoryUrl = "https://storage.obriy-launcher.com/vanilla"; 
-
-    public string Name => "uninstall-mod";
-
-    public UninstallModCommand(string gamePath)
+    public class UninstallModCommand : ICommand
     {
-        _gamePath = gamePath;
-        _registryService = new RegistryService(gamePath);
-        _httpClient = new HttpClient();
-    }
+        private readonly string _fallbackGamePath;
 
-    public async Task ExecuteAsync(string[] args)
-    {
-        try
+        public string CommandName => "uninstall-mod";
+
+        public UninstallModCommand(string gamePath)
         {
-            if (args.Length < 1)
+            _fallbackGamePath = gamePath;
+        }
+
+        public Task ExecuteAsync(string[] args)
+        {
+            var writer = new StreamWriter(Console.OpenStandardOutput());
+            writer.AutoFlush = true;
+            Console.SetOut(writer);
+
+            if (args.Length < 2)
             {
-                throw new ArgumentException("Mod ID is required");
+                Error("Required arguments missing: manifestPath, modId");
+                return Task.CompletedTask;
             }
 
-            var modId = args[0];
-            Console.Error.WriteLine($"Starting uninstallation for Mod ID: {modId}");
+            string manifestPath = args[0];
+            string modId = args[1];
+            string gameRootPath = (args.Length > 2 && !string.IsNullOrEmpty(args[2])) 
+                ? args[2] 
+                : (!string.IsNullOrEmpty(_fallbackGamePath) ? _fallbackGamePath : AppDomain.CurrentDomain.BaseDirectory);
 
-            var installedFiles = _registryService.GetInstalledFilesByModId(modId);
-
-            if (installedFiles.Count == 0)
+            if (!File.Exists(manifestPath))
             {
-                Console.WriteLine(JsonSerializer.Serialize(new { status = "success", message = "No files found for this mod", modId }));
-                return;
+                Error($"Restore manifest not found: {manifestPath}");
+                return Task.CompletedTask;
             }
 
-            var filesByRpf = installedFiles
-                .Select(key =>
-                {
-                    var parts = key.Split('|');
-                    return new { FullKey = key, RpfPath = parts[0], InternalPath = parts[1] };
-                })
-                .GroupBy(x => x.RpfPath);
-
-            foreach (var rpfGroup in filesByRpf)
+            try
             {
-                var rpfPathRelativeToGame = rpfGroup.Key;
-                var fullRpfPath = Path.Combine(_gamePath, rpfPathRelativeToGame);
+                // Читаємо JSON список файлів для відновлення
+                string jsonContent = File.ReadAllText(manifestPath);
+                var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                var items = JsonSerializer.Deserialize<List<BatchItem>>(jsonContent, options);
 
-                Console.Error.WriteLine($"Processing RPF: {rpfPathRelativeToGame}");
-
-                if (!File.Exists(fullRpfPath))
-                {
-                    Console.Error.WriteLine($"Warning: RPF file not found at {fullRpfPath}. Skipping.");
-                    continue;
-                }
-
-                var rpfFile = new RpfFile(fullRpfPath, fullRpfPath);
+                var editor = new RpfEditor(gameRootPath);
+                var registryService = new RegistryService(gameRootPath);
                 
-                if (!rpfFile.ScanStructure(null, null))
+                var operationsByRpf = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+                long totalWorkUnits = 0;
+                
+                const int WEIGHT_RPF_OPEN = 20;
+                const int WEIGHT_FILE = 100;
+
+                foreach (var item in items)
                 {
-                    Console.Error.WriteLine($"Failed to scan RPF: {fullRpfPath}");
-                    continue;
+                    if (File.Exists(item.SourceFilePath))
+                    {
+                        try
+                        {
+                            var pathInfo = SplitPath(item.TargetPath);
+                            string physicalKey = Path.GetFullPath(pathInfo.PhysicalPath);
+
+                            if (!operationsByRpf.ContainsKey(physicalKey))
+                            {
+                                operationsByRpf[physicalKey] = new Dictionary<string, string>();
+                                totalWorkUnits += WEIGHT_RPF_OPEN; 
+                            }
+                            operationsByRpf[physicalKey][pathInfo.InternalPath] = item.SourceFilePath;
+                            totalWorkUnits += WEIGHT_FILE;
+                        }
+                        catch { }
+                    }
                 }
 
-                var changed = false;
+                if (totalWorkUnits == 0) totalWorkUnits = 1;
+                long processedWorkUnits = 0;
+                int lastReportedPercent = -1;
 
-                foreach (var fileEntry in rpfGroup)
+                Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = 0 }));
+
+                foreach (var kvp in operationsByRpf)
                 {
+                    string physicalRpf = kvp.Key;
+                    var updates = kvp.Value;
+
+                    Console.Error.WriteLine($"[Uninstall] Restoring vanilla in: {Path.GetFileName(physicalRpf)}");
+
                     try
                     {
-                        var vanillaUrl = ConstructVanillaUrl(rpfPathRelativeToGame, fileEntry.InternalPath);
-                        Console.Error.WriteLine($"Downloading vanilla file: {fileEntry.InternalPath}");
-                        
-                        var vanillaData = await DownloadVanillaFile(vanillaUrl);
-
-                        var entry = FindEntry(rpfFile, fileEntry.InternalPath);
-                        if (entry != null)
+                        // ВІДНОВЛЕННЯ ФАЙЛІВ
+                        editor.InstallBatch(physicalRpf, updates, (weight) =>
                         {
-                            // In a real CodeWalker implementation, we would use RpfManager or ensure the RPF is in edit mode.
-                            // For this snippet, we assume we can replace the raw data of the entry.
-                            // Ensure encryption keys are loaded in Program.cs before this command runs.
-                            
-                            // Logic to replace entry data would go here using RpfManager functionality
-                            // rpfFile.CreateFile/ReplaceFile logic
-                            
-                             Console.Error.WriteLine($"Reverted {fileEntry.InternalPath} to vanilla.");
-                             changed = true;
+                            processedWorkUnits += weight;
+                            int currentPercent = (int)((double)processedWorkUnits / totalWorkUnits * 100.0);
+                            if (currentPercent > 99 && processedWorkUnits < totalWorkUnits) currentPercent = 99;
+
+                            if (currentPercent > lastReportedPercent)
+                            {
+                                Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = currentPercent }));
+                                lastReportedPercent = currentPercent;
+                            }
+                        }, true);
+
+                        // ОЧИЩЕННЯ РЕЄСТРУ
+                        string relativeRpf = Path.GetRelativePath(gameRootPath, physicalRpf).Replace("\\", "/");
+                        foreach (var fileUpdate in updates)
+                        {
+                            string internalPath = fileUpdate.Key.Replace("\\", "/");
+                            registryService.UnregisterFile(relativeRpf, internalPath, modId);
                         }
                     }
-                    catch (Exception ex)
+                    catch (Exception rpfEx)
                     {
-                        Console.Error.WriteLine($"Failed to revert {fileEntry.InternalPath}: {ex.Message}");
+                        Console.Error.WriteLine($"[Uninstall] Error processing {Path.GetFileName(physicalRpf)}: {rpfEx.Message}");
                     }
                 }
 
-                if (changed)
-                {
-                    // creating backup logic would be here if needed
-                    // RpfManager.Save(rpfFile); logic
-                    Console.Error.WriteLine($"Saved changes to {rpfPathRelativeToGame}");
-                }
+                registryService.SaveRegistry();
+
+                try { File.Delete(manifestPath); } catch { }
+
+                Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = 100 }));
+                Console.WriteLine(JsonSerializer.Serialize(new { status = "success", restoredFiles = items.Count }));
+            }
+            catch (Exception ex)
+            {
+                Error(ex.Message, ex.StackTrace);
             }
 
-            _registryService.RemoveFilesFromRegistry(installedFiles);
-            _registryService.SaveRegistry();
-
-            Console.WriteLine(JsonSerializer.Serialize(new { status = "success", message = "Mod uninstalled successfully", modId }));
+            return Task.CompletedTask;
         }
-        catch (Exception ex)
+
+        private void Error(string msg, string trace = null)
         {
-            Console.WriteLine(JsonSerializer.Serialize(new
-            {
-                status = "error",
-                message = ex.Message,
-                trace = ex.StackTrace
-            }));
+            var err = new { status = "error", message = msg, trace = trace };
+            Console.WriteLine(JsonSerializer.Serialize(err));
         }
-    }
 
-    private string ConstructVanillaUrl(string rpfPath, string internalPath)
-    {
-        // Replace backslashes with forward slashes for URL
-        var cleanRpf = rpfPath.Replace("\\", "/");
-        var cleanInternal = internalPath.Replace("\\", "/");
-        
-        return $"{VanillaRepositoryUrl}/{cleanRpf}/{cleanInternal}";
-    }
-
-    private async Task<byte[]> DownloadVanillaFile(string url)
-    {
-        var response = await _httpClient.GetAsync(url);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadAsByteArrayAsync();
-    }
-
-    private RpfEntry FindEntry(RpfFile file, string internalPath)
-    {
-        // Recursively find entry in RpfFile structure
-        // Simplified implementation assumption
-        foreach(var entry in file.AllEntries)
+        private (string PhysicalPath, string InternalPath) SplitPath(string fullPath)
         {
-            if (entry.Path.EndsWith(internalPath, StringComparison.OrdinalIgnoreCase))
+            string currentPath = Path.GetFullPath(fullPath);
+            string internalParts = "";
+
+            while (!string.IsNullOrEmpty(currentPath))
             {
-                return entry;
+                if (File.Exists(currentPath))
+                    return (currentPath, internalParts.TrimStart('/', '\\'));
+
+                string fileName = Path.GetFileName(currentPath);
+                string directory = Path.GetDirectoryName(currentPath);
+
+                if (string.IsNullOrEmpty(directory) || directory.Equals(currentPath, StringComparison.OrdinalIgnoreCase)) break;
+
+                internalParts = Path.Combine(fileName, internalParts);
+                currentPath = directory;
             }
+            throw new FileNotFoundException($"Valid RPF root not found for: {fullPath}");
         }
-        return null;
     }
 }

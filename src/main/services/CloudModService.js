@@ -6,10 +6,10 @@ import { executeBatch } from './EngineService'
 
 const CLOUD_URL = 'https://pub-af821b9413f74a56ad45f675b24a2fac.r2.dev/v1'
 
+// ... getModCatalog та getModDetails без змін ...
 export async function getModCatalog() {
   const url = `${CLOUD_URL}/catalog/index.json?t=${Date.now()}`
   const data = await fetchJson(url)
-  
   return data.map(item => ({
     id: item.id,
     name: item.n,
@@ -24,11 +24,8 @@ export async function getModCatalog() {
 export async function getModDetails(modId) {
   const url = `${CLOUD_URL}/mods/${modId}/manifest.json?t=${Date.now()}`
   const data = await fetchJson(url)
-  
   const timestamp = Date.now()
   const assetsRoot = `${CLOUD_URL}/mods/${modId}/assets`
-
-  // Перетворюємо список імен файлів з маніфесту у повні URL
   const processedMedia = (data.media || ['1.webp']).map(filename => {
     const isVideo = filename.toLowerCase().endsWith('.mp4')
     return {
@@ -37,14 +34,7 @@ export async function getModDetails(modId) {
       thumbnail: `${assetsRoot}/1.webp?t=${timestamp}`
     }
   })
-
-  return {
-    ...data,
-    id: modId,
-    title: data.name,
-    thumbnail: `${assetsRoot}/1.webp?t=${timestamp}`,
-    media: processedMedia
-  }
+  return { ...data, id: modId, title: data.name, thumbnail: `${assetsRoot}/1.webp?t=${timestamp}`, media: processedMedia }
 }
 
 export async function installCloudMod(modId, gamePath) {
@@ -54,7 +44,6 @@ export async function installCloudMod(modId, gamePath) {
   const manifestPath = path.join(cacheDir, 'manifest.json')
 
   await fs.emptyDir(cacheDir)
-  
   const timestamp = Date.now()
   
   await downloadFileWithProgress(
@@ -73,6 +62,7 @@ export async function installCloudMod(modId, gamePath) {
   zip.extractAllTo(cacheDir, true)
 
   const manifest = await fs.readJson(manifestPath)
+  // ПЕРЕДАЄМО cacheDir ДЛЯ СКАНУВАННЯ ФАЙЛІВ
   const engineInstructions = transformInstructions(manifest.instructionSet, cacheDir, gamePath)
 
   const windows = BrowserWindow.getAllWindows()
@@ -101,7 +91,6 @@ async function downloadFileWithProgress(url, destPath, onProgress) {
   const fileStream = fs.createWriteStream(destPath)
   const reader = response.body.getReader()
   let receivedBytes = 0
-
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
@@ -117,17 +106,29 @@ function sendProgress(type, value) {
   if (windows.length > 0) windows[0].webContents.send('installation-progress', { type, value })
 }
 
+// === ВИПРАВЛЕННЯ: СКАНУВАННЯ ПАПКИ ===
 function transformInstructions(cloudInstructions, modCachePath, gamePath) {
   const flattened = []
+  if (!cloudInstructions) return flattened
+
   for (const instruction of cloudInstructions) {
     if (instruction.type === 'replace_batch') {
       const sourceSubDir = instruction.sourceSubPath || ''
       const absoluteSourceDir = path.join(modCachePath, sourceSubDir)
-      for (const fileName of instruction.files) {
-        flattened.push({
-          targetPath: path.join(gamePath, instruction.targetPath, fileName),
-          sourceFilePath: path.join(absoluteSourceDir, fileName)
-        })
+      
+      // Скануємо всі файли у папці, бо files[] більше немає
+      if (fs.existsSync(absoluteSourceDir)) {
+           const fileList = fs.readdirSync(absoluteSourceDir).filter(file => {
+               if (file === 'manifest.json' || file === 'payload.zip') return false
+               try { return fs.statSync(path.join(absoluteSourceDir, file)).isFile() } catch { return false }
+           })
+
+           for (const fileName of fileList) {
+             flattened.push({
+               targetPath: path.join(gamePath, instruction.targetPath, fileName),
+               sourceFilePath: path.join(absoluteSourceDir, fileName)
+             })
+           }
       }
     }
   }

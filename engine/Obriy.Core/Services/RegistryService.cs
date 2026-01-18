@@ -1,99 +1,75 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text.Json;
-using Obriy.Core.Models;
+using System.Linq;
 
 namespace Obriy.Core.Services
 {
     public class RegistryService
     {
-        private readonly string _registryFilePath;
-        private RegistryData _currentRegistryData;
+        private readonly string _registryPath;
+        private Dictionary<string, string> _registry;
 
-        public RegistryService(string applicationRootPath)
+        public RegistryService(string gameRootPath)
         {
-            _registryFilePath = Path.GetFullPath(Path.Combine(applicationRootPath, "obriy_registry.json"));
+            _registryPath = Path.Combine(gameRootPath, "obriy_registry.json");
             LoadRegistry();
         }
 
         private void LoadRegistry()
         {
-            if (File.Exists(_registryFilePath))
+            if (File.Exists(_registryPath))
             {
                 try
                 {
-                    string jsonContent = File.ReadAllText(_registryFilePath);
-                    _currentRegistryData = JsonSerializer.Deserialize<RegistryData>(jsonContent) ?? new RegistryData();
+                    string json = File.ReadAllText(_registryPath);
+                    _registry = JsonSerializer.Deserialize<Dictionary<string, string>>(json) 
+                                ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 }
                 catch
                 {
-                    _currentRegistryData = new RegistryData();
+                    _registry = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 }
             }
             else
             {
-                _currentRegistryData = new RegistryData();
+                _registry = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             }
         }
 
         public void RegisterFileOwnership(string relativeRpfPath, string internalPath, string modId)
         {
-            string uniqueFileKey = $"{relativeRpfPath}|{internalPath}";
+            string key = $"{relativeRpfPath}|{internalPath}";
+            _registry[key] = modId;
+        }
 
-            if (_currentRegistryData.Registry.ContainsKey(uniqueFileKey))
+        public void UnregisterFile(string relativeRpfPath, string internalPath, string modId)
+        {
+            string key = $"{relativeRpfPath}|{internalPath}";
+            // Видаляємо тільки якщо власник збігається
+            if (_registry.ContainsKey(key) && _registry[key] == modId)
             {
-                _currentRegistryData.Registry[uniqueFileKey] = modId;
-            }
-            else
-            {
-                _currentRegistryData.Registry.Add(uniqueFileKey, modId);
+                _registry.Remove(key);
             }
         }
 
         public List<string> GetActiveModIds()
         {
-            return _currentRegistryData.Registry.Values.Distinct().ToList();
-        }
-
-        public List<string> GetInstalledFilesByModId(string modId)
-        {
-            return _currentRegistryData.Registry
-                .Where(entry => entry.Value == modId)
-                .Select(entry => entry.Key)
-                .ToList();
-        }
-
-        public void RemoveFilesFromRegistry(IEnumerable<string> fileKeys)
-        {
-            foreach (var key in fileKeys)
-            {
-                if (_currentRegistryData.Registry.ContainsKey(key))
-                {
-                    _currentRegistryData.Registry.Remove(key);
-                }
-            }
+            return _registry.Values.Distinct().ToList();
         }
 
         public void SaveRegistry()
         {
             try
             {
-                string tempPath = _registryFilePath + ".tmp";
                 var options = new JsonSerializerOptions { WriteIndented = true };
-                string jsonOutput = JsonSerializer.Serialize(_currentRegistryData, options);
-
-                File.WriteAllText(tempPath, jsonOutput);
-
-                if (File.Exists(_registryFilePath))
-                    File.Delete(_registryFilePath);
-
-                File.Move(tempPath, _registryFilePath);
+                string json = JsonSerializer.Serialize(_registry, options);
+                File.WriteAllText(_registryPath, json);
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Registry Save Error: {ex.Message}");
+                Console.Error.WriteLine($"Failed to save registry: {ex.Message}");
             }
         }
     }
