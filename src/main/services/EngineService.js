@@ -6,16 +6,15 @@ import fsp from 'fs/promises'
 import os from 'os'
 import AdmZip from 'adm-zip'
 
-// URL хмари (має співпадати з CloudModService)
 const CLOUD_BASE_URL = 'https://pub-af821b9413f74a56ad45f675b24a2fac.r2.dev/v1'
 const CLOUD_VANILLA_URL = `${CLOUD_BASE_URL}/vanilla`
+const CLOUD_MODS_URL = `${CLOUD_BASE_URL}/mods`
 
 let backendProcess = null
 let isBackendReady = false
 let commandQueue = Promise.resolve()
 const COMMAND_TIMEOUT_MS = 600000 
 
-// Watcher variables
 let registryWatcher = null
 let debounceTimer = null
 
@@ -145,29 +144,54 @@ function sendCommand(commandName, args, eventSender, modId) {
   return commandQueue
 }
 
-async function downloadFile(url, destPath, sender, modId) {
+async function downloadFile(url, destPath) {
   return new Promise((resolve, reject) => {
     const request = net.request(url)
     request.on('response', (response) => {
-      if (response.statusCode !== 200) return reject(new Error(`Download failed: HTTP ${response.statusCode} at ${url}`))
-      const totalBytes = parseInt(response.headers['content-length'], 10)
-      let downloadedBytes = 0
+      if (response.statusCode !== 200) {
+          response.resume();
+          return reject(new Error(`HTTP ${response.statusCode} for ${url}`));
+      }
       const fileStream = fs.createWriteStream(destPath)
-      response.on('data', (chunk) => {
-        downloadedBytes += chunk.length
-        fileStream.write(chunk)
-        if (sender && totalBytes) {
-          const progress = Math.round((downloadedBytes / totalBytes) * 100)
-          sender.send('task-progress', { type: 'download', modId: modId || 'current', percentage: progress })
-        }
+      response.pipe(fileStream);
+      fileStream.on('finish', () => {
+          fileStream.close();
+          resolve();
       })
-      response.on('end', () => fileStream.end())
-      fileStream.on('finish', () => resolve())
-      fileStream.on('error', (err) => { fs.unlink(destPath, () => {}); reject(err) })
+      fileStream.on('error', (err) => {
+          fs.unlink(destPath, () => {}); 
+          reject(err);
+      })
     })
     request.on('error', (err) => reject(err))
     request.end()
   })
+}
+
+async function fetchModManifest(modId) {
+    return new Promise((resolve, reject) => {
+        const url = `${CLOUD_MODS_URL}/${modId}/manifest.json`;
+        console.log(`[Cloud] Fetching manifest: ${url}`);
+        
+        const request = net.request(url);
+        request.on('response', (response) => {
+            if (response.statusCode !== 200) {
+                response.resume();
+                return reject(new Error(`Failed to fetch manifest. HTTP ${response.statusCode}`));
+            }
+            let data = '';
+            response.on('data', (chunk) => { data += chunk; });
+            response.on('end', () => {
+                try {
+                    resolve(JSON.parse(data));
+                } catch (e) {
+                    reject(new Error('Invalid JSON manifest from cloud'));
+                }
+            });
+        });
+        request.on('error', (err) => reject(err));
+        request.end();
+    });
 }
 
 function prepareBatchItems(instructionSet, gameRootPath, isUninstall) {
@@ -227,16 +251,16 @@ export function startRegistryWatcher(mainWindow, gamePath) {
     } catch (e) { console.error(`[Watcher] Failed: ${e.message}`) }
 }
 
-export async function executeBatch(manifestPath, eventSender, modId = null, gameRootPath = null) {
-    const args = [manifestPath, String(modId || ""), gameRootPath || ""];
-    return await sendCommand('install-batch', args, eventSender, modId);
-}
-
 export const validateGamePath = async (gamePath) => {
     if (!isBackendReady) {
         try { await startBackendProcess() } catch (e) { return { isValid: false, error: 'Engine failed to start' } }
     }
     return await sendCommand('validate-path', [gamePath])
+}
+
+export async function executeBatch(manifestPath, eventSender, modId = null, gameRootPath = null) {
+    const args = [manifestPath, String(modId || ""), gameRootPath || ""];
+    return await sendCommand('install-batch', args, eventSender, modId);
 }
 
 export async function installMod(eventSender, gameRootPath, instructionSet, modId, archiveUrl) {
@@ -248,7 +272,7 @@ export async function installMod(eventSender, gameRootPath, instructionSet, modI
     try {
         if (archiveUrl) {
             const noCacheUrl = `${archiveUrl}?nocache=${Date.now()}`;
-            await downloadFile(noCacheUrl, zipPath, eventSender, modId);
+            await downloadFile(noCacheUrl, zipPath);
             const zip = new AdmZip(zipPath);
             zip.extractAllTo(extractPath, true);
         }
@@ -274,14 +298,13 @@ export async function installMod(eventSender, gameRootPath, instructionSet, modI
     }
 }
 
-// === ОСНОВНА ЛОГІКА ВИДАЛЕННЯ (ПОВНІСТЮ ПЕРЕПИСАНА) ===
 export async function uninstallMod(eventSender, gameRootPath, instructionSet, modId) {
+    console.log(`[Uninstall] Starting uninstall for ModID: ${modId}`);
     const tempDir = path.join(app.getPath('temp'), `ObriyVanilla_${modId}`);
     
     try {
         const registryPath = path.join(gameRootPath, 'obriy_registry.json');
         
-        // 1. Перевіряємо реєстр
         if (!fs.existsSync(registryPath)) {
             return { status: 'error', message: 'Registry not found' };
         }
@@ -289,39 +312,58 @@ export async function uninstallMod(eventSender, gameRootPath, instructionSet, mo
         const registryData = await fsp.readFile(registryPath, 'utf8');
         const registry = JSON.parse(registryData);
 
-        // 2. Знаходимо файли, які треба відновити (фільтруємо по modId)
         const modFiles = Object.entries(registry)
             .filter(([_, installedModId]) => String(installedModId) === String(modId))
             .map(([key]) => key);
 
+        console.log(`[Uninstall] Found ${modFiles.length} files to restore.`);
+
         if (modFiles.length === 0) {
-            return { status: 'success', message: 'No files to restore (already clean)' };
+            console.warn('[Uninstall] ABORTING: No files found in registry.');
+            return { status: 'error', message: `No files found for ModID ${modId}.` };
         }
 
+        if (!instructionSet || instructionSet.length === 0) {
+            try {
+                console.log(`[Uninstall] No local instructions. Fetching manifest from cloud...`);
+                const manifest = await fetchModManifest(modId);
+                if (manifest && manifest.instructionSet) {
+                    instructionSet = manifest.instructionSet;
+                    console.log(`[Uninstall] Manifest fetched successfully.`);
+                } else {
+                    throw new Error('Manifest has no instructionSet');
+                }
+            } catch (e) {
+                console.error(`[Uninstall] Failed to fetch manifest: ${e.message}`);
+                return { status: 'error', message: `Cannot uninstall: Failed to fetch mod manifest. Error: ${e.message}` };
+            }
+        }
+
+        const vanillaCategory = instructionSet[0]?.vanilla;
+
+        if (!vanillaCategory) {
+            console.error('[Uninstall] "vanilla" field missing in instructionSet.');
+            return { status: 'error', message: 'Mod manifest missing "vanilla" category. Cannot determine restore source.' };
+        }
+
+        console.log(`[Uninstall] Using vanilla category: ${vanillaCategory}`);
+
         await fsp.mkdir(tempDir, { recursive: true });
-        
-        // 3. Беремо категорію "vanilla" з маніфесту (instructionSet)
-        const vanillaCategory = (instructionSet && instructionSet[0] && instructionSet[0].vanilla) 
-            ? instructionSet[0].vanilla 
-            : 'guns'; // Дефолт, якщо не вказано
 
         const batchItems = [];
         let downloadedCount = 0;
 
-        // 4. Качаємо оригінальні файли з хмари
-        for (const regKey of modFiles) {
+        const downloadPromises = modFiles.map(async (regKey) => {
             const [rpfRel, internalPath] = regKey.split('|');
-            const fileName = path.basename(internalPath); // використовуємо path.basename для безпеки
+            const fileName = path.basename(internalPath);
             
-            // Формуємо URL: https://.../v1/vanilla/gun/w_ar_carbinerifle.ytd
-            const url = `${CLOUD_VANILLA_URL}/${vanillaCategory}/${fileName}`;
+            const encodedFileName = encodeURIComponent(fileName);
+            const url = `${CLOUD_VANILLA_URL}/${vanillaCategory}/${encodedFileName}`;
             const dest = path.join(tempDir, fileName);
 
             try {
-                await downloadFile(url, dest, null, null);
+                await downloadFile(url, dest);
                 
-                // Формуємо запис для відновлення
-                // TargetPath: Повний шлях до файлу в грі
                 batchItems.push({
                     TargetPath: path.join(gameRootPath, rpfRel, internalPath),
                     SourceFilePath: dest
@@ -336,27 +378,27 @@ export async function uninstallMod(eventSender, gameRootPath, instructionSet, mo
                     });
                 }
             } catch (err) {
-                console.error(`Failed to fetch vanilla file: ${url}`, err.message);
-                // Продовжуємо, щоб спробувати відновити інші файли
+                console.error(`[Uninstall] Failed to download ${fileName}: ${err.message} (${url})`);
             }
-        }
+        });
+
+        await Promise.all(downloadPromises);
+
+        console.log(`[Uninstall] Prepared ${batchItems.length} files for restoration.`);
 
         if (batchItems.length === 0) {
-            return { status: 'error', message: 'Failed to download vanilla files' };
+             return { status: 'error', message: 'Failed to download vanilla files.' };
         }
 
-        // 5. Записуємо список відновлення у файл
         const manifestPath = path.join(tempDir, 'uninstall_list.json');
         await fsp.writeFile(manifestPath, JSON.stringify(batchItems, null, 2));
 
-        // 6. ВИКЛИКАЄМО КОМАНДУ UNINSTALL-MOD
-        // Ця команда замінить файли і ВИДАЛИТЬ записи з реєстру
         const result = await sendCommand('uninstall-mod', [manifestPath, String(modId), gameRootPath], eventSender, modId);
         
         return result;
 
     } catch (err) {
-        console.error('Uninstall logic error:', err);
+        console.error('[Uninstall] Logic Error:', err);
         return { status: 'error', error: err.message };
     } finally {
         try { await fsp.rm(tempDir, { recursive: true, force: true }); } catch (e) {}

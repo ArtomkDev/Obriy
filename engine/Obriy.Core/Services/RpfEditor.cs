@@ -34,12 +34,6 @@ namespace Obriy.Core.Services
                 RpfFile rpfFile = RpfSession.GetOrOpen(fullRpfPath);
                 InjectFileDirect(rpfFile, fileName, content);
                 
-                // Зберігаємо зміни
-                // Примітка: RpfSession зазвичай кешує, але для фізичного запису потрібен Save,
-                // якщо ми хочемо, щоб зміни застосувались негайно.
-                // У рамках пакетної обробки (InstallBatch) ми покладаємось на кешування сесії, 
-                // але тут для одиночного методу може знадобитися явний запис, якщо архітектура це передбачає.
-                
                 return true;
             }
             catch (Exception ex)
@@ -87,7 +81,6 @@ namespace Obriy.Core.Services
                 }
             }
 
-            // Якщо це кореневий RPF, повідомляємо про початок роботи з ним
             if (isRoot) onProgress?.Invoke(WEIGHT_RPF_OPEN);
 
             RpfFile rpfFile = RpfSession.GetOrOpen(physicalRpfPath);
@@ -103,12 +96,9 @@ namespace Obriy.Core.Services
                 try
                 {
                     Directory.CreateDirectory(tempDir);
-                    
                     ExtractFileFromRpf(rpfFile, nestedRpfInternalPath, tempRpfPath);
                     
-                    // Рекурсивний виклик. 
-                    // isRoot = false, щоб не додавати вагу відкриття тимчасового файлу до загального прогресу.
-                    // onProgress передаємо той самий, щоб внутрішні файли рухали загальний прогрес-бар.
+                    // Рекурсія
                     InstallBatch(tempRpfPath, nestedUpdates, onProgress, false);
 
                     directFiles[nestedRpfInternalPath] = tempRpfPath;
@@ -124,7 +114,7 @@ namespace Obriy.Core.Services
                 }
             }
 
-            // 2. Вставка прямих файлів (оптимізовано по директоріях)
+            // 2. Вставка файлів
             var filesByDirectory = new Dictionary<string, List<KeyValuePair<string, string>>>();
 
             foreach (var item in directFiles)
@@ -154,8 +144,6 @@ namespace Obriy.Core.Services
                     byte[] data = File.ReadAllBytes(sourcePath);
                     RpfFile.CreateFile(targetDir, fileName, data);
                     
-                    // Якщо цей файл був у списку оновлень (а не проміжний RPF), звітуємо прогрес
-                    // Проміжні RPF вже "відзвітували" своїми внутрішніми файлами у рекурсивному виклику
                     bool isIntermediateRpf = nestedGroups.ContainsKey(Path.Combine(directoryPath, fileName).Replace('\\', '/'));
                     
                     if (!isIntermediateRpf)
@@ -165,7 +153,7 @@ namespace Obriy.Core.Services
                 }
             }
             
-            // Очищення тимчасових файлів
+            // Очищення temp
             foreach (var group in nestedGroups)
             {
                  string tempPath = directFiles[group.Key];

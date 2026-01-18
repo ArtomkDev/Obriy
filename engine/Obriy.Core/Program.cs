@@ -103,7 +103,7 @@ namespace Obriy.Core
             {
                 "validate-path" => new ValidateGamePathCommand(),
                 "install-mod" => new InstallModCommand(),
-                "uninstall-mod" => new UninstallModCommand(gamePath),
+                "uninstall-mod" => new UninstallModCommand(),
                 "install-batch" => new BatchInstallCommand(),
                 "get-active-mods" => new GetActiveModsCommand(),
                 "ping" => new PingCommand(),

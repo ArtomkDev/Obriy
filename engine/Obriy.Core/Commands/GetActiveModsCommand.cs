@@ -14,7 +14,12 @@ namespace Obriy.Core.Commands
         {
             try
             {
-                RegistryService registryService = new RegistryService(AppDomain.CurrentDomain.BaseDirectory);
+                // ВИПРАВЛЕНО: Використовуємо переданий шлях до гри, або поточну папку як резерв
+                string gamePath = (args.Length > 0 && !string.IsNullOrWhiteSpace(args[0])) 
+                    ? args[0] 
+                    : AppDomain.CurrentDomain.BaseDirectory;
+
+                RegistryService registryService = new RegistryService(gamePath);
                 List<string> activeModIds = registryService.GetActiveModIds();
 
                 Console.WriteLine(JsonSerializer.Serialize(new

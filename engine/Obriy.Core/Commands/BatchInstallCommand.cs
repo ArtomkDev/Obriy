@@ -46,6 +46,7 @@ namespace Obriy.Core.Commands
                 var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
                 var items = JsonSerializer.Deserialize<List<BatchItem>>(jsonContent, options);
                 
+                // Визначаємо корінь гри
                 string rootForEditor = !string.IsNullOrEmpty(gameRootPath) ? gameRootPath : AppDomain.CurrentDomain.BaseDirectory;
                 
                 var editor = new RpfEditor(rootForEditor);
@@ -56,7 +57,8 @@ namespace Obriy.Core.Commands
                 {
                     try 
                     {
-                        registryService = new RegistryService(AppDomain.CurrentDomain.BaseDirectory);
+                        // ВИПРАВЛЕНО: Реєстр створюється у папці гри, а не в папці програми
+                        registryService = new RegistryService(rootForEditor);
                     }
                     catch (Exception ex)
                     {
@@ -108,8 +110,6 @@ namespace Obriy.Core.Commands
                         editor.InstallBatch(physicalRpf, updates, (weight) => 
                         {
                             processedWorkUnits += weight;
-                            
-                            // Захист від переповнення (візуально не більше 99%, поки не закінчимо все)
                             if (processedWorkUnits > totalWorkUnits) processedWorkUnits = totalWorkUnits;
                             
                             int currentPercent = (int)((double)processedWorkUnits / totalWorkUnits * 100.0);
@@ -120,7 +120,7 @@ namespace Obriy.Core.Commands
                                 Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = currentPercent }));
                                 lastReportedPercent = currentPercent;
                             }
-                        }, true); // true = це кореневий RPF, враховуємо вагу відкриття
+                        }, true);
 
                         if (registryService != null)
                         {
