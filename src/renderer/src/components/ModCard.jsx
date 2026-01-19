@@ -54,15 +54,15 @@ export default function ModCard({ mod }) {
     navigate(`/mods/${mod.id}`)
   }
 
-  const handleInstallClick = (e) => {
-    e.stopPropagation()
+  const handleInstallClick = (event) => {
+    event.stopPropagation()
     if (!isModPremium || userHasPremium) {
       startInstall(mod)
     }
   }
 
-  const handleUninstallClick = (e) => {
-    e.stopPropagation()
+  const handleUninstallClick = (event) => {
+    event.stopPropagation()
     startUninstall(mod)
   }
 
@@ -73,89 +73,83 @@ export default function ModCard({ mod }) {
   return (
     <div
       onClick={handleCardClick}
-      className={`group relative aspect-video rounded-xl overflow-hidden cursor-pointer bg-[#121214] ring-1 transition-all duration-500 hover:scale-[1.02]
+      className={`group relative aspect-video rounded-xl overflow-hidden cursor-pointer bg-[#0a0a0b] ring-1 transition-all duration-500 hover:scale-[1.02]
         ${isLocked 
-            ? 'ring-yellow-500/20 hover:ring-yellow-500/50 hover:shadow-[0_0_25px_rgba(234,179,8,0.15)]' 
-            : 'ring-white/10 hover:ring-white/40 hover:shadow-[0_0_30px_rgba(255,255,255,0.1)]'}
+            ? 'ring-yellow-500/10 hover:ring-yellow-500/40 shadow-xl' 
+            : 'ring-white/5 hover:ring-white/20 shadow-xl'}
       `}
     >
       <div className="absolute inset-0 z-0">
         <img
           src={mod.image || mod.thumbnail}
           alt={mod.name}
-          className="w-full h-full object-cover transition-all duration-700 opacity-80 group-hover:opacity-100 group-hover:scale-110"
+          className="w-full h-full object-cover transition-all duration-700 opacity-90 group-hover:opacity-100 group-hover:scale-105"
         />
-        <div className="absolute bottom-0 left-0 right-0 h-1/2 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent opacity-100 transition-opacity duration-500" />
       </div>
 
       {isModPremium && (
-        <div className="absolute top-3 right-3 z-20">
-             <div className="bg-black/60 backdrop-blur-md px-2 py-1 rounded-full border border-yellow-500/30 flex items-center gap-1 shadow-lg">
-                <CrownIcon className="w-3 h-3 text-yellow-400" />
-                <span className="text-[9px] font-bold text-yellow-200 uppercase tracking-wider">Premium</span>
+        <div className="absolute top-2 right-2 z-20">
+            <div className="w-6 h-6 flex items-center justify-center bg-black/30 backdrop-blur-md rounded-md border border-yellow-500/20 shadow-lg">
+                <CrownIcon className="w-3.5 h-3.5 text-yellow-500/80" />
             </div>
         </div>
       )}
 
-      <div className="absolute inset-0 p-4 flex flex-col justify-end z-20">
+      <div className="absolute inset-0 p-3 flex flex-col justify-end z-20">
         <div className="flex items-center justify-between gap-3">
             <div className="flex-1 min-w-0">
-                <h3 className="text-base font-black uppercase tracking-tighter leading-tight drop-shadow-md truncate text-white group-hover:text-white transition-colors">
+                <h3 className="text-sm font-bold uppercase tracking-tight leading-tight text-white drop-shadow-[0_1.5px_3px_rgba(0,0,0,1)] truncate">
                     {mod.name}
                 </h3>
 
                 <div className="h-4 flex items-center">
                     {(status !== 'idle' || showAsInstalled) && (
-                        <div className={`text-[9px] font-bold uppercase tracking-widest flex items-center gap-2 drop-shadow-sm
+                        <div className={`text-[8px] font-black uppercase tracking-widest flex items-center gap-1.5
                                 ${status === 'downloading' && 'text-blue-400'}
                                 ${status === 'installing' && 'text-indigo-400'}
                                 ${showAsInstalled && 'text-emerald-400'}
                                 ${status === 'error' && 'text-rose-400'}
                             `}>
-                            <span className="flex items-center gap-1.5">
+                            <span className="flex items-center gap-1">
                                 <span className={`w-1 h-1 rounded-full animate-pulse ${showAsInstalled ? 'bg-emerald-400' : 'bg-current'}`} />
                                 {status === 'downloading' ? 'Downloading' : 
                                  status === 'installing' ? 'Installing' :
                                  showAsInstalled ? 'Installed' : 'Processing'}
                             </span>
-                            {isProcessing && (
-                                <span className="opacity-70 tabular-nums"> {activePercent}%</span>
-                            )}
                         </div>
                     )}
                 </div>
             </div>
 
-            <div className="flex items-center gap-1 p-1 bg-black/70 border border-white/10 backdrop-blur-md rounded-lg shadow-2xl transition-all duration-300 group-hover:border-white/30 group-hover:bg-black/80">
+            <div className="flex items-center gap-1 p-1 bg-black/40 border border-white/5 backdrop-blur-xl rounded-lg opacity-0 translate-y-1 transition-all duration-300 group-hover:opacity-100 group-hover:translate-y-0">
                 {showAsInstalled && (
                     <button
                         onClick={handleUninstallClick}
                         disabled={isProcessing}
-                        className="w-7 h-7 flex items-center justify-center rounded-md text-red-400/80 hover:text-white hover:bg-red-500 transition-all active:scale-90"
-                        title="Uninstall"
+                        className="w-6 h-6 flex items-center justify-center rounded-md text-red-400/60 hover:text-white hover:bg-red-500/60 transition-all active:scale-90"
                     >
-                        <TrashIcon className="w-3.5 h-3.5" />
+                        <TrashIcon className="w-3 h-3" />
                     </button>
                 )}
 
                 <button
                     onClick={handleInstallClick}
                     disabled={isProcessing || isLocked}
-                    className={`w-7 h-7 flex items-center justify-center rounded-md transition-all active:scale-90
+                    className={`w-6 h-6 flex items-center justify-center rounded-md transition-all active:scale-90
                         ${showAsInstalled
-                            ? 'text-emerald-400 hover:text-white hover:bg-emerald-500'
+                            ? 'text-emerald-400/60 hover:text-white hover:bg-emerald-500/60'
                             : isLocked
-                                ? 'text-yellow-500/40 cursor-not-allowed'
+                                ? 'text-yellow-500/20 cursor-not-allowed'
                                 : isProcessing
-                                    ? 'text-white/20 cursor-wait'
-                                    : 'text-white/90 hover:bg-white/20'
+                                    ? 'text-white/10 cursor-wait'
+                                    : 'text-white/60 hover:text-white hover:bg-white/10'
                         }
                     `}
-                    title={isLocked ? "Premium Required" : showAsInstalled ? "Reinstall" : "Install"}
                 >
-                    {showAsInstalled ? <RefreshIcon className="w-3.5 h-3.5" /> : 
-                     isLocked ? <CrownIcon className="w-3.5 h-3.5 text-yellow-500" /> : 
-                     <DownloadIcon className="w-3.5 h-3.5" />}
+                    {showAsInstalled ? <RefreshIcon className="w-3 h-3" /> : 
+                     isLocked ? <CrownIcon className="w-3 h-3 text-yellow-500/30" /> : 
+                     <DownloadIcon className="w-3 h-3" />}
                 </button>
             </div>
         </div>
@@ -167,7 +161,7 @@ export default function ModCard({ mod }) {
             downloadProgress={progress.download}
             installProgress={progress.install}
             status={status}
-            className="h-1 rounded-none bg-black/40"
+            className="h-1 rounded-none bg-black/20"
           />
         </div>
       )}

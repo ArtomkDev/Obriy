@@ -15,7 +15,7 @@ export default function WindowControls() {
 
   return (
     // Виправлено: завжди justify-end, оскільки назви більше немає
-    <div className="w-full h-10 flex items-center justify-end drag">
+    <div className="w-full h-10 flex items-center justify-end drag ">
       
       <div className="flex h-full no-drag">
         <button

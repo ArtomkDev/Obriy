@@ -2,117 +2,126 @@ import React from 'react'
 import ProgressBar from '../ProgressBar'
 import { useInstaller } from '../../context/InstallerContext'
 
+const DownloadIcon = ({ className }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className}>
+    <path fillRule="evenodd" d="M12 2.25a.75.75 0 0 1 .75.75v11.69l3.22-3.22a.75.75 0 1 1 1.06 1.06l-4.5 4.5a.75.75 0 0 1-1.06 0l-4.5-4.5a.75.75 0 1 1 1.06-1.06l3.22 3.22V3a.75.75 0 0 1 .75-.75Zm-9 13.5a.75.75 0 0 1 .75.75v2.25a1.5 1.5 0 0 0 1.5 1.5h13.5a1.5 1.5 0 0 0 1.5-1.5V16.5a.75.75 0 0 1 1.5 0v2.25a3 3 0 0 1-3 3H5.25a3 3 0 0 1-3-3V16.5a.75.75 0 0 1 .75-.75Z" clipRule="evenodd" />
+  </svg>
+)
+
+const RefreshIcon = ({ className }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className={className}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+  </svg>
+)
+
+const CrownIcon = ({ className }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className}>
+    <path fillRule="evenodd" d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l2.082 5.007 5.404.433c1.164.093 1.636 1.545.749 2.305l-4.117 3.527 1.257 5.273c.271 1.136-.964 2.033-1.96 1.425L12 18.354 7.373 21.18c-.996.608-2.231-.29-1.96-1.425l1.257-5.273-4.117-3.527c-.887-.76-.415-2.212.749-2.305l5.404-.433 2.082-5.006z" clipRule="evenodd" />
+  </svg>
+)
+
+const TrashIcon = ({ className }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className}>
+    <path fillRule="evenodd" d="M16.5 4.478v.227a48.816 48.816 0 0 1 3.878.512.75.75 0 1 1-.256 1.478l-.209-.035-1.005 13.07a3 3 0 0 1-2.991 2.77H8.084a3 3 0 0 1-2.991-2.77L4.087 6.66l-.209.035a.75.75 0 0 1-.256-1.478A48.567 48.567 0 0 1 7.5 4.705v-.227c0-1.564 1.213-2.9 2.816-2.951a52.662 52.662 0 0 1 3.369 0c1.603.051 2.815 1.387 2.815 2.951Zm-6.136-1.452a51.196 51.196 0 0 1 3.273 0C14.39 3.05 15 3.684 15 4.478v.113a49.488 49.488 0 0 0-6 0v-.113c0-.794.609-1.428 1.364-1.452Zm-3.536 4.569a.75.75 0 0 0-1.5 0v9.25a.75.75 0 0 0 1.5 0v-9.25Zm4.364 0a.75.75 0 0 0-1.5 0v9.25a.75.75 0 0 0 1.5 0v-9.25Zm4.364 0a.75.75 0 0 0-1.5 0v9.25a.75.75 0 0 0 1.5 0v-9.25Z" clipRule="evenodd" />
+  </svg>
+)
+
 export default function ModActionPanel({ status, progress, onMainClick, onUninstallClick, isPremium }) {
   const { currentUser } = useInstaller()
   
   const activePercent = status === 'downloading' ? Math.round(progress.download) : Math.round(progress.install)
   const isProcessing = ['downloading', 'installing', 'uninstalling', 'queued', 'queued_download', 'queued_uninstall'].includes(status)
   
-  const isInstalledOrSuccess = status === 'success' || status === 'installed'
-  const userHasAccess = !isPremium || (isPremium && currentUser?.isPremium)
-  const isLocked = !userHasAccess && !isInstalledOrSuccess && status === 'idle'
+  const isInstalled = status === 'success' || status === 'installed'
+  const userHasPremium = currentUser?.isPremium === true
+  const isLocked = isPremium && !userHasPremium && !isInstalled
+
+  const getStatusConfig = () => {
+    switch(status) {
+      case 'downloading': return { text: `Downloading ${activePercent}%`, color: 'text-blue-400', dot: 'bg-blue-400' }
+      case 'installing': return { text: `Installing ${activePercent}%`, color: 'text-indigo-400', dot: 'bg-indigo-400' }
+      case 'uninstalling': return { text: `Uninstalling ${activePercent}%`, color: 'text-rose-400', dot: 'bg-rose-400' }
+      case 'queued_download':
+      case 'queued': return { text: 'In Queue', color: 'text-amber-400', dot: 'bg-amber-400' }
+      case 'success':
+      case 'installed': return { text: 'Installed', color: 'text-emerald-400', dot: 'bg-emerald-400' }
+      case 'error': return { text: 'Installation Error', color: 'text-rose-500', dot: 'bg-rose-500' }
+      default: return null
+    }
+  }
+
+  const statusConfig = getStatusConfig()
 
   return (
-    <div className="p-8 bg-[#121214] border-t border-white/5">
-        {status !== 'idle' && (
-            <div className="mb-4 flex items-center justify-between bg-black/30 p-3 rounded-lg border border-white/5">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Status</span>
-                <div className="flex items-center gap-2">
-                <span className={`text-[10px] font-bold uppercase tracking-widest 
-                    ${status === 'queued_download' || status === 'queued_uninstall' ? 'text-zinc-500' : ''}
-                    ${status === 'downloading' ? 'text-blue-500' : ''}
-                    ${status === 'queued' ? 'text-amber-500' : ''}
-                    ${status === 'installing' ? 'text-indigo-500' : ''}
-                    ${status === 'uninstalling' ? 'text-rose-400' : ''}
-                    ${status === 'success' ? 'text-emerald-500' : ''}
-                `}>
-                    {status === 'queued_download' && 'Waiting to download...'}
-                    {status === 'queued_uninstall' && 'Waiting to uninstall...'}
-                    {status === 'downloading' && 'Downloading...'}
-                    {status === 'queued' && 'Waiting to install...'}
-                    {status === 'installing' && 'Installing...'}
-                    {status === 'uninstalling' && 'Uninstalling...'}
-                    {status === 'success' && 'Installed'}
-                </span>
+    <div className="p-6 bg-white/5 backdrop-blur-2xl border-t border-white/5 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
+        {statusConfig && (
+            <div className="mb-5 flex items-center justify-between">
+                <div className={`flex items-center gap-2 px-3 py-1 rounded-full bg-black/40 border border-white/5 ${statusConfig.color}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${statusConfig.dot}`} />
+                    <span className="text-[10px] font-black uppercase tracking-widest">{statusConfig.text}</span>
                 </div>
             </div>
         )}
 
-        {(status === 'downloading' || status === 'installing' || status === 'uninstalling') && (
-            <div className="mb-4">
+        {isProcessing && (
+            <div className="mb-6">
                 <ProgressBar 
                     downloadProgress={progress.download}
                     installProgress={progress.install}
                     status={status}
+                    className="h-1.5 rounded-full overflow-hidden bg-white/5"
                 />
             </div>
         )}
 
-        <div className="flex flex-col gap-3">
+        <div className="grid grid-cols-1 gap-3">
             <button 
                 onClick={!isLocked ? onMainClick : undefined}
-                disabled={isProcessing || isLocked}
+                disabled={isProcessing}
                 className={`
-                    w-full h-16 rounded-xl font-black text-sm uppercase tracking-[0.2em] transition-all duration-300 shadow-xl relative overflow-hidden group
+                    group relative h-14 w-full rounded-xl flex items-center justify-center gap-3 transition-all duration-500 overflow-hidden
                     ${isLocked 
-                        ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20 cursor-not-allowed opacity-80' 
-                        : status === 'idle' 
-                            ? 'bg-white text-black hover:bg-indigo-600 hover:text-white hover:shadow-[0_0_40px_rgba(79,70,229,0.3)]'
-                            : ''
+                        ? 'bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 cursor-not-allowed' 
+                        : isInstalled 
+                            ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500 hover:text-white'
+                            : isProcessing 
+                                ? 'bg-white/5 border border-white/5 text-white/20 cursor-wait'
+                                : 'bg-white text-black hover:bg-indigo-600 hover:text-white shadow-lg hover:shadow-indigo-500/20'
                     }
-                    ${isProcessing && 'bg-zinc-800 text-zinc-500 cursor-wait border border-white/5'}
-                    ${status === 'success' && 'bg-emerald-500 text-black hover:bg-emerald-400 cursor-pointer hover:shadow-[0_0_40px_rgba(16,185,129,0.4)]'}
-                    ${status === 'error' && 'bg-rose-600 text-white hover:bg-rose-500'}
                 `}
             >
-                <span className="relative z-10 flex items-center justify-center gap-3">
-                    {status === 'idle' && (
-                    <>
-                            {isLocked ? (
-                                <>
-                                    PREMIUM SUBSCRIPTION REQUIRED
-                                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path fillRule="evenodd" d="M12 1.5a5.25 5.25 0 0 0-5.25 5.25v3a3 3 0 0 0-3 3v6.75a3 3 0 0 0 3 3h10.5a3 3 0 0 0 3-3v-6.75a3 3 0 0 0-3-3v-3c0-2.9-2.35-5.25-5.25-5.25Zm3.75 8.25v-3a3.75 3.75 0 1 0-7.5 0v3h7.5Z" clipRule="evenodd" /></svg>
-                                </>
-                            ) : (
-                                <>
-                                    INSTALL MOD
-                                    <svg className="w-5 h-5 transition-transform group-hover:translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-                                </>
-                            )}
-                    </>
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
+                
+                <span className="relative z-10 flex items-center gap-2.5 text-xs font-black uppercase tracking-[0.15em]">
+                    {isLocked ? (
+                        <>
+                            <CrownIcon className="w-4 h-4" />
+                            Premium Subscription Required
+                        </>
+                    ) : isInstalled ? (
+                        <>
+                            <RefreshIcon className="w-4 h-4" />
+                            Reinstall Modification
+                        </>
+                    ) : isProcessing ? (
+                        "Processing..."
+                    ) : (
+                        <>
+                            <DownloadIcon className="w-4 h-4" />
+                            {isPremium && <CrownIcon className="w-3.5 h-3.5 text-indigo-400 group-hover:text-white" />}
+                            Install Mod
+                        </>
                     )}
-                    
-                    {status === 'queued_download' && 'IN DOWNLOAD QUEUE'}
-                    {status === 'downloading' && `DOWNLOADING... ${activePercent}%`}
-                    {status === 'queued' && 'WAITING TO INSTALL'}
-                    {status === 'installing' && `INSTALLING... ${activePercent}%`}
-                    
-                    {status === 'queued_uninstall' && 'IN UNINSTALL QUEUE'}
-                    {status === 'uninstalling' && `UNINSTALLING... ${activePercent}%`}
-                    
-                    {status === 'success' && (
-                    <>
-                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                            </svg>
-                            REINSTALL MOD
-                    </>
-                    )}
-
-                    {status === 'error' && 'RETRY INSTALLATION'}
                 </span>
             </button>
 
-            {status === 'success' && (
+            {isInstalled && !isProcessing && (
                 <button 
                     onClick={onUninstallClick}
-                    disabled={isProcessing}
-                    className="w-full h-12 rounded-xl font-bold text-xs uppercase tracking-[0.2em] text-rose-500 border border-rose-500/20 hover:bg-rose-500 hover:text-white hover:shadow-[0_0_20px_rgba(244,63,94,0.4)] transition-all duration-300 flex items-center justify-center gap-2 group/del"
+                    className="h-12 w-full rounded-xl flex items-center justify-center gap-2.5 text-[11px] font-bold uppercase tracking-widest text-rose-500/60 border border-rose-500/10 hover:bg-rose-500 hover:text-white hover:border-transparent transition-all duration-300 group"
                 >
-                    <svg className="w-4 h-4 transition-transform group-hover/del:scale-110" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                    UNINSTALL MOD
+                    <TrashIcon className="w-3.5 h-3.5 opacity-60 group-hover:opacity-100 transition-opacity" />
+                    Uninstall Mod
                 </button>
             )}
         </div>

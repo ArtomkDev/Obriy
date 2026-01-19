@@ -83,7 +83,7 @@ export default function SettingsPage() {
   const userPlanTitle = currentUser?.isPremium ? 'Premium Plan' : 'Basic Plan'
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-[#09090b] animate-fade-in relative">
+    <div className="flex-1 flex flex-col min-h-0 animate-fade-in relative">
       <div className="p-8 pb-4">
         <h1 className="text-2xl font-black uppercase tracking-tighter text-white">Налаштування</h1>
         <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-[0.2em] mt-1">Керування системою та профілем</p>
