@@ -50,9 +50,6 @@ export default function ModDetailsPage() {
     return () => { isMounted = false }
   }, [id, refreshInstalledMods])
 
-  const currentStatus = getModStatus(id)
-  const currentProgress = getModProgress(id)
-
   // Використовуємо id з параметрів URL, приведений до рядка
   const modIdKey = id?.toString()
   const status = getModStatus(modIdKey)
@@ -106,6 +103,7 @@ export default function ModDetailsPage() {
           progress={progress}
           onMainClick={handleMainAction}
           onUninstallClick={() => startUninstall(mod)}
+          isPremium={mod.is_premium} // ВИПРАВЛЕНО: передаємо правильне поле
         />
       </div>
     </div>

@@ -6,7 +6,7 @@ import ModsPage from './pages/ModsPage'
 import SettingsPage from './pages/SettingsPage'
 import ModDetailsPage from './pages/ModDetailsPage'
 import LoaderScreen from './components/LoaderScreen'
-import { InstallerProvider } from './context/InstallerContext'
+import { InstallerProvider, useInstaller } from './context/InstallerContext'
 
 function MainLayout() {
   return (
@@ -28,21 +28,51 @@ function MainLayout() {
   )
 }
 
-function App() {
-  const [applicationCurrentHash, setApplicationCurrentHash] = useState(window.location.hash)
+function ApplicationInterfaceSelector() {
+  const { gamePath, currentUser, isPathLoaded } = useInstaller()
+  const [applicationHash, setApplicationHash] = useState(window.location.hash)
 
   useEffect(() => {
-    const handleHashSync = () => setApplicationCurrentHash(window.location.hash)
+    const handleHashSync = () => setApplicationHash(window.location.hash)
     window.addEventListener('hashchange', handleHashSync)
     return () => window.removeEventListener('hashchange', handleHashSync)
   }, [])
 
-  // Якщо хеш #loader, показуємо наш новий "розумний" екран завантаження
-  const TargetInterface = applicationCurrentHash === '#loader' ? LoaderScreen : MainLayout
+  useEffect(() => {
+    if (!isPathLoaded) return
 
+    const isAuthorized = !!gamePath && !!currentUser?.id
+    const isLoaderActive = applicationHash === '#loader' || !isAuthorized
+
+    if (isLoaderActive) {
+      if (window.api && window.api.invoke) {
+        window.api.invoke('window:resize-to-loader')
+      }
+    } else {
+      if (window.api && window.api.invoke) {
+        window.api.invoke('window:resize-to-main')
+      }
+    }
+  }, [gamePath, currentUser, applicationHash, isPathLoaded])
+
+  if (!isPathLoaded) {
+    return null
+  }
+
+  const isUnauthorized = !gamePath || !currentUser?.id
+  const showLoader = applicationHash === '#loader' || isUnauthorized
+
+  if (showLoader) {
+    return <LoaderScreen />
+  }
+
+  return <MainLayout />
+}
+
+function App() {
   return (
     <InstallerProvider>
-      <TargetInterface />
+      <ApplicationInterfaceSelector />
     </InstallerProvider>
   )
 }

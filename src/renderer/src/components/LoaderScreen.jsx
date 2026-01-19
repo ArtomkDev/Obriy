@@ -47,37 +47,20 @@ function KernelInitializationDisplay({ executionError }) {
 }
 
 function LoaderScreen() {
-  const { isSetupComplete, isCheckingUpdate } = useInstaller()
-  const [user, setUser] = useState(null)
-  const [isAuthLoading, setIsAuthLoading] = useState(true)
+  const { 
+    gamePath, 
+    currentUser, 
+    isPathLoaded, 
+    isCheckingUpdate, 
+    setCurrentUser 
+  } = useInstaller()
+  
   const [backendInitializationError, setBackendInitializationError] = useState(null)
 
-  // Перевірка авторизації при монтуванні
   useEffect(() => {
-    const checkAuth = async () => {
-      try {
-        if (window.api) {
-          const savedUser = await window.api.getStoreValue('auth_user')
-          if (savedUser && savedUser.id) {
-            setUser(savedUser)
-          } else {
-            setUser(null)
-          }
-        }
-      } catch (err) {
-        setUser(null)
-      } finally {
-        setIsAuthLoading(false)
-      }
-    }
-    checkAuth()
-  }, [])
+    const isReadyForBackendStart = gamePath && currentUser?.id && !isCheckingUpdate && isPathLoaded
 
-  // Запуск ядра тільки коли все готово (Setup + Auth)
-  useEffect(() => {
-    const canBoot = isSetupComplete && !isCheckingUpdate && !isAuthLoading && user?.id
-
-    if (canBoot) {
+    if (isReadyForBackendStart) {
       const performSystemBoot = async () => {
         try {
           await window.api.startBackend()
@@ -88,20 +71,17 @@ function LoaderScreen() {
       }
       performSystemBoot()
     }
-  }, [isSetupComplete, isCheckingUpdate, isAuthLoading, user])
+  }, [gamePath, currentUser, isCheckingUpdate, isPathLoaded])
 
   const handleAuthComplete = (userData) => {
     if (userData && userData.id) {
-      setUser(userData)
+      setCurrentUser(userData)
       if (window.api) {
         window.api.setStoreValue('auth_user', userData)
       }
     }
   }
 
-  // --- ЛОГІКА БЛОКУВАННЯ (ПОРЯДОК ВАЖЛИВИЙ) ---
-  
-  // 1. Оновлення
   if (isCheckingUpdate) {
     return (
       <div className="h-screen w-full bg-zinc-950 overflow-hidden">
@@ -110,8 +90,15 @@ function LoaderScreen() {
     )
   }
 
-  // 2. Налаштування шляху (якщо немає config.json)
-  if (!isSetupComplete) {
+  if (!isPathLoaded) {
+    return (
+      <div className="h-screen w-full flex items-center justify-center bg-gray-900 text-white/20 animate-pulse text-[10px] font-black uppercase tracking-[0.3em] overflow-hidden">
+        Завантаження конфігурації...
+      </div>
+    )
+  }
+
+  if (!gamePath) {
     return (
       <div className="h-screen w-full bg-zinc-950 overflow-hidden">
         <SetupScreen />
@@ -119,17 +106,7 @@ function LoaderScreen() {
     )
   }
 
-  // 3. Завантаження статусу авторизації
-  if (isAuthLoading) {
-    return (
-      <div className="h-screen w-full flex items-center justify-center bg-gray-900 text-white/20 animate-pulse text-xs uppercase tracking-widest overflow-hidden">
-        Перевірка сесії...
-      </div>
-    )
-  }
-
-  // 4. АВТОРИЗАЦІЯ (Якщо дійшли сюди, значить Setup є, але User немає)
-  if (!user || !user.id) {
+  if (!currentUser || !currentUser.id) {
     return (
       <div className="h-screen w-full bg-zinc-950 overflow-hidden">
         <RegistrationScreen onVerificationComplete={handleAuthComplete} />
@@ -137,7 +114,6 @@ function LoaderScreen() {
     )
   }
 
-  // 5. Запуск Ядра (тільки якщо user.id існує)
   return (
     <div className="h-screen w-full bg-zinc-950 overflow-hidden">
       <KernelInitializationDisplay executionError={backendInitializationError} />

@@ -10,17 +10,24 @@ export default function ModsPage() {
     try {
       const data = await window.api.getModCatalog()
       
-      // --- ВИПРАВЛЕННЯ ТУТ ---
-      // Мапимо дані з формату API (name, image) у формат UI (title, thumbnail)
-      const mappedMods = data.map(mod => ({
-        ...mod,
-        title: mod.name || mod.title || 'Untitled', // Якщо немає title, беремо name
-        thumbnail: mod.image || mod.thumbnail || '', // Якщо немає thumbnail, беремо image
-      }))
+      const mappedMods = data.map(mod => {
+        // Тепер бекенд надсилає is_premium, тому ми просто використовуємо його
+        return {
+          ...mod,
+          id: mod.id.toString(),
+          name: mod.name || 'Untitled',
+          // Додаткова перевірка не завадить, але основна робота зроблена на бекенді
+          is_premium: mod.is_premium === true, 
+          category: mod.category || 'Other',
+          tags: mod.tags || [],
+          version: mod.version || '1.0.0',
+          image: mod.image || '',
+        }
+      })
       
       setModsList(mappedMods)
     } catch (err) {
-      console.error("Failed to load catalog:", err)
+      console.error(err)
     } finally {
       setIsLoading(false)
     }

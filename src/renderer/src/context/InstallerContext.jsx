@@ -21,32 +21,45 @@ export function InstallerProvider({ children }) {
   // Завантаження початкових налаштувань та даних користувача
   useEffect(() => {
     if (window.api) {
-      // Завантажуємо шлях до гри
-      window.api.getStoreValue('gta_path')
-        .then((savedPath) => {
-          if (savedPath) setGamePathState(savedPath)
-        })
-        .catch(err => console.error("Failed to load game path:", err))
-        .finally(() => setIsPathLoaded(true))
+      const initializeInstallerSession = async () => {
+        try {
+          const storedGamePath = await window.api.getStoreValue('gta_path');
+          if (storedGamePath) {
+            setGamePathState(storedGamePath);
+          }
 
-      // НОВЕ: Завантажуємо дані користувача зі сховища
-      window.api.getStoreValue('auth_user')
-        .then((savedUser) => {
-          if (savedUser) setCurrentUser(savedUser)
-        })
+          const storedUserData = await window.api.getStoreValue('auth_user');
+          setCurrentUser(storedUserData || null);
+        } catch (sessionInitializationError) {
+          console.error(sessionInitializationError);
+        } finally {
+          setIsPathLoaded(true);
+        }
+      };
 
-      const removeUpdateListener = window.api.onUpdateStatus((data) => {
-        setUpdateStatus(data.status)
-      })
+      initializeInstallerSession();
+
+      const removeUpdateStatusListener = window.api.onUpdateStatus((statusData) => {
+        setUpdateStatus(statusData.status);
+      });
+
+      const removeAuthSyncListener = window.api.onAuthSync ? window.api.onAuthSync((syncedProfileData) => {
+        setCurrentUser(syncedProfileData || null);
+      }) : null;
 
       return () => {
-        if (removeUpdateListener) removeUpdateListener()
-      }
+        if (removeUpdateStatusListener) {
+          removeUpdateStatusListener();
+        }
+        if (removeAuthSyncListener) {
+          removeAuthSyncListener();
+        }
+      };
     } else {
-      setIsPathLoaded(true)
-      setUpdateStatus('not-available')
+      setIsPathLoaded(true);
+      setUpdateStatus('not-available');
     }
-  }, [])
+  }, []);
 
   // Синхронізація встановлених модів
   useEffect(() => {
@@ -121,6 +134,8 @@ export function InstallerProvider({ children }) {
     }
   }, [isProcessing, processQueue])
 
+  
+
   const resolveInstructions = (mod) => {
     if (mod.instructionSet && mod.instructionSet.length > 0) {
       return mod.instructionSet
@@ -150,64 +165,79 @@ export function InstallerProvider({ children }) {
     }, 500)
   }
 
-  const runEngineTask = async (task) => {
-    setIsProcessing(true)
-    const taskId = task.id
-    const isUninstall = task.actionType === 'uninstall'
+  const runEngineTask = async (taskToProcess) => {
+    setIsProcessing(true);
+    const currentTaskId = taskToProcess.id;
+    const isUninstallOperation = taskToProcess.actionType === 'uninstall';
 
     if (!window.api) {
-      setTasks(prev => ({
-        ...prev,
-        [taskId]: { ...prev[taskId], status: 'error', error: "API not available" }
-      }))
-      setProcessQueue(prev => prev.filter(m => m.id !== task.id))
-      setIsProcessing(false)
-      return
+      setTasks((previousTasks) => ({
+        ...previousTasks,
+        [currentTaskId]: {
+          ...previousTasks[currentTaskId],
+          status: 'error',
+          error: 'API not available'
+        }
+      }));
+      setProcessQueue((previousQueue) => previousQueue.filter((queuedItem) => queuedItem.id !== taskToProcess.id));
+      setIsProcessing(false);
+      return;
     }
 
-    setTasks(prev => ({
-      ...prev,
-      [taskId]: { 
-        ...prev[taskId], 
-        status: isUninstall ? 'uninstalling' : 'installing', 
-        installProgress: 0 
+    setTasks((previousTasks) => ({
+      ...previousTasks,
+      [currentTaskId]: {
+        ...previousTasks[currentTaskId],
+        status: isUninstallOperation ? 'uninstalling' : 'installing',
+        installProgress: 0
       }
-    }))
+    }));
 
     try {
-      let result
-      if (isUninstall) {
-        const currentPath = gamePath
-        if (!currentPath) throw new Error("Game path not selected")
-        result = await window.api.uninstallMod(currentPath, task.instructions, task.id)
+      let operationResult;
+
+      if (isUninstallOperation) {
+        if (!gamePath) {
+          throw new Error('Game path not selected');
+        }
+        operationResult = await window.api.uninstallMod(gamePath, taskToProcess.instructions, taskToProcess.id);
       } else {
-        result = await window.api.installMod(task.id)
+        operationResult = await window.api.installMod(taskToProcess.id);
       }
-      
-      if (result && (result.success === true || result.status === 'success')) {
-        setTasks(prev => {
-          const newTasks = { ...prev }
-          delete newTasks[taskId] 
-          return newTasks
-        })
-        
+
+      if (operationResult && (operationResult.success === true || operationResult.status === 'success')) {
+        setTasks((previousTasks) => {
+          const updatedTasksState = { ...previousTasks };
+          delete updatedTasksState[currentTaskId];
+          return updatedTasksState;
+        });
+
         if (gamePath) {
-             window.api.invoke('get-active-mods', gamePath).then(setInstalledModIds)
+          const updatedActiveMods = await window.api.invoke('get-active-mods', gamePath);
+          setInstalledModIds(updatedActiveMods);
         }
       } else {
-        throw new Error(result?.error || 'Operation failed')
+        throw new Error(operationResult?.error || 'Operation failed');
       }
-    } catch (err) {
-      console.error(err)
-      setTasks(prev => ({
-        ...prev,
-        [taskId]: { ...prev[taskId], status: 'error', error: err.message }
+    } catch (taskExecutionError) {
+      if (taskExecutionError.message.includes('Premium') || taskExecutionError.message.includes('Security')) {
+        const freshUserData = await window.api.getStoreValue('auth_user')
+        setCurrentUser(freshUserData || null)
+      }
+    
+      setTasks((previousTasks) => ({
+        ...previousTasks,
+        [currentTaskId]: {
+          ...previousTasks[currentTaskId],
+          status: 'error',
+          error: taskExecutionError.message
+        }
       }))
     } finally {
-      setProcessQueue(prev => prev.filter(m => m.id !== task.id))
-      setIsProcessing(false)
+      setProcessQueue((previousQueue) => previousQueue.filter((queuedItem) => queuedItem.id !== taskToProcess.id));
+      setIsProcessing(false);
     }
-  }
+  };
 
   // --- ВИПРАВЛЕНО: Додана перевірка Premium ---
   const startInstall = useCallback((mod) => {
@@ -306,7 +336,7 @@ export function InstallerProvider({ children }) {
 
   const isModInstalled = (modId) => installedModIds.includes(modId)
 
-  const isSetupComplete = isPathLoaded && !!gamePath
+  const isSetupComplete = isPathLoaded && !!gamePath && !!currentUser
   const isCheckingUpdate = ['checking', 'available', 'downloading'].includes(updateStatus)
 
   return (

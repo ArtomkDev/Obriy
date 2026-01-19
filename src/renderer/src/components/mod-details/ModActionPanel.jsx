@@ -1,9 +1,16 @@
 import React from 'react'
 import ProgressBar from '../ProgressBar'
+import { useInstaller } from '../../context/InstallerContext'
 
-export default function ModActionPanel({ status, progress, onMainClick, onUninstallClick }) {
+export default function ModActionPanel({ status, progress, onMainClick, onUninstallClick, isPremium }) {
+  const { currentUser } = useInstaller()
+  
   const activePercent = status === 'downloading' ? Math.round(progress.download) : Math.round(progress.install)
   const isProcessing = ['downloading', 'installing', 'uninstalling', 'queued', 'queued_download', 'queued_uninstall'].includes(status)
+  
+  const isInstalledOrSuccess = status === 'success' || status === 'installed'
+  const userHasAccess = !isPremium || (isPremium && currentUser?.isPremium)
+  const isLocked = !userHasAccess && !isInstalledOrSuccess && status === 'idle'
 
   return (
     <div className="p-8 bg-[#121214] border-t border-white/5">
@@ -43,11 +50,16 @@ export default function ModActionPanel({ status, progress, onMainClick, onUninst
 
         <div className="flex flex-col gap-3">
             <button 
-                onClick={onMainClick}
-                disabled={isProcessing}
+                onClick={!isLocked ? onMainClick : undefined}
+                disabled={isProcessing || isLocked}
                 className={`
                     w-full h-16 rounded-xl font-black text-sm uppercase tracking-[0.2em] transition-all duration-300 shadow-xl relative overflow-hidden group
-                    ${status === 'idle' && 'bg-white text-black hover:bg-indigo-600 hover:text-white hover:shadow-[0_0_40px_rgba(79,70,229,0.3)]'}
+                    ${isLocked 
+                        ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20 cursor-not-allowed opacity-80' 
+                        : status === 'idle' 
+                            ? 'bg-white text-black hover:bg-indigo-600 hover:text-white hover:shadow-[0_0_40px_rgba(79,70,229,0.3)]'
+                            : ''
+                    }
                     ${isProcessing && 'bg-zinc-800 text-zinc-500 cursor-wait border border-white/5'}
                     ${status === 'success' && 'bg-emerald-500 text-black hover:bg-emerald-400 cursor-pointer hover:shadow-[0_0_40px_rgba(16,185,129,0.4)]'}
                     ${status === 'error' && 'bg-rose-600 text-white hover:bg-rose-500'}
@@ -56,8 +68,17 @@ export default function ModActionPanel({ status, progress, onMainClick, onUninst
                 <span className="relative z-10 flex items-center justify-center gap-3">
                     {status === 'idle' && (
                     <>
-                            INSTALL MOD
-                            <svg className="w-5 h-5 transition-transform group-hover:translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                            {isLocked ? (
+                                <>
+                                    PREMIUM SUBSCRIPTION REQUIRED
+                                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path fillRule="evenodd" d="M12 1.5a5.25 5.25 0 0 0-5.25 5.25v3a3 3 0 0 0-3 3v6.75a3 3 0 0 0 3 3h10.5a3 3 0 0 0 3-3v-6.75a3 3 0 0 0-3-3v-3c0-2.9-2.35-5.25-5.25-5.25Zm3.75 8.25v-3a3.75 3.75 0 1 0-7.5 0v3h7.5Z" clipRule="evenodd" /></svg>
+                                </>
+                            ) : (
+                                <>
+                                    INSTALL MOD
+                                    <svg className="w-5 h-5 transition-transform group-hover:translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                                </>
+                            )}
                     </>
                     )}
                     

@@ -56,14 +56,17 @@ export function startRegistryWatcher(mainWindow, gamePath) {
 
 export async function getMarketplaceCatalog() {
   const rawData = await CloudRepository.getCatalog()
+  
+  // ВИПРАВЛЕНО: Правильний маппінг поля Premium
   return rawData.map(item => ({
     id: item.id,
-    name: item.n,
-    author: item.a,
-    category: item.c,
-    version: item.v,
+    name: item.n || item.name,
+    author: item.a || item.author,
+    category: item.c || item.category,
+    version: item.v || item.version,
     image: `https://obriy-auth.artomk-dev.workers.dev/mods/${item.id}/assets/1.webp`,
-    is_premium: item.is_premium
+    // Перевіряємо 'p' (коротке ім'я з сервера) АБО 'is_premium'
+    is_premium: (item.p === true || item.p === 1 || item.is_premium === true)
   }))
 }
 
@@ -73,18 +76,16 @@ export async function getModDetails(modId) {
     
     // Скануємо слоти медіа (від 1 до 3)
     for (let i = 1; i <= 3; i++) {
-        // Спочатку перевіряємо, чи є відео в цьому слоті
         const hasVideo = await CloudRepository.checkResourceExists(`${modId}/assets/${i}.mp4`)
         if (hasVideo) {
             media.push({ 
                 type: 'video', 
                 source: `https://obriy-auth.artomk-dev.workers.dev/mods/${modId}/assets/${i}.mp4`,
-                thumbnail: `https://obriy-auth.artomk-dev.workers.dev/mods/${modId}/assets/1.webp` // Прев'ю для відео
+                thumbnail: `https://obriy-auth.artomk-dev.workers.dev/mods/${modId}/assets/1.webp`
             })
-            continue // Якщо є відео, переходимо до наступного слоту
+            continue 
         } 
 
-        // Якщо відео немає, ЯВНО перевіряємо, чи є картинка
         const hasImage = await CloudRepository.checkResourceExists(`${modId}/assets/${i}.webp`)
         if (hasImage) {
             media.push({ 
@@ -94,14 +95,17 @@ export async function getModDetails(modId) {
         }
     }
 
-    // Фоллбек: якщо нічого не знайдено, пробуємо хоча б першу картинку
     if (media.length === 0) {
          media.push({ type: 'image', source: `https://obriy-auth.artomk-dev.workers.dev/mods/${modId}/assets/1.webp` })
     }
 
+    // Також нормалізуємо premium статус для деталей моду
+    const isPremium = manifest.p === true || manifest.p === 1 || manifest.is_premium === true
+
     return {
         ...manifest,
         id: modId,
+        is_premium: isPremium, // Явно передаємо статус
         media
     }
 }

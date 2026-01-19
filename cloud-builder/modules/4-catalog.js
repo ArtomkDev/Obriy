@@ -2,48 +2,52 @@ const fs = require('fs-extra');
 const path = require('path');
 const config = require('../config');
 const colors = require('colors');
+const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
+require('dotenv').config();
 
-// ==============================================================================
-// 🔴 КРОК 1: ВСТАВ СЮДИ СВОЄ ПУБЛІЧНЕ ПОСИЛАННЯ R2 (з вкладки Settings -> Public Access)
-// Воно має виглядати приблизно так: 'https://pub-xxxxxxxxxxxx.r2.dev/v1/catalog'
-// ==============================================================================
-const remoteCatalogBaseUrl = 'https://pub-af821b9413f74a56ad45f675b24a2fac.r2.dev/v1/catalog'; 
-
-async function fetchRemoteCatalog(filename) {
-    const targetUrl = `${remoteCatalogBaseUrl}/${filename}`;
-    console.log(`[Catalog] 🌐 Checking remote: ${targetUrl}`.gray);
-    
-    // Перевірка на "заглушку"
-    if (targetUrl.includes('your-project-url')) {
-        console.error(`\n❌ ERROR: You must update 'remoteCatalogBaseUrl' in modules/4-catalog.js!`.red.bold);
-        console.error(`The script cannot see existing mods without a real URL.\n`.red);
-        process.exit(1);
+// Налаштування S3 клієнта
+const s3Client = new S3Client({
+    region: 'auto',
+    endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY_ID,
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY
     }
+});
+
+const R2_BUCKET = process.env.R2_BUCKET_NAME;
+
+// Функція читання прямо з S3
+async function fetchRemoteCatalogFromS3(filename) {
+    const key = `v1/catalog/${filename}`;
+    console.log(`[Catalog] ☁️  Reading from S3: ${key}`.gray);
 
     try {
-        const response = await fetch(targetUrl);
+        const command = new GetObjectCommand({
+            Bucket: R2_BUCKET,
+            Key: key
+        });
+
+        const response = await s3Client.send(command);
+        const str = await response.Body.transformToString();
+        const data = JSON.parse(str);
         
-        if (response.ok) {
-            const data = await response.json();
-            console.log(`   -> ✅ Found existing data: ${data.length} items`.green);
-            return data;
-        } else if (response.status === 404) {
-             console.log(`   -> ⚠️ File not found (404). Assuming new catalog.`.yellow);
-             return [];
-        } else {
-            throw new Error(`HTTP Error ${response.status}`);
-        }
+        console.log(`   -> ✅ Loaded existing data: ${data.length} items`.green);
+        return data;
+
     } catch (error) {
-        console.error(`\n❌ CRITICAL ERROR: Could not fetch remote catalog!`.red.bold);
+        if (error.name === 'NoSuchKey') {
+            console.log(`   -> ⚠️ File not found on S3. Assuming new catalog.`.yellow);
+            return [];
+        }
+        console.error(`\n❌ CRITICAL S3 ERROR: Could not fetch catalog!`.red.bold);
         console.error(`   Reason: ${error.message}`.red);
-        console.error(`   URL: ${targetUrl}`.red);
-        console.error(`\n⛔ STOPPING to prevent data loss. Check your internet or URL.\n`.red);
-        process.exit(1); // Зупиняємо білд, щоб не затерти файл
+        process.exit(1);
     }
 }
 
 module.exports = async function updateCatalog(newModManifest) {
-    console.log(`[Catalog] Syncing with remote cloud...`.cyan);
+    console.log(`[Catalog] Syncing with remote cloud (Direct S3)...`.cyan);
 
     const catalogDir = config.paths.catalog;
     const categoriesDir = path.join(catalogDir, 'categories');
@@ -53,6 +57,7 @@ module.exports = async function updateCatalog(newModManifest) {
     await fs.ensureDir(catalogDir);
     await fs.ensureDir(categoriesDir);
 
+    // ✅ ДОДАНО ПОЛЕ 'p' (Premium)
     const catalogItem = {
         id: newModManifest.id,
         n: newModManifest.name,
@@ -60,14 +65,13 @@ module.exports = async function updateCatalog(newModManifest) {
         c: newModManifest.category,
         t: newModManifest.tags,
         v: newModManifest.version,
+        p: newModManifest.is_premium || false,
         d: Date.now()
     };
 
     // 1. ОНОВЛЕННЯ ГОЛОВНОГО ІНДЕКСУ
-    // Тепер, якщо fetch впаде, скрипт ЗУПИНИТЬСЯ, а не поверне пустий масив.
-    let mainCatalog = await fetchRemoteCatalog(indexFileName);
+    let mainCatalog = await fetchRemoteCatalogFromS3(indexFileName);
     
-    // Видаляємо стару версію (якщо є) і додаємо нову
     mainCatalog = mainCatalog.filter(item => item.id !== newModManifest.id);
     mainCatalog.unshift(catalogItem);
     
@@ -75,7 +79,7 @@ module.exports = async function updateCatalog(newModManifest) {
     await fs.writeJson(localIndexPath, mainCatalog);
 
     // 2. ОНОВЛЕННЯ КАТЕГОРІЇ
-    let categoryCatalog = await fetchRemoteCatalog(categoryFileName);
+    let categoryCatalog = await fetchRemoteCatalogFromS3(categoryFileName);
 
     categoryCatalog = categoryCatalog.filter(item => item.id !== newModManifest.id);
     categoryCatalog.unshift(catalogItem);
