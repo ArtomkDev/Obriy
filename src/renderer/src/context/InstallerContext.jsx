@@ -23,18 +23,20 @@ export function InstallerProvider({ children }) {
     if (window.api) {
       const initializeInstallerSession = async () => {
         try {
-          // 1. Завантажуємо шлях до гри зі сховища
           const storedGamePath = await window.api.getStoreValue('gta_path');
-          // Якщо шляху немає або він невалідний, ставимо порожній рядок
           setGamePathState(storedGamePath || '');
+        
+          const verifiedUser = await window.api.invoke('auth:verify-subscription');
 
-          // 2. Завантажуємо дані користувача зі сховища
-          const storedUserData = await window.api.getStoreValue('auth_user');
-          setCurrentUser(storedUserData || null);
+          if (verifiedUser) {
+            setCurrentUser(verifiedUser);
+          } else {
+            const localUser = await window.api.getStoreValue('auth_user');
+            setCurrentUser(localUser || null);
+          }
         } catch (sessionError) {
-          console.error("Помилка ініціалізації сесії:", sessionError);
+          console.error(sessionError);
         } finally {
-          // 3. Тільки після отримання обох значень позначаємо, що завантаження завершено
           setIsPathLoaded(true);
         }
       };
@@ -231,7 +233,7 @@ export function InstallerProvider({ children }) {
       const errorMessage = taskExecutionError.message;
 
       if (errorMessage.includes('Premium') || errorMessage.includes('Security')) {
-        const freshUserData = await window.api.getStoreValue('auth_user');
+        const freshUserData = await window.api.invoke('auth:verify-subscription');
         setCurrentUser(freshUserData || null);
       }
 
@@ -332,28 +334,42 @@ export function InstallerProvider({ children }) {
   const retryTask = useCallback((mod) => startInstall(mod), [startInstall])
   const toggleManager = () => setManagerOpen(!isManagerOpen)
   
-  const getModStatus = (modId) => {
-    const id = modId?.toString()
-    if (tasks[id]) return tasks[id].status
-    const isInstalled = installedModIds.some(installedId => installedId.toString() === id)
-    if (isInstalled) return 'success'
-    return 'idle'
-  }
+// Знайти функцію getModStatus всередині useModInstaller.js і замінити на цю:
+  const getModStatus = useCallback((modIdentifier) => {
+    const stringId = modIdentifier?.toString()
+    
+    if (tasks[stringId]) {
+      return tasks[stringId].status
+    }
+
+    const isCurrentlyInstalled = installedModIds.some(
+      (installedId) => installedId.toString() === stringId
+    )
+    
+    return isCurrentlyInstalled ? 'success' : 'idle'
+  }, [tasks, installedModIds])
+
+  const getModProgress = useCallback((modIdentifier) => {
+    const stringId = modIdentifier?.toString()
+    const activeTask = tasks[stringId]
+    
+    return activeTask 
+      ? { download: activeTask.downloadProgress, install: activeTask.installProgress } 
+      : { download: 0, install: 0 }
+  }, [tasks])
 
   const refreshInstalledMods = useCallback(async () => {
     if (!window.api || !gamePath) return
+    
     try {
-      const mods = await window.api.invoke('get-active-mods', gamePath)
-      if (Array.isArray(mods)) setInstalledModIds(mods)
-    } catch (err) {
-      console.error("Manual refresh failed:", err)
+      const activeMods = await window.api.invoke('get-active-mods', gamePath)
+      if (Array.isArray(activeMods)) {
+        setInstalledModIds(activeMods)
+      }
+    } catch (refreshError) {
+      console.error(refreshError)
     }
   }, [gamePath])
-  
-  const getModProgress = (modId) => {
-    const task = tasks[modId]
-    return task ? { download: task.downloadProgress, install: task.installProgress } : { download: 0, install: 0 }
-  }
 
   const isModInstalled = (modId) => installedModIds.includes(modId)
 

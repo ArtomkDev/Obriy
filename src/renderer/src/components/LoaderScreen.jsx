@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Loader2, AlertTriangle } from 'lucide-react'
+import { Loader2, AlertTriangle, ShieldCheck } from 'lucide-react'
 import { useInstaller } from '../context/InstallerContext'
 import SetupScreen from './loader-screen/SetupScreen'
 import UpdaterScreen from './loader-screen/UpdaterScreen'
@@ -8,7 +8,7 @@ import { RegistrationScreen } from './loader-screen/RegistrationScreen'
 
 function KernelInitializationDisplay({ executionError }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center bg-gray-900 text-white relative overflow-hidden">
+    <div className="flex h-full flex-col items-center justify-center bg-[#09090b] text-white relative overflow-hidden">
       <div className="flex flex-col items-center justify-center space-y-8 z-10">
         <div className="relative flex items-center justify-center">
           {executionError ? (
@@ -56,66 +56,110 @@ function LoaderScreen() {
   } = useInstaller()
   
   const [backendInitializationError, setBackendInitializationError] = useState(null)
+  const [syncStatus, setSyncStatus] = useState('pending')
 
   useEffect(() => {
-    const isReadyForBackendStart = gamePath && currentUser?.id && !isCheckingUpdate && isPathLoaded
+    const synchronizeAccountState = async () => {
+      if (!isPathLoaded || isCheckingUpdate) return
 
-    if (isReadyForBackendStart) {
+      const localUser = await window.api.invoke('store:get', 'auth_user')
+      
+      if (!localUser?.id) {
+        setSyncStatus('unauthorized')
+        return
+      }
+
+      setSyncStatus('verifying')
+      
+      try {
+        const freshProfile = await window.api.invoke('auth:verify-subscription')
+        
+        if (freshProfile) {
+          setCurrentUser(freshProfile)
+          setSyncStatus('ready')
+        } else {
+          setCurrentUser(null)
+          setSyncStatus('unauthorized')
+        }
+      } catch (error) {
+        console.error("Subscription sync failed:", error)
+        setSyncStatus('ready')
+      }
+    }
+
+    synchronizeAccountState()
+  }, [isPathLoaded, isCheckingUpdate])
+
+  useEffect(() => {
+    const isSystemReady = 
+      gamePath && 
+      currentUser?.id && 
+      !isCheckingUpdate && 
+      isPathLoaded && 
+      syncStatus === 'ready'
+
+    if (isSystemReady) {
       const performSystemBoot = async () => {
         try {
-          await window.api.startBackend()
-          setTimeout(() => window.api.launchMainApp(), 800)
+          await window.api.invoke('start-backend')
+          setTimeout(() => window.api.send('app:launch-main'), 800)
         } catch (bootException) {
           setBackendInitializationError(bootException.message)
         }
       }
       performSystemBoot()
     }
-  }, [gamePath, currentUser, isCheckingUpdate, isPathLoaded])
+  }, [gamePath, currentUser, isCheckingUpdate, isPathLoaded, syncStatus])
 
   const handleAuthComplete = (userData) => {
-    if (userData && userData.id) {
+    if (userData?.id) {
       setCurrentUser(userData)
-      if (window.api) {
-        window.api.setStoreValue('auth_user', userData)
-      }
+      window.api.invoke('store:set', 'auth_user', userData)
+      setSyncStatus('ready')
     }
   }
 
   if (isCheckingUpdate) {
+    return <UpdaterScreen />
+  }
+
+  if (!isPathLoaded || syncStatus === 'pending' || syncStatus === 'verifying') {
     return (
-      <div className="h-screen w-full bg-zinc-950 overflow-hidden">
-        <UpdaterScreen />
+      <div className="h-screen w-full flex flex-col items-center justify-center bg-[#09090b] text-white">
+        <div className="relative mb-6">
+            <Loader2 className="h-10 w-10 text-white/10 animate-spin absolute inset-0" />
+            <ShieldCheck className="h-10 w-10 text-white/40 animate-pulse" />
+        </div>
+        <div className="text-center space-y-1">
+          <p className="text-[10px] font-black uppercase tracking-[0.4em] text-white/60">
+            {syncStatus === 'verifying' ? 'Синхронізація підписки' : 'Завантаження'}
+          </p>
+          <p className="text-[9px] font-medium text-white/20 uppercase tracking-widest">
+            Перевірка цілісності профілю через Cloud API...
+          </p>
+        </div>
       </div>
     )
   }
 
-  if (!isPathLoaded) {
+  if (syncStatus === 'unauthorized' || !currentUser?.id) {
     return (
-      <div className="h-screen w-full flex items-center justify-center bg-gray-900 text-white/20 animate-pulse text-[10px] font-black uppercase tracking-[0.3em] overflow-hidden">
-        Завантаження конфігурації...
+      <div className="h-screen w-full bg-[#09090b] overflow-hidden">
+        <RegistrationScreen onVerificationComplete={handleAuthComplete} />
       </div>
     )
   }
 
   if (!gamePath) {
     return (
-      <div className="h-screen w-full bg-zinc-950 overflow-hidden">
+      <div className="h-screen w-full bg-[#09090b] overflow-hidden">
         <SetupScreen />
       </div>
     )
   }
 
-  if (!currentUser || !currentUser.id) {
-    return (
-      <div className="h-screen w-full bg-zinc-950 overflow-hidden">
-        <RegistrationScreen onVerificationComplete={handleAuthComplete} />
-      </div>
-    )
-  }
-
   return (
-    <div className="h-screen w-full bg-zinc-950 overflow-hidden">
+    <div className="h-screen w-full bg-[#09090b] overflow-hidden">
       <KernelInitializationDisplay executionError={backendInitializationError} />
     </div>
   )

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
 import WindowControls from './components/WindowControls'
@@ -16,7 +16,6 @@ function MainLayout() {
         <WindowControls />
         <main className="flex-1 bg-zinc-900/40 rounded-tl-[2rem] border-t border-l border-white/5 overflow-hidden flex flex-col relative shadow-inner">
           <Routes>
-            <Route path="/" element={<Navigate to="/mods" replace />} />
             <Route path="/mods" element={<ModsPage />} />
             <Route path="/mods/:id" element={<ModDetailsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
@@ -30,51 +29,48 @@ function MainLayout() {
 
 function ApplicationInterfaceSelector() {
   const { gamePath, currentUser, isPathLoaded } = useInstaller()
-  const [applicationHash, setApplicationHash] = useState(window.location.hash)
+  const [currentHash, setCurrentHash] = useState(window.location.hash)
 
   useEffect(() => {
-    const handleHashSync = () => setApplicationHash(window.location.hash)
-    window.addEventListener('hashchange', handleHashSync)
-    return () => window.removeEventListener('hashchange', handleHashSync)
+    const syncHash = () => setCurrentHash(window.location.hash)
+    window.addEventListener('hashchange', syncHash)
+    return () => window.removeEventListener('hashchange', syncHash)
   }, [])
 
+  const isAuthorized = useMemo(() => !!gamePath && !!currentUser?.id, [gamePath, currentUser])
+  const shouldShowLoader = useMemo(() => currentHash === '#loader' || !isAuthorized, [currentHash, isAuthorized])
+
   useEffect(() => {
+    console.log('[App][Diagnostic] Auth State Changed:', { 
+      gamePath, 
+      userId: currentUser?.id, 
+      isAuthorized, 
+      currentHash,
+      isPathLoaded 
+    })
+
     if (!isPathLoaded) return
 
-    const isAuthorized = !!gamePath && !!currentUser?.id
-    const isLoaderActive = applicationHash === '#loader' || !isAuthorized
-
-    if (isLoaderActive) {
-      if (window.api && window.api.invoke) {
-        window.api.invoke('window:resize-to-loader')
-      }
+    if (shouldShowLoader) {
+      window.api?.invoke('window:resize-to-loader')
     } else {
-      if (window.api && window.api.invoke) {
-        window.api.invoke('window:resize-to-main')
-      }
+      window.api?.invoke('window:resize-to-main')
     }
-  }, [gamePath, currentUser, applicationHash, isPathLoaded])
+  }, [isAuthorized, currentHash, isPathLoaded, shouldShowLoader])
 
-  if (!isPathLoaded) {
-    return null
-  }
+  if (!isPathLoaded) return null
 
-  const isUnauthorized = !gamePath || !currentUser?.id
-  const showLoader = applicationHash === '#loader' || isUnauthorized
-
-  if (showLoader) {
+  if (shouldShowLoader) {
     return <LoaderScreen />
   }
 
   return <MainLayout />
 }
 
-function App() {
+export default function App() {
   return (
     <InstallerProvider>
       <ApplicationInterfaceSelector />
     </InstallerProvider>
   )
 }
-
-export default App

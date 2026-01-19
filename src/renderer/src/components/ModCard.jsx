@@ -51,7 +51,7 @@ export default function ModCard({ mod }) {
     : Math.round(progress.install)
 
   const handleCardClick = () => {
-    navigate(`/mod/${mod.id}`)
+    navigate(`/mods/${mod.id}`)
   }
 
   const handleInstallClick = (e) => {

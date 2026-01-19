@@ -8,6 +8,7 @@ import log from 'electron-log'
 import Store from 'electron-store'
 import fs from 'fs'
 import crypto from 'crypto'
+import * as CloudRepository from './services/CloudRepository'
 
 const { autoUpdater } = updaterPkg
 
@@ -263,6 +264,25 @@ app.whenReady().then(() => {
   ipcMain.handle('store:delete', (_, key) => {
     store.delete(key)
     return true
+  })
+
+  ipcMain.handle('auth:verify-subscription', async () => {
+    const localUser = store.get('auth_user')
+    if (!localUser || !localUser.id) return null
+    
+    try {
+      const freshProfile = await CloudRepository.getUserProfile(localUser.id)
+      
+      if (freshProfile) {
+        const signedProfile = signAuthData(freshProfile)
+        store.set('auth_user', signedProfile)
+        return freshProfile
+      }
+      return null
+    } catch (networkError) {
+      console.error('[Main] Subscription verification failed:', networkError.message)
+      return localUser
+    }
   })
 
   ipcMain.handle('dialog:selectGameDirectory', async () => {

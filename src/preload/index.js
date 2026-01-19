@@ -27,6 +27,8 @@ const api = {
   getModCatalog: () => ipcRenderer.invoke('get-mod-catalog'),
   getModDetails: (modId) => ipcRenderer.invoke('get-mod-details', modId),
   
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+
   onUpdateStatus: (callback) => {
     const subscription = (event, value) => callback(value)
     ipcRenderer.on('update-status', subscription)

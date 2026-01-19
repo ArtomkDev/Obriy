@@ -9,101 +9,82 @@ import ModActionPanel from '../components/mod-details/ModActionPanel'
 export default function ModDetailsPage() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { getModStatus, getModProgress, startInstall, startUninstall, retryTask } = useInstaller()
   
-  const [mod, setMod] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [currentMediaIndex, setCurrentMediaIndex] = useState(0)
-  
-  const { 
-    startInstall, 
-    startUninstall, 
-    getModStatus, 
-    retryTask, 
-    getModProgress, 
-    refreshInstalledMods 
-  } = useInstaller()
+  const [modData, setModData] = useState(null)
+  const [isPageLoading, setIsPageLoading] = useState(true)
+  const [activeMediaIndex, setActiveMediaIndex] = useState(0)
   
   useEffect(() => {
-    let isMounted = true
+    let isRequestValid = true
     
-    const fetchData = async () => {
-      setLoading(true)
+    const fetchInformation = async () => {
+      console.log(`[ModDetails][Diagnostic] Attempting to load mod: ${id}`)
+      setIsPageLoading(true)
+      
       try {
-        // ПРИМУСОВЕ ОНОВЛЕННЯ СТАНУ ПЕРЕД ЗАВАНТАЖЕННЯМ
-        if (refreshInstalledMods) {
-          await refreshInstalledMods()
-        }
+        const response = await window.api.getModDetails(id)
+        console.log('[ModDetails][Diagnostic] API Response:', response)
 
-        const modData = await window.api.getModDetails(id)
-        
-        if (isMounted && modData) {
-          setMod(modData)
+        if (isRequestValid) {
+          if (response) {
+            setModData(response)
+          } else {
+            console.warn(`[ModDetails][Diagnostic] Mod not found for ID: ${id}`)
+            navigate('/mods')
+          }
         }
       } catch (err) {
-        console.error("Failed to fetch mod details:", err)
+        console.error('[ModDetails][Diagnostic] Critical Fetch Error:', err)
+        if (isRequestValid) navigate('/mods')
       } finally {
-        if (isMounted) setLoading(false)
+        if (isRequestValid) setIsPageLoading(false)
       }
     }
 
-    fetchData()
-    return () => { isMounted = false }
-  }, [id, refreshInstalledMods])
+    fetchInformation()
+    return () => { isRequestValid = false }
+  }, [id, navigate])
 
-  // Використовуємо id з параметрів URL, приведений до рядка
-  const modIdKey = id?.toString()
-  const status = getModStatus(modIdKey)
-  const progress = getModProgress(modIdKey)
+  const modStatus = getModStatus(id?.toString())
+  const modProgress = getModProgress(id?.toString())
 
-  const handleMainAction = () => {
-    if (status === 'idle' || status === 'success') {
-      startInstall(mod)
-    } else if (status === 'error') {
-      retryTask(mod)
-    }
-  }
-
-  const gallery = mod?.media || []
-  const currentMedia = gallery[currentMediaIndex] || gallery[0]
-
-  if (loading) return (
+  if (isPageLoading) return (
     <div className="w-full h-full bg-[#09090b] flex items-center justify-center">
       <div className="text-white/50 animate-pulse font-bold tracking-widest uppercase">
-        Loading mod details...
+        Verifying Mod Integrity...
       </div>
     </div>
   )
   
-  if (!mod) return null
+  if (!modData) return null
+
+  const mediaList = modData.media || []
+  const currentMedia = mediaList[activeMediaIndex] || mediaList[0]
 
   return (
-    <div className="w-full h-full bg-[#09090b] flex overflow-hidden animate-fade-in font-sans relative rounded-tl-3xl">
+    <div className="w-full h-full bg-[#09090b] flex overflow-hidden animate-fade-in relative rounded-tl-3xl">
       <div className="flex-1 flex flex-col h-full relative">
-        <ModMediaDisplay 
-          currentMedia={currentMedia} 
-          modThumbnail={mod.thumbnail} 
-        />
-        
-        {gallery.length > 1 && (
+        <ModMediaDisplay currentMedia={currentMedia} modThumbnail={modData.thumbnail} />
+        {mediaList.length > 1 && (
           <div className="absolute bottom-0 w-full">
             <ModGalleryStrip 
-              mediaItems={gallery}
-              currentIndex={currentMediaIndex}
-              onSelect={setCurrentMediaIndex}
+              mediaItems={mediaList} 
+              currentIndex={activeMediaIndex} 
+              onSelect={setActiveMediaIndex} 
             />
           </div>
         )}
       </div>
 
-      <div className="w-[400px] xl:w-[450px] h-full bg-[#121214] border-l border-white/5 flex flex-col relative shadow-2xl z-30 shrink-0">
-        <ModInfoPanel mod={mod} />
-        
+      <div className="w-[400px] h-full bg-[#121214] border-l border-white/5 flex flex-col relative z-30 shrink-0">
+        <ModInfoPanel mod={modData} />
         <ModActionPanel 
-          status={status}
-          progress={progress}
-          onMainClick={handleMainAction}
-          onUninstallClick={() => startUninstall(mod)}
-          isPremium={mod.is_premium} // ВИПРАВЛЕНО: передаємо правильне поле
+          status={modStatus} 
+          progress={modProgress} 
+          onMainClick={() => (modStatus === 'error' ? retryTask(modData) : startInstall(modData))}
+          onUninstallClick={() => startUninstall(modData)}
+          isPremium={modData.is_premium}
         />
       </div>
     </div>

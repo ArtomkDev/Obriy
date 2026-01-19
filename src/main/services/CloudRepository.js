@@ -1,26 +1,24 @@
 import fs from 'fs'
 import path from 'path'
-import { app } from 'electron' // Додано для доступу до шляхів
+import { app } from 'electron'
 import { pipeline } from 'stream/promises'
 import { Transform } from 'stream'
 import Store from 'electron-store'
 
-// БЕЗПЕЧНА ІНІЦІАЛІЗАЦІЯ STORE
-// Якщо файл конфігу битий, ми його просто видаляємо
 let store
 try {
-    store = new Store({ clearInvalidConfig: true })
+  store = new Store({ clearInvalidConfig: true })
 } catch (error) {
-    console.error('[CloudRepository] Config corrupted. Resetting...')
-    try {
-        const configPath = path.join(app.getPath('userData'), 'config.json')
-        if (fs.existsSync(configPath)) {
-            fs.unlinkSync(configPath)
-        }
-    } catch (unlinkErr) {
-        console.error('[CloudRepository] Failed to delete corrupt config:', unlinkErr)
+  console.error('[CloudRepository] Config corrupted. Resetting...')
+  try {
+    const configPath = path.join(app.getPath('userData'), 'config.json')
+    if (fs.existsSync(configPath)) {
+      fs.unlinkSync(configPath)
     }
-    store = new Store() // Створюємо чистий store
+  } catch (unlinkErr) {
+    console.error('[CloudRepository] Failed to delete corrupt config:', unlinkErr)
+  }
+  store = new Store()
 }
 
 const GATEWAY_URL = 'https://obriy-auth.artomk-dev.workers.dev'
@@ -29,75 +27,88 @@ export async function getCatalog() {
   return await performRequest('/catalog')
 }
 
+export async function getUserProfile(userId) {
+  const antiCacheToken = Date.now()
+  const encodedUserId = encodeURIComponent(userId)
+  return await performRequest(`/profile/${encodedUserId}?t=${antiCacheToken}`)
+}
+
 export async function getModManifest(modId) {
   return await performRequest(`/mods/${modId}/manifest.json`)
 }
 
 export async function checkResourceExists(subPath) {
-  const url = `${GATEWAY_URL}/mods/${subPath}`
+  const resourceUrl = `${GATEWAY_URL}/mods/${subPath}`
   try {
-    const response = await fetch(url, { 
+    const headResponse = await fetch(resourceUrl, { 
       method: 'HEAD',
       headers: getAuthHeaders()
     })
-    return response.ok
+    return headResponse.ok
   } catch {
     return false
   }
 }
 
 export async function downloadFile(remotePath, localDestPath, onProgress) {
-  const url = `${GATEWAY_URL}${remotePath}`
-  const response = await fetch(url, { headers: getAuthHeaders() })
+  const downloadUrl = `${GATEWAY_URL}${remotePath}`
+  const fetchResponse = await fetch(downloadUrl, { headers: getAuthHeaders() })
 
-  if (response.status === 403) {
+  if (fetchResponse.status === 403) {
     throw new Error('Access Denied: Premium subscription required')
   }
-  if (!response.ok) {
-    throw new Error(`Download Failed: ${response.status} ${response.statusText}`)
+  if (!fetchResponse.ok) {
+    throw new Error(`Download Failed: ${fetchResponse.status}`)
   }
 
-  const totalBytes = Number(response.headers.get('content-length') || 0)
-  let receivedBytes = 0
-  let lastUpdate = 0
+  const totalBytesCount = Number(fetchResponse.headers.get('content-length') || 0)
+  let receivedBytesCount = 0
+  let lastProgressUpdateTime = 0
 
   const progressMonitor = new Transform({
     transform(chunk, encoding, callback) {
-      receivedBytes += chunk.length
+      receivedBytesCount += chunk.length
       
-      const now = Date.now()
-      if (onProgress && totalBytes > 0 && (now - lastUpdate > 100 || receivedBytes === totalBytes)) {
-        onProgress(Math.round((receivedBytes / totalBytes) * 100))
-        lastUpdate = now
+      const currentTime = Date.now()
+      if (onProgress && totalBytesCount > 0 && (currentTime - lastProgressUpdateTime > 100 || receivedBytesCount === totalBytesCount)) {
+        onProgress(Math.round((receivedBytesCount / totalBytesCount) * 100))
+        lastProgressUpdateTime = currentTime
       }
       
       callback(null, chunk)
     }
   })
 
-  const fileStream = fs.createWriteStream(localDestPath)
+  const destinationStream = fs.createWriteStream(localDestPath)
   
   await pipeline(
-    response.body,
+    fetchResponse.body,
     progressMonitor,
-    fileStream
+    destinationStream
   )
 }
 
 async function performRequest(endpoint) {
-  const url = `${GATEWAY_URL}${endpoint}`
-  const response = await fetch(url, { headers: getAuthHeaders() })
+  const requestUrl = `${GATEWAY_URL}${endpoint}`
   
-  if (!response.ok) {
-    throw new Error(`API Error: ${response.status} ${response.statusText}`)
+  const apiResponse = await fetch(requestUrl, { 
+    headers: getAuthHeaders(),
+    cache: 'no-store'
+  })
+  
+  if (!apiResponse.ok) {
+    const errorText = `API Error: ${apiResponse.status} for ${requestUrl}`
+    console.error(`[CloudRepository] ${errorText}`)
+    throw new Error(errorText)
   }
-  return await response.json()
+  return await apiResponse.json()
 }
 
 function getAuthHeaders() {
-  // Тут store вже гарантовано ініціалізований
-  const user = store.get('auth_user')
+  const authorizedUser = store.get('auth_user')
   return {
-    'X-User-Id': user?.id || ''
+    'X-User-Id': authorizedUser?.id || '',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache'
   }
 }
