@@ -23,6 +23,8 @@ const api = {
   
   invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
   send: (channel, ...args) => ipcRenderer.send(channel, ...args),
+
+  getModStats: (modId) => ipcRenderer.invoke('get-mod-stats', modId),
   
   getModCatalog: () => ipcRenderer.invoke('get-mod-catalog'),
   getModDetails: (modId) => ipcRenderer.invoke('get-mod-details', modId),

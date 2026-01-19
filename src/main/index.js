@@ -338,6 +338,10 @@ app.whenReady().then(() => {
       return await ModManager.getActiveMods(gameDirectory)
   })
 
+  ipcMain.handle('get-mod-stats', async (_, modId) => {
+    return await CloudRepository.getModStats(modId)
+  })
+
   ipcMain.handle('get-mod-details', async (_, modId) => {
     try {
       return await ModManager.getModDetails(modId)

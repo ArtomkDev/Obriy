@@ -211,6 +211,14 @@ async function fetchWithDeduplication(endpoint, { force, ttl, key }) {
   return requestPromise
 }
 
+export async function getModStats(modId) {
+  // Використовуємо існуючий механізм кешування
+  // Це автоматично збереже результат у sessionCache (оперативну пам'ять)
+  const endpoint = `/api/stats/mod/${modId}`
+  const cacheKey = `stats:${modId}` 
+  return await fetchResource(endpoint, cacheKey)
+}
+
 async function performRequest(endpoint) {
   const separator = endpoint.includes('?') ? '&' : '?'
   const requestUrl = `${GATEWAY_URL}${endpoint}${separator}t=${Date.now()}`
@@ -235,4 +243,44 @@ function getAuthHeaders() {
     'Cache-Control': 'no-cache',
     'Pragma': 'no-cache'
   }
+}
+
+// =================================================================
+// 1. УНІВЕРСАЛЬНА ФУНКЦІЯ КЕШУВАННЯ (Вставити перед performRequest)
+// =================================================================
+
+export async function fetchResource(endpoint, key, useCache = true) {
+  // 1. Перевірка кешу
+  if (useCache && sessionCache.has(key)) {
+    const cachedEntry = sessionCache.get(key)
+    if (Date.now() - cachedEntry.timestamp < DEFAULT_CACHE_TTL) {
+      return cachedEntry.data
+    }
+  }
+
+  // 2. Дедуплікація
+  if (pendingRequests.has(key)) {
+    return pendingRequests.get(key)
+  }
+
+  // 3. Виконання запиту
+  const requestPromise = (async () => {
+    try {
+      const data = await performRequest(endpoint)
+      
+      sessionCache.set(key, {
+        timestamp: Date.now(),
+        data: data
+      })
+      
+      return data
+    } catch (error) {
+      throw error
+    } finally {
+      pendingRequests.delete(key)
+    }
+  })()
+
+  pendingRequests.set(key, requestPromise)
+  return requestPromise
 }
