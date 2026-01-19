@@ -330,30 +330,50 @@ app.whenReady().then(() => {
   ipcMain.handle('install-mod', async (event, modId) => {
     try {
       const gameDirectory = store.get('gta_path')
-      if (!gameDirectory) {
-          throw new Error('Game path not configured')
+      
+      // 1. ПЕРЕВІРКА ШЛЯХУ (як і була)
+      if (!gameDirectory || !fs.existsSync(gameDirectory)) {
+        console.error('[Main] Game directory not found on disk:', gameDirectory)
+        store.delete('gta_path')
+        event.sender.send('path:sync-directory', null)
+        throw new Error('Папка з грою не знайдена. Оберіть шлях заново.')
+      }
+    
+      const directoryValidation = await ModManager.validateGamePath(gameDirectory)
+      if (!directoryValidation.isValid) {
+        store.delete('gta_path')
+        event.sender.send('path:sync-directory', null)
+        throw new Error('У цій папці немає файлу GTA5.exe. Оберіть шлях заново.')
+      }
+
+      // 2. ПЕРЕВІРКА АВТОРИЗАЦІЇ ТА ЦІЛІСНОСТІ (ТЕПЕР ДЛЯ ВСІХ МОДІВ)
+      const authUser = store.get('auth_user')
+      
+      // Перевіряємо, чи не підроблений файл config.json
+      if (authUser && !validateAuthData(authUser)) {
+          console.error('[Security] Config tampering detected during install request')
+          store.delete('auth_user')
+          event.sender.send('auth:sync-profile', null) // Викидаємо на логін
+          throw new Error('Security Error: Profile data tampered. Session reset.')
+      }
+
+      // Перевіряємо, чи користувач взагалі залогінений
+      if (!authUser || !authUser.id) {
+          throw new Error('Для встановлення модифікацій необхідно увійти в акаунт.')
       }
     
       const modDetails = await ModManager.getModDetails(modId)
       
-      if (modDetails.is_premium) {
-        const authUser = store.get('auth_user')
-        
-        if (authUser && !validateAuthData(authUser)) {
-           store.delete('auth_user')
-           event.sender.send('auth:sync-profile', null)
-           throw new Error('Security Error: Profile data tampered. Subscription status reset.')
-        }
-      
-        if (!authUser || !authUser.isPremium) {
-           throw new Error('This modification requires an active Premium subscription')
-        }
+      // 3. ПЕРЕВІРКА PREMIUM (тільки якщо сам мод позначений як преміум)
+      if (modDetails.is_premium && !authUser.isPremium) {
+          throw new Error('Ця модифікація доступна лише для Premium підписників.')
       }
       
+      // Якщо всі перевірки пройдено — запускаємо встановлення
       const result = await ModManager.installMod(modId, gameDirectory)
       return { success: true, data: result }
-    } catch (installationError) {
-      return { success: false, error: installationError.message }
+    } catch (err) {
+      return { success: false, error: err.message }
     }
   })
 

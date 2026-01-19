@@ -23,39 +23,47 @@ export function InstallerProvider({ children }) {
     if (window.api) {
       const initializeInstallerSession = async () => {
         try {
+          // 1. Завантажуємо шлях до гри зі сховища
           const storedGamePath = await window.api.getStoreValue('gta_path');
-          if (storedGamePath) {
-            setGamePathState(storedGamePath);
-          }
+          // Якщо шляху немає або він невалідний, ставимо порожній рядок
+          setGamePathState(storedGamePath || '');
 
+          // 2. Завантажуємо дані користувача зі сховища
           const storedUserData = await window.api.getStoreValue('auth_user');
           setCurrentUser(storedUserData || null);
-        } catch (sessionInitializationError) {
-          console.error(sessionInitializationError);
+        } catch (sessionError) {
+          console.error("Помилка ініціалізації сесії:", sessionError);
         } finally {
+          // 3. Тільки після отримання обох значень позначаємо, що завантаження завершено
           setIsPathLoaded(true);
         }
       };
 
       initializeInstallerSession();
 
+      // Слухач статусу оновлення додатку
       const removeUpdateStatusListener = window.api.onUpdateStatus((statusData) => {
         setUpdateStatus(statusData.status);
       });
 
-      const removeAuthSyncListener = window.api.onAuthSync ? window.api.onAuthSync((syncedProfileData) => {
-        setCurrentUser(syncedProfileData || null);
+      // СИНХРОНІЗАЦІЯ ПРОФІЛЮ (викидає на логін, якщо дані підроблено)
+      const removeAuthSyncListener = window.api.onAuthSync ? window.api.onAuthSync((syncedProfile) => {
+        setCurrentUser(syncedProfile || null);
+      }) : null;
+
+      // СИНХРОНІЗАЦІЯ ШЛЯХУ ГРИ (викидає на SetupScreen, якщо шлях став невалідним)
+      const removePathSyncListener = window.api.onPathSync ? window.api.onPathSync((syncedPath) => {
+        setGamePathState(syncedPath || '');
       }) : null;
 
       return () => {
-        if (removeUpdateStatusListener) {
-          removeUpdateStatusListener();
-        }
-        if (removeAuthSyncListener) {
-          removeAuthSyncListener();
-        }
+        // Правильна чистка всіх слухачів
+        if (removeUpdateStatusListener) removeUpdateStatusListener();
+        if (removeAuthSyncListener) removeAuthSyncListener();
+        if (removePathSyncListener) removePathSyncListener();
       };
     } else {
+      // Якщо це не Electron (наприклад, браузер), просто позначаємо готовність
       setIsPathLoaded(true);
       setUpdateStatus('not-available');
     }
@@ -220,19 +228,26 @@ export function InstallerProvider({ children }) {
         throw new Error(operationResult?.error || 'Operation failed');
       }
     } catch (taskExecutionError) {
-      if (taskExecutionError.message.includes('Premium') || taskExecutionError.message.includes('Security')) {
-        const freshUserData = await window.api.getStoreValue('auth_user')
-        setCurrentUser(freshUserData || null)
+      const errorMessage = taskExecutionError.message;
+
+      if (errorMessage.includes('Premium') || errorMessage.includes('Security')) {
+        const freshUserData = await window.api.getStoreValue('auth_user');
+        setCurrentUser(freshUserData || null);
       }
-    
+
+      if (errorMessage.includes('directory') || errorMessage.includes('path')) {
+        const freshPathData = await window.api.getStoreValue('gta_path');
+        setGamePathState(freshPathData || '');
+      }
+
       setTasks((previousTasks) => ({
         ...previousTasks,
         [currentTaskId]: {
           ...previousTasks[currentTaskId],
           status: 'error',
-          error: taskExecutionError.message
+          error: errorMessage
         }
-      }))
+      }));
     } finally {
       setProcessQueue((previousQueue) => previousQueue.filter((queuedItem) => queuedItem.id !== taskToProcess.id));
       setIsProcessing(false);
@@ -243,10 +258,16 @@ export function InstallerProvider({ children }) {
   const startInstall = useCallback((mod) => {
     const taskId = mod.id
     
-    // Перевірка прав доступу (Premium статус)
+    // ПЕРЕВІРКА 1: Чи залогінений користувач (для всіх модів)
+    if (!currentUser) {
+      console.warn("Authorization required for installation")
+      return // Можна додати виклик вікна логіну, якщо потрібно
+    }
+
+    // ПЕРЕВІРКА 2: Чи є Premium (тільки для преміум модів)
     if (mod.is_premium && !currentUser?.isPremium) {
       console.warn("Access denied: Premium required for mod", taskId)
-      return // Блокуємо запуск інсталяції
+      return 
     }
 
     if (tasks[taskId] && ['downloading', 'installing', 'queued', 'queued_download', 'uninstalling'].includes(tasks[taskId].status)) return
