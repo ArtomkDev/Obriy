@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useInstaller } from '../context/InstallerContext'
 import ModMediaDisplay from '../components/mod-details/ModMediaDisplay'
 import ModGalleryStrip from '../components/mod-details/ModGalleryStrip'
 import ModInfoPanel from '../components/mod-details/ModInfoPanel'
 import ModActionPanel from '../components/mod-details/ModActionPanel'
+
+const GATEWAY_BASE = 'https://obriy-auth.artomk-dev.workers.dev'
 
 export default function ModDetailsPage() {
   const { id } = useParams()
@@ -46,6 +48,42 @@ export default function ModDetailsPage() {
     return () => { isRequestValid = false }
   }, [id, navigate])
 
+  // --- Logic to process manifest media (NO GUESSING) ---
+  const mediaList = useMemo(() => {
+    if (!modData) return []
+
+    // If media is missing or empty, provide a strict fallback based on ID (usually 1.webp)
+    if (!modData.media || modData.media.length === 0) {
+       return [{
+           type: 'image',
+           source: `${GATEWAY_BASE}/mods/${modData.id}/assets/1.webp`,
+           thumbnail: null
+       }]
+    }
+
+    return modData.media.map(item => {
+        // 1. Support legacy/backend-processed objects (if backend sends { type, source })
+        if (typeof item === 'object' && item !== null) {
+            return item
+        }
+
+        // 2. Handle RAW MANIFEST strings (e.g. "1.webp", "video.mp4")
+        if (typeof item === 'string') {
+            const fileName = item
+            const ext = fileName.split('.').pop().toLowerCase()
+            const isVideo = ['mp4', 'webm', 'mov'].includes(ext)
+            
+            return {
+                type: isVideo ? 'video' : 'image',
+                source: `${GATEWAY_BASE}/mods/${modData.id}/assets/${fileName}`,
+                // For videos, use 1.webp as the poster/thumbnail convention
+                thumbnail: isVideo ? `${GATEWAY_BASE}/mods/${modData.id}/assets/1.webp` : null
+            }
+        }
+        return null
+    }).filter(Boolean)
+  }, [modData])
+
   const modStatus = getModStatus(id?.toString())
   const modProgress = getModProgress(id?.toString())
 
@@ -59,7 +97,6 @@ export default function ModDetailsPage() {
   
   if (!modData) return null
 
-  const mediaList = modData.media || []
   const currentMedia = mediaList[activeMediaIndex] || mediaList[0]
 
   return (

@@ -1,7 +1,8 @@
 const fs = require('fs-extra');
 const path = require('path');
 
-module.exports = async function buildManifest(modId, config) {
+// ДОДАНО: третій аргумент mediaList (список файлів з 3-assets.js)
+module.exports = async function buildManifest(modId, config, mediaList = []) {
     console.log(`[Manifest] Building manifest for ${modId}...`);
 
     // 1. Шляхи
@@ -46,7 +47,7 @@ module.exports = async function buildManifest(modId, config) {
         const validFiles = files.filter(f => 
             f !== '.DS_Store' && 
             f !== 'Thumbs.db' && 
-            f !== 'Thumbs.db:encryptable' && // Додав ще один системний файл про всяк випадок
+            f !== 'Thumbs.db:encryptable' && 
             !f.endsWith('.db') &&
             !fs.statSync(path.join(fullSourcePath, f)).isDirectory()
         );
@@ -84,12 +85,15 @@ module.exports = async function buildManifest(modId, config) {
         category: modData.category,
         tags: modData.tags || [],
         
-        // НОВА ЛОГІКА: Преміум статус
-        // Якщо в локальному manifest.json є "is_premium": true, воно потрапить сюди
+        // Преміум статус
         is_premium: modData.is_premium || false, 
 
         releaseDate: new Date().toISOString(),
         installSize: totalInstallSize,
+        
+        // ✅ НОВЕ ПОЛЕ: Список медіа (відео та фото)
+        media: mediaList,
+        
         instructionSet: finalInstructions
     };
 
@@ -98,6 +102,7 @@ module.exports = async function buildManifest(modId, config) {
     await fs.writeJson(path.join(outputDir, 'manifest.json'), cloudManifest, { spaces: 2 });
 
     console.log(`   -> Premium Status: ${cloudManifest.is_premium ? 'YES' : 'NO'}`);
+    console.log(`   -> Media items attached: ${mediaList.length}`);
     console.log(`[Manifest] Done for ${modId}`);
 
     return cloudManifest;

@@ -1,7 +1,7 @@
 const fs = require('fs-extra');
 const path = require('path');
 const colors = require('colors');
-const readline = require('readline'); // Додано для підтвердження
+const readline = require('readline');
 const config = require('./config');
 
 const buildManifest = require('./modules/1-manifest');
@@ -35,21 +35,23 @@ async function buildSingleMod(modId) {
             throw new Error(`Mod manifest not found at: ${manifestPath}`);
         }
 
-        // --- PIPELINE ---
+        // --- PIPELINE (ВИПРАВЛЕНО ПОРЯДОК) ---
 
-        // 1. Маніфест
-        const cloudManifest = await buildManifest(modId, config);
-
-        // 2. Ассети
-        await processAssets({
+        // 1. Ассети (Спочатку обробляємо медіа, щоб отримати список файлів)
+        // Повертає масив, наприклад: ['1.mp4', '2.mp4', '3.webp']
+        const mediaList = await processAssets({
             inputDir: modSourcePath,
             outputDir: modDistPath
-        }, config); // Передаємо config про всяк випадок, якщо 3-assets.js його потребуватиме
+        });
+
+        // 2. Маніфест (Передаємо отриманий mediaList, щоб записати його в JSON)
+        const cloudManifest = await buildManifest(modId, config, mediaList);
 
         // 3. Упаковка (ZIP)
         await packageMod(modId, config);
 
         // 4. Каталог (Індекс)
+        // Використовує cloudManifest, в якому вже є правильний 'img' (обкладинка) з mediaList
         await updateCatalog(cloudManifest, config);
 
         // 5. Завантаження (Тільки якщо є прапорець --upload)

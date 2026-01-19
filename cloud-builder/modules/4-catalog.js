@@ -57,22 +57,36 @@ module.exports = async function updateCatalog(newModManifest) {
     await fs.ensureDir(catalogDir);
     await fs.ensureDir(categoriesDir);
 
-    // ✅ ДОДАНО ПОЛЕ 'p' (Premium)
+    // ✅ ЛОГІКА ОБКЛАДИНКИ:
+    // Беремо перше фото (webp/jpg/png) зі списку media для обкладинки
+    let coverImage = null;
+    if (newModManifest.media && newModManifest.media.length > 0) {
+        coverImage = newModManifest.media.find(file => 
+            file.endsWith('.webp') || file.endsWith('.jpg') || file.endsWith('.png')
+        );
+    }
+
     const catalogItem = {
         id: newModManifest.id,
         n: newModManifest.name,
-        a: newModManifest.author,
+        a: newModManifest.author || "Obriy",
         c: newModManifest.category,
         t: newModManifest.tags,
         v: newModManifest.version,
         p: newModManifest.is_premium || false,
+        
+        // ✅ Додаємо обкладинку (назву файлу)
+        img: coverImage || null,
+        
         d: Date.now()
     };
 
     // 1. ОНОВЛЕННЯ ГОЛОВНОГО ІНДЕКСУ
     let mainCatalog = await fetchRemoteCatalogFromS3(indexFileName);
     
+    // Видаляємо стару версію мода, якщо вона була
     mainCatalog = mainCatalog.filter(item => item.id !== newModManifest.id);
+    // Додаємо нову версію на початок списку
     mainCatalog.unshift(catalogItem);
     
     const localIndexPath = path.join(catalogDir, indexFileName);
@@ -88,4 +102,5 @@ module.exports = async function updateCatalog(newModManifest) {
     await fs.writeJson(localCategoryPath, categoryCatalog);
 
     console.log(`   -> Catalog updated locally. Total mods in index: ${mainCatalog.length}`.green);
+    console.log(`   -> Cover image set to: ${catalogItem.img || 'NONE'}`);
 };

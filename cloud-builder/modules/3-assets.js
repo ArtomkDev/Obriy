@@ -5,16 +5,15 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
 const mime = require('mime-types');
 
-// Налаштовуємо шлях до ffmpeg (щоб працювало на будь-якій системі)
 ffmpeg.setFfmpegPath(ffmpegPath);
 
 module.exports = async (config) => {
     console.log('[Assets] Starting media processing...');
 
-    const srcDir = path.join(config.inputDir, 'media'); // Папка, де лежать вихідні фото/відео
+    const srcDir = path.join(config.inputDir, 'media');
     const distDir = path.join(config.outputDir, 'assets');
 
-    // 1. Очистка та підготовка папки призначення
+    // Очищаємо папку призначення
     await fs.emptyDir(distDir);
 
     if (!fs.existsSync(srcDir)) {
@@ -22,87 +21,83 @@ module.exports = async (config) => {
         return [];
     }
 
-    // 2. Отримуємо всі файли та сортуємо їх за алфавітом
+    // 1. Отримуємо всі файли
     const rawFiles = await fs.readdir(srcDir);
-    const files = rawFiles
-        .filter(f => f !== '.DS_Store') // Ігноруємо системні файли
-        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+    const files = rawFiles.filter(f => f !== '.DS_Store');
 
-    if (files.length === 0) {
-        console.warn('[Assets] No media files found.');
-        return [];
-    }
+    if (files.length === 0) return [];
 
-    const processedAssets = [];
+    // 2. Розділяємо на Відео та Фото
+    const videoExtensions = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
+    const imageExtensions = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
 
-    // 3. Перевірка першого файлу (Прев'ю)
-    const firstFile = files[0];
-    const firstMime = mime.lookup(firstFile);
-    
-    if (!firstMime || !firstMime.startsWith('image/')) {
-        throw new Error(`[Assets] CRITICAL ERROR: The first file (${firstFile}) must be an IMAGE suitable for a preview. Found: ${firstMime}`);
-    }
+    const videoFiles = [];
+    const imageFiles = [];
 
-    // 4. Обробка файлів по черзі
-    let counter = 1; // Починаємо з 1
-
-    for (const fileName of files) {
-        const inputPath = path.join(srcDir, fileName);
-        const mimeType = mime.lookup(fileName);
-
-        if (!mimeType) {
-            console.warn(`[Assets] Skipping unknown file type: ${fileName}`);
-            continue;
+    for (const file of files) {
+        const ext = path.extname(file).toLowerCase().replace('.', '');
+        if (videoExtensions.includes(ext)) {
+            videoFiles.push(file);
+        } else if (imageExtensions.includes(ext)) {
+            imageFiles.push(file);
         }
+    }
+
+    // Сортуємо всередині груп за алфавітом, щоб порядок був передбачуваним
+    videoFiles.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    imageFiles.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+    // 3. Обробка (Спочатку ВІДЕО, потім ФОТО)
+    const generatedAssets = [];
+    let counter = 1;
+
+    // --- ОБРОБКА ВІДЕО ---
+    for (const fileName of videoFiles) {
+        const inputPath = path.join(srcDir, fileName);
+        const outName = `${counter}.mp4`;
+        const outPath = path.join(distDir, outName);
+
+        console.log(`[Assets] Processing Video #${counter}: ${fileName} -> ${outName}`);
 
         try {
-            if (mimeType.startsWith('image/')) {
-                // === ОБРОБКА ФОТО (WebP) ===
-                const outName = `${counter}.webp`;
-                const outPath = path.join(distDir, outName);
-
-                console.log(`[Assets] Processing Image: ${fileName} -> ${outName}`);
-
-                await sharp(inputPath)
-                    .webp({ quality: 80 }) // Оптимальна якість/розмір
-                    .toFile(outPath);
-
-                processedAssets.push(outName);
-
-            } else if (mimeType.startsWith('video/')) {
-                // === ОБРОБКА ВІДЕО (MP4) ===
-                const outName = `${counter}.mp4`;
-                const outPath = path.join(distDir, outName);
-
-                console.log(`[Assets] Processing Video: ${fileName} -> ${outName}`);
-
-                await new Promise((resolve, reject) => {
-                    ffmpeg(inputPath)
-                        .output(outPath)
-                        .videoCodec('libx264') // Стандартний кодек, грає всюди
-                        .audioCodec('aac')
-                        .size('?x720') // Зменшуємо до 720p для економії (або прибери цей рядок для оригіналу)
-                        .on('end', resolve)
-                        .on('error', reject)
-                        .run();
-                });
-
-                processedAssets.push(outName);
-            } else {
-                console.warn(`[Assets] Skipping unsupported format: ${fileName} (${mimeType})`);
-                // Не інкрементуємо каунтер, якщо файл пропущено
-                continue;
-            }
-
-            // Збільшуємо номер тільки якщо файл успішно оброблено
+            await new Promise((resolve, reject) => {
+                ffmpeg(inputPath)
+                    .output(outPath)
+                    .videoCodec('libx264')
+                    .audioCodec('aac')
+                    .size('?x720') // 720p
+                    .on('end', resolve)
+                    .on('error', reject)
+                    .run();
+            });
+            generatedAssets.push(outName);
             counter++;
-
         } catch (err) {
-            console.error(`[Assets] Failed to process ${fileName}:`, err.message);
-            throw err; // Зупиняємо білд при помилці
+            console.error(`[Assets] Failed video ${fileName}:`, err.message);
         }
     }
 
-    console.log(`[Assets] Processed ${processedAssets.length} files successfully.`);
-    return processedAssets;
+    // --- ОБРОБКА ФОТО ---
+    for (const fileName of imageFiles) {
+        const inputPath = path.join(srcDir, fileName);
+        const outName = `${counter}.webp`;
+        const outPath = path.join(distDir, outName);
+
+        console.log(`[Assets] Processing Image #${counter}: ${fileName} -> ${outName}`);
+
+        try {
+            await sharp(inputPath)
+                .resize(1280, 720, { fit: 'inside', withoutEnlargement: true })
+                .webp({ quality: 80 })
+                .toFile(outPath);
+
+            generatedAssets.push(outName);
+            counter++;
+        } catch (err) {
+            console.error(`[Assets] Failed image ${fileName}:`, err.message);
+        }
+    }
+
+    console.log(`[Assets] Done! Generated files: ${generatedAssets.join(', ')}`);
+    return generatedAssets; // Повертаємо список (наприклад: ['1.mp4', '2.mp4', '3.webp'])
 };
