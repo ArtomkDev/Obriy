@@ -1,0 +1,148 @@
+import React, { useState, useEffect } from 'react'
+import { motion } from 'framer-motion'
+import { Loader2, AlertTriangle } from 'lucide-react'
+import { useInstaller } from '../context/InstallerContext'
+import SetupScreen from './loader-screen/SetupScreen'
+import UpdaterScreen from './loader-screen/UpdaterScreen'
+import { RegistrationScreen } from './loader-screen/RegistrationScreen'
+
+function KernelInitializationDisplay({ executionError }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center bg-gray-900 text-white relative overflow-hidden">
+      <div className="flex flex-col items-center justify-center space-y-8 z-10">
+        <div className="relative flex items-center justify-center">
+          {executionError ? (
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-rose-500/10 border border-rose-500/20 shadow-[0_0_30px_-5px_rgba(244,63,94,0.3)]">
+              <AlertTriangle className="h-8 w-8 text-rose-500" />
+            </div>
+          ) : (
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/5 border border-white/10">
+              <Loader2 className="h-8 w-8 text-white/80 animate-spin" />
+            </div>
+          )}
+        </div>
+
+        <div className="text-center space-y-2">
+          <p className="text-sm font-black uppercase tracking-[0.2em] text-white/90">
+            {executionError ? 'Помилка Ядра' : 'Запуск Obriy Core'}
+          </p>
+          <p className={`text-xs font-medium font-mono ${executionError ? 'text-rose-400' : 'text-white/40'}`}>
+            {executionError ? executionError : 'Ініціалізація системних модулів...'}
+          </p>
+        </div>
+      </div>
+
+      {!executionError && (
+        <div className="absolute bottom-0 left-0 w-full h-1 bg-white/5">
+          <motion.div
+            className="h-full bg-white/20"
+            initial={{ width: "0%" }}
+            animate={{ width: "100%" }}
+            transition={{ duration: 2, ease: "easeInOut", repeat: Infinity }}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function LoaderScreen() {
+  const { isSetupComplete, isCheckingUpdate } = useInstaller()
+  const [user, setUser] = useState(null)
+  const [isAuthLoading, setIsAuthLoading] = useState(true)
+  const [backendInitializationError, setBackendInitializationError] = useState(null)
+
+  // Перевірка авторизації при монтуванні
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        if (window.api) {
+          const savedUser = await window.api.getStoreValue('auth_user')
+          if (savedUser && savedUser.id) {
+            setUser(savedUser)
+          } else {
+            setUser(null)
+          }
+        }
+      } catch (err) {
+        setUser(null)
+      } finally {
+        setIsAuthLoading(false)
+      }
+    }
+    checkAuth()
+  }, [])
+
+  // Запуск ядра тільки коли все готово (Setup + Auth)
+  useEffect(() => {
+    const canBoot = isSetupComplete && !isCheckingUpdate && !isAuthLoading && user?.id
+
+    if (canBoot) {
+      const performSystemBoot = async () => {
+        try {
+          await window.api.startBackend()
+          setTimeout(() => window.api.launchMainApp(), 800)
+        } catch (bootException) {
+          setBackendInitializationError(bootException.message)
+        }
+      }
+      performSystemBoot()
+    }
+  }, [isSetupComplete, isCheckingUpdate, isAuthLoading, user])
+
+  const handleAuthComplete = (userData) => {
+    if (userData && userData.id) {
+      setUser(userData)
+      if (window.api) {
+        window.api.setStoreValue('auth_user', userData)
+      }
+    }
+  }
+
+  // --- ЛОГІКА БЛОКУВАННЯ (ПОРЯДОК ВАЖЛИВИЙ) ---
+  
+  // 1. Оновлення
+  if (isCheckingUpdate) {
+    return (
+      <div className="h-screen w-full bg-zinc-950 overflow-hidden">
+        <UpdaterScreen />
+      </div>
+    )
+  }
+
+  // 2. Налаштування шляху (якщо немає config.json)
+  if (!isSetupComplete) {
+    return (
+      <div className="h-screen w-full bg-zinc-950 overflow-hidden">
+        <SetupScreen />
+      </div>
+    )
+  }
+
+  // 3. Завантаження статусу авторизації
+  if (isAuthLoading) {
+    return (
+      <div className="h-screen w-full flex items-center justify-center bg-gray-900 text-white/20 animate-pulse text-xs uppercase tracking-widest overflow-hidden">
+        Перевірка сесії...
+      </div>
+    )
+  }
+
+  // 4. АВТОРИЗАЦІЯ (Якщо дійшли сюди, значить Setup є, але User немає)
+  if (!user || !user.id) {
+    return (
+      <div className="h-screen w-full bg-zinc-950 overflow-hidden">
+        <RegistrationScreen onVerificationComplete={handleAuthComplete} />
+      </div>
+    )
+  }
+
+  // 5. Запуск Ядра (тільки якщо user.id існує)
+  return (
+    <div className="h-screen w-full bg-zinc-950 overflow-hidden">
+      <KernelInitializationDisplay executionError={backendInitializationError} />
+    </div>
+  )
+}
+
+export default LoaderScreen

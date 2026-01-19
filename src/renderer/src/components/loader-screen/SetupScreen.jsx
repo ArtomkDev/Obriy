@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { FolderSearch, ArrowRight, Gamepad2 } from 'lucide-react'
 import { motion } from 'framer-motion'
+import { useInstaller } from '../../context/InstallerContext'
 
 const SetupScreen = () => {
+  const { setGamePath } = useInstaller() // Використовуємо контекст для оновлення стану
   const [path, setPath] = useState('')
   const [status, setStatus] = useState('idle') 
   const [scrollWidth, setScrollWidth] = useState(0)
@@ -13,7 +15,6 @@ const SetupScreen = () => {
   useEffect(() => {
     if (textRef.current && containerRef.current) {
       const diff = textRef.current.scrollWidth - containerRef.current.clientWidth
-      // Додаємо невеликий запас для прокрутки
       setScrollWidth(diff > 0 ? diff + 10 : 0)
     }
   }, [path])
@@ -31,7 +32,7 @@ const SetupScreen = () => {
       if (result.success) {
         setPath(result.path)
         setStatus('valid')
-        await window.api.setStoreValue('gta_path', result.path)
+        // Тут ми більше не зберігаємо в Store вручну, це зробить setGamePath
       } else {
         setStatus('error')
         setPath(result.path || '') 
@@ -41,15 +42,17 @@ const SetupScreen = () => {
     }
   }
 
-  const handleLaunch = () => {
-    if (status === 'valid') {
-      window.electron.ipcRenderer.send('app:launch-main')
+  const handleContinue = () => {
+    if (status === 'valid' && path) {
+      // Оновлюємо шлях у контексті. 
+      // Це автоматично змінить isSetupComplete на true в LoaderScreen,
+      // і LoaderScreen перемкнеться на RegistrationScreen (бо юзера ще немає).
+      setGamePath(path)
     }
   }
 
   return (
     <div className="relative flex h-full flex-col justify-between p-6">
-      {/* Фонове світіння */}
       <div 
         className={`pointer-events-none absolute -left-20 -right-20 -top-20 h-48 blur-[60px] transition-opacity duration-1000 ${
           status === 'valid' ? 'bg-green-500/20 opacity-100' : 
@@ -57,7 +60,6 @@ const SetupScreen = () => {
         }`} 
       />
 
-      {/* Заголовок */}
       <div className="relative z-10 mt-2 text-center px-4">
         <div className="mb-3 flex justify-center">
           <div className={`flex h-12 w-12 items-center justify-center rounded-2xl transition-colors duration-500 ${
@@ -75,7 +77,6 @@ const SetupScreen = () => {
         </p>
       </div>
 
-      {/* Основна кнопка вибору шляху */}
       <div className="relative z-10 flex flex-col gap-3 px-4">
         <button
           onClick={handleSelectPath}
@@ -104,11 +105,11 @@ const SetupScreen = () => {
                   className="whitespace-nowrap text-sm font-bold text-gray-100"
                   animate={{ x: scrollWidth > 0 ? -scrollWidth : 0 }}
                   transition={{ 
-                    duration: scrollWidth > 0 ? scrollWidth / 25 : 0, // Швидкість залежить від довжини тексту
+                    duration: scrollWidth > 0 ? scrollWidth / 25 : 0,
                     ease: "linear",
                     repeat: Infinity,
-                    repeatType: "reverse", // Рухається туди-сюди
-                    repeatDelay: 1.5 // Пауза на кінцях
+                    repeatType: "reverse",
+                    repeatDelay: 1.5
                   }}
                 >
                   {path}
@@ -123,10 +124,9 @@ const SetupScreen = () => {
         </button>
       </div>
 
-      {/* Кнопка запуску */}
       <div className="relative z-10 px-4 pb-4">
         <button
-          onClick={handleLaunch}
+          onClick={handleContinue}
           disabled={status !== 'valid'}
           className={`
             flex h-10 w-full items-center justify-center gap-2 rounded-lg text-xs font-bold transition-all duration-300
@@ -136,7 +136,7 @@ const SetupScreen = () => {
             }
           `}
         >
-          <span>Запустити Obriy</span>
+          <span>Продовжити</span>
           <ArrowRight size={14} className={status === 'valid' ? 'opacity-100' : 'opacity-0'} />
         </button>
       </div>
