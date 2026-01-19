@@ -78,7 +78,7 @@ function createLoaderWindow() {
     autoHideMenuBar: true,
     center: true,
     alwaysOnTop: false,
-    backgroundColor: '#111827',
+    backgroundColor: '#09090b',
     icon,
     webPreferences: {
       preload: getPreloadPath(),
@@ -125,7 +125,7 @@ function createMainWindow() {
     show: false,
     frame: false,
     autoHideMenuBar: true,
-    backgroundColor: '#030712',
+    backgroundColor: '#09090b',
     icon,
     webPreferences: {
       preload: getPreloadPath(),
