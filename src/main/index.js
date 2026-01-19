@@ -84,8 +84,8 @@ function createLoaderWindow() {
   if (loaderWindow) return loaderWindow
 
   loaderWindow = new BrowserWindow({
-    width: 300,
-    height: 350,
+    width: 400,
+    height: 450,
     resizable: false,
     frame: false,
     show: false,

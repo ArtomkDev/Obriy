@@ -48,7 +48,7 @@ const SetupScreen = () => {
   }
 
   return (
-    <div className="relative flex h-full flex-col justify-between">
+    <div className="relative flex h-full flex-col justify-between p-6">
       {/* Фонове світіння */}
       <div 
         className={`pointer-events-none absolute -left-20 -right-20 -top-20 h-48 blur-[60px] transition-opacity duration-1000 ${
