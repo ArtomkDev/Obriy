@@ -5,254 +5,249 @@ import { app, BrowserWindow } from 'electron'
 import * as CloudRepository from './CloudRepository'
 import * as CoreBridge from './CoreBridge'
 
-const CACHE_DIR = path.join(app.getPath('userData'), 'ModsCache')
-const TEMP_DIR = path.join(app.getPath('temp'), 'ObriyTemp')
-const GATEWAY_BASE = 'https://obriy-auth.artomk-dev.workers.dev'
+const MODIFICATION_CACHE_ROOT = path.join(app.getPath('userData'), 'ModsCache')
+const INSTALLATION_TEMPORARY_DIRECTORY = path.join(app.getPath('temp'), 'ObriyTemp')
+const REMOTE_API_BASE_URL = 'https://obriy-auth.artomk-dev.workers.dev'
+const APPLICATION_SESSION_ID = Date.now()
 
-let registryWatcher = null
-let debounceTimer = null
+let activeRegistryWatcher = null
+let registryWatcherDebounceTimer = null
 
-// --- Helpers ---
-function encodeR2Path(fileName) {
-  return encodeURIComponent(fileName).replace(/%2B/g, '+')
+function encodeRemoteResourceName(resourceName) {
+  return encodeURIComponent(resourceName).replace(/%2B/g, '+')
 }
-
-// --- System & Core Methods ---
 
 export async function ensureBackendReady() {
   return await CoreBridge.executeCoreCommand('ping', [])
 }
 
-export async function validateGamePath(gamePath) {
-  return await CoreBridge.executeCoreCommand('validate-path', [gamePath])
+export async function validateGamePath(gameDirectoryPath) {
+  return await CoreBridge.executeCoreCommand('validate-path', [gameDirectoryPath])
 }
 
-export async function getActiveMods(gamePath) {
-  if (!gamePath) return []
+export async function getActiveMods(gameDirectoryPath) {
+  if (!gameDirectoryPath) return []
   try {
-    const result = await CoreBridge.executeCoreCommand('get-active-mods', [gamePath])
-    if (result && result.status === 'success') return result.activeMods || []
-  } catch (e) { console.error('Failed to fetch active mods:', e) }
+    const coreServiceResponse = await CoreBridge.executeCoreCommand('get-active-mods', [gameDirectoryPath])
+    if (coreServiceResponse && coreServiceResponse.status === 'success') {
+      return coreServiceResponse.activeMods || []
+    }
+  } catch (executionError) {
+    console.error(executionError)
+  }
   return []
 }
 
-export function startRegistryWatcher(mainWindow, gamePath) {
-  if (registryWatcher) { registryWatcher.close(); registryWatcher = null }
-  const registryPath = path.join(gamePath, 'obriy_registry.json')
-  if (!fs.existsSync(registryPath)) return 
+export function startRegistryWatcher(mainWindowInstance, gameDirectoryPath) {
+  if (activeRegistryWatcher) {
+    activeRegistryWatcher.close()
+    activeRegistryWatcher = null
+  }
+  
+  const registryFilePath = path.join(gameDirectoryPath, 'obriy_registry.json')
+  if (!fs.existsSync(registryFilePath)) return 
+  
   try {
-    registryWatcher = fs.watch(registryPath, { persistent: false }, (eventType) => {
-      if (eventType === 'change') {
-        if (debounceTimer) clearTimeout(debounceTimer)
-        debounceTimer = setTimeout(async () => {
-          const mods = await getActiveMods(gamePath)
-          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('mods-updated', mods)
+    activeRegistryWatcher = fs.watch(registryFilePath, { persistent: false }, (fileEventType) => {
+      if (fileEventType === 'change') {
+        if (registryWatcherDebounceTimer) clearTimeout(registryWatcherDebounceTimer)
+        registryWatcherDebounceTimer = setTimeout(async () => {
+          const updatedActiveModsList = await getActiveMods(gameDirectoryPath)
+          if (mainWindowInstance && !mainWindowInstance.isDestroyed()) {
+            mainWindowInstance.webContents.send('mods-updated', updatedActiveModsList)
+          }
         }, 300) 
       }
     })
-  } catch (e) { console.error(`[Watcher] Failed: ${e.message}`) }
+  } catch (watcherInitializationError) {
+    console.error(watcherInitializationError)
+  }
 }
 
-// --- Mod Management Methods ---
-
 export async function getMarketplaceCatalog() {
-  const rawData = await CloudRepository.getCatalog()
-  
-  return rawData.map(item => {
-    const coverFile = item.img || '1.webp';
+  const marketplaceRawData = await CloudRepository.getCatalog()
+  return marketplaceRawData.map(marketplaceItem => {
+    const itemCoverFileName = marketplaceItem.img || '1.webp'
     return {
-      id: item.id,
-      name: item.n || item.name,
-      author: item.a || item.author,
-      category: item.c || item.category,
-      version: item.v || item.version,
-      image: `${GATEWAY_BASE}/mods/${item.id}/assets/${coverFile}`,
-      is_premium: (item.p === true || item.p === 1 || item.is_premium === true)
+      id: marketplaceItem.id,
+      name: marketplaceItem.n || marketplaceItem.name,
+      author: marketplaceItem.a || marketplaceItem.author,
+      category: marketplaceItem.c || marketplaceItem.category,
+      version: marketplaceItem.v || marketplaceItem.version,
+      image: `${REMOTE_API_BASE_URL}/mods/${marketplaceItem.id}/assets/${itemCoverFileName}?v=${APPLICATION_SESSION_ID}`,
+      is_premium: (marketplaceItem.p === true || marketplaceItem.p === 1)
     }
   })
 }
 
-export async function getModDetails(modId) {
-  const manifest = await CloudRepository.getModManifest(modId)
-  let media = []
+export async function getModDetails(modificationId) {
+  const modificationManifestData = await CloudRepository.getModManifest(modificationId)
+  let modificationMediaGallery = []
   
-  // 1. Спробуємо взяти медіа з маніфесту (новий формат)
-  if (manifest.media && Array.isArray(manifest.media) && manifest.media.length > 0) {
-    media = manifest.media.map(fileName => {
-      const ext = fileName.split('.').pop().toLowerCase()
-      const isVideo = ['mp4', 'webm', 'mov'].includes(ext)
-      const fullUrl = `${GATEWAY_BASE}/mods/${modId}/assets/${fileName}`
+  if (modificationManifestData.media && Array.isArray(modificationManifestData.media) && modificationManifestData.media.length > 0) {
+    modificationMediaGallery = modificationManifestData.media.map(mediaFileName => {
+      const mediaFileExtension = mediaFileName.split('.').pop().toLowerCase()
+      const isVideoMedia = ['mp4', 'webm', 'mov'].includes(mediaFileExtension)
+      const mediaSourceUrl = `${REMOTE_API_BASE_URL}/mods/${modificationId}/assets/${mediaFileName}?v=${APPLICATION_SESSION_ID}`
       
       return {
-        type: isVideo ? 'video' : 'image',
-        source: fullUrl,
-        // Для відео даємо заглушку-прев'ю (зазвичай 1.webp або перше фото)
-        thumbnail: isVideo ? `${GATEWAY_BASE}/mods/${modId}/assets/1.webp` : null 
+        type: isVideoMedia ? 'video' : 'image',
+        source: mediaSourceUrl,
+        thumbnail: `${REMOTE_API_BASE_URL}/mods/${modificationId}/assets/1.webp?v=${APPLICATION_SESSION_ID}`
       }
     })
   } else {
-    // 2. Фолбек для старих модів (або якщо масив порожній)
-    // Просто генеруємо посилання на 1.webp, щоб фронтенд не впав
-    media.push({ 
-        type: 'image', 
-        source: `${GATEWAY_BASE}/mods/${modId}/assets/1.webp` 
+    modificationMediaGallery.push({ 
+      type: 'image', 
+      source: `${REMOTE_API_BASE_URL}/mods/${modificationId}/assets/1.webp?v=${APPLICATION_SESSION_ID}` 
     })
   }
 
-  const isPremium = manifest.p === true || manifest.p === 1 || manifest.is_premium === true
-
-  return {
-    ...manifest,
-    id: modId,
-    is_premium: isPremium,
-    media: media // Гарантовано масив з хоча б одним елементом
+  return { 
+    ...modificationManifestData, 
+    id: modificationId, 
+    media: modificationMediaGallery 
   }
 }
 
-export async function installMod(modId, gamePath) {
-  console.log(`[Install] Starting installation for mod ${modId}`)
-  const modDir = path.join(CACHE_DIR, modId.toString())
-  await fs.emptyDir(modDir)
+export async function installMod(modificationId, gameDirectoryPath) {
+  const modificationSessionDirectory = path.join(MODIFICATION_CACHE_ROOT, modificationId.toString())
+  await fs.emptyDir(modificationSessionDirectory)
   
-  const zipPath = path.join(modDir, 'payload.zip')
-  const manifestPath = path.join(modDir, 'manifest.json')
-  const extractPath = path.join(modDir, 'extracted')
+  const instructionFileLocalPath = path.join(modificationSessionDirectory, 'instruction.json')
+  const payloadArchiveLocalPath = path.join(modificationSessionDirectory, 'payload.zip')
+  const extractionDirectoryPath = path.join(modificationSessionDirectory, 'extracted')
+  const userInterfaceFeedbackChannel = BrowserWindow.getAllWindows()[0]?.webContents
 
-  const sender = BrowserWindow.getAllWindows()[0]?.webContents
+  await CloudRepository.downloadFile(`/mods/${modificationId}/instruction.json`, instructionFileLocalPath)
 
-  await CloudRepository.downloadFile(
-    `/mods/${modId}/payload.zip`, 
-    zipPath, 
-    (pct) => sender?.send('installation-progress', { type: 'download', value: pct })
-  )
+  const modificationManifest = await CloudRepository.getModManifest(modificationId)
+  const isBinaryPayloadRequired = modificationManifest.hasPayload === true
 
-  await CloudRepository.downloadFile(`/mods/${modId}/manifest.json`, manifestPath)
-
-  const zip = new AdmZip(zipPath)
-  zip.extractAllTo(extractPath, true)
-
-  const manifest = await fs.readJson(manifestPath)
-  
-  const resolvedInstructions = manifest.instructionSet.map(instr => {
-    let relativePath = instr.sourcePath || instr.sourceFile || instr.sourceSubPath || ''
-    let absolutePath
-    
-    if (relativePath.includes('{{ARCHIVE_ROOT}}')) {
-      absolutePath = relativePath.replace('{{ARCHIVE_ROOT}}', extractPath)
-    } else {
-      absolutePath = path.join(extractPath, relativePath)
-    }
-    
-    return { ...instr, sourceFile: path.normalize(absolutePath) }
-  })
-
-  const batchItems = prepareBatchItems(resolvedInstructions, gamePath)
-
-  if (batchItems.length === 0) {
-    console.warn(`[Install] WARNING: No files found to install!`)
-  }
-  
-  const tempManifest = path.join(TEMP_DIR, `install_${modId}.json`)
-  await fs.ensureDir(TEMP_DIR)
-  await fs.writeJson(tempManifest, batchItems)
-
-  const result = await CoreBridge.executeCoreCommand('install-batch', [tempManifest, String(modId), gamePath], sender, modId)
-  
-  sender?.send('installation-progress', { type: 'install', value: 100 })
-  return result
-}
-
-export async function uninstallMod(modId, gamePath) {
-  const sender = BrowserWindow.getAllWindows()[0]?.webContents
-  const registryPath = path.join(gamePath, 'obriy_registry.json')
-  
-  if (!fs.existsSync(registryPath)) return { status: 'error', message: 'Registry not found' }
-  
-  const registry = await fs.readJson(registryPath)
-  const filesToRestore = Object.entries(registry)
-    .filter(([_, owner]) => String(owner) === String(modId))
-    .map(([key]) => key)
-
-  if (filesToRestore.length === 0) return { status: 'success', message: 'Nothing to uninstall' }
-
-  let vanillaCategory = 'misc'
-  try {
-    const manifest = await CloudRepository.getModManifest(modId)
-    if (manifest.instructionSet?.[0]?.vanilla) {
-      vanillaCategory = manifest.instructionSet[0].vanilla
-    }
-  } catch (e) { console.warn('Manifest fetch failed during uninstall') }
-
-  const restoreBatch = []
-  const tempRestoreDir = path.join(TEMP_DIR, `restore_${modId}`)
-  await fs.ensureDir(tempRestoreDir)
-
-  let progress = 0
-  let lastProgressUpdate = 0
-
-  const downloadPromises = filesToRestore.map(async (fileKey) => {
-    const [rpf, internalName] = fileKey.split('|')
-    const fileName = path.basename(internalName)
-    const localDest = path.join(tempRestoreDir, fileName)
-    
-    try {
-      const url = `/vanilla/${vanillaCategory}/${encodeR2Path(fileName)}`
-      await CloudRepository.downloadFile(url, localDest)
-      
-      restoreBatch.push({
-        TargetPath: path.join(gamePath, rpf, internalName),
-        SourceFilePath: localDest
+  if (isBinaryPayloadRequired) {
+    await CloudRepository.downloadFile(
+      `/mods/${modificationId}/payload.zip`, 
+      payloadArchiveLocalPath, 
+      (downloadProgressPercentage) => userInterfaceFeedbackChannel?.send('installation-progress', { 
+        type: 'download', 
+        value: downloadProgressPercentage 
       })
-    } catch (e) {
-      console.error(`Failed to download vanilla: ${fileName} (${e.message})`)
-    } finally {
-      progress++
-      const now = Date.now()
-      if (now - lastProgressUpdate > 100 || progress === filesToRestore.length) {
-        sender?.send('task-progress', { type: 'download', modId, percentage: Math.round((progress / filesToRestore.length) * 100) })
-        lastProgressUpdate = now
+    )
+    const archiveUnpacker = new AdmZip(payloadArchiveLocalPath)
+    archiveUnpacker.extractAllTo(extractionDirectoryPath, true)
+  }
+
+  const modificationInstructionsSet = await fs.readJson(instructionFileLocalPath)
+  const installationTasksBatch = []
+
+  if (isBinaryPayloadRequired) {
+    for (const instruction of modificationInstructionsSet) {
+      if (instruction.type !== 'replace') continue
+
+      const sourceContentSubPath = instruction.sourceSubPath || ''
+      const absoluteSourceContentPath = path.normalize(path.join(extractionDirectoryPath, sourceContentSubPath))
+
+      if (!fs.existsSync(absoluteSourceContentPath)) continue
+
+      const directoryFilesList = fs.readdirSync(absoluteSourceContentPath)
+      for (const fileName of directoryFilesList) {
+        const fullSourceFilePath = path.join(absoluteSourceContentPath, fileName)
+        if (fs.statSync(fullSourceFilePath).isDirectory()) continue
+
+        installationTasksBatch.push({
+          TargetPath: path.join(instruction.targetPath, fileName).replace(/\\/g, '/'),
+          SourceFilePath: path.normalize(fullSourceFilePath)
+        })
       }
     }
-  })
+  }
 
-  await Promise.all(downloadPromises)
+  if (installationTasksBatch.length === 0) {
+    return { status: 'error', message: 'Task list empty' }
+  }
 
-  const uninstallManifest = path.join(TEMP_DIR, `uninstall_${modId}.json`)
-  await fs.writeJson(uninstallManifest, restoreBatch)
+  const tasksManifestTemporaryPath = path.join(INSTALLATION_TEMPORARY_DIRECTORY, `tasks_${modificationId}.json`)
+  await fs.ensureDir(INSTALLATION_TEMPORARY_DIRECTORY)
+  await fs.writeJson(tasksManifestTemporaryPath, installationTasksBatch)
 
-  console.log(`[Uninstall] Restoring ${restoreBatch.length}/${filesToRestore.length} files.`)
+  const backendExecutionResult = await CoreBridge.executeCoreCommand(
+    'install-batch', 
+    [tasksManifestTemporaryPath, String(modificationId), gameDirectoryPath], 
+    userInterfaceFeedbackChannel, 
+    modificationId
+  )
 
-  return await CoreBridge.executeCoreCommand('uninstall-mod', [uninstallManifest, String(modId), gamePath], sender, modId)
+  if (backendExecutionResult.status === 'success') {
+    await fs.remove(modificationSessionDirectory)
+  }
+
+  userInterfaceFeedbackChannel?.send('installation-progress', { type: 'install', value: 100 })
+  return backendExecutionResult
 }
 
-function prepareBatchItems(instructionSet, gameRootPath) {
-  let batchItems = []
+export async function uninstallMod(modificationId, gameDirectoryPath) {
+  const userInterfaceFeedbackChannel = BrowserWindow.getAllWindows()[0]?.webContents
+  const registryFilePath = path.join(gameDirectoryPath, 'obriy_registry.json')
   
-  instructionSet.forEach(instr => {
-    const sourcePath = instr.sourceFile
-    if (!sourcePath || !fs.existsSync(sourcePath)) return
+  if (!fs.existsSync(registryFilePath)) return { status: 'error', message: 'Registry not found' }
+  
+  const registryData = await fs.readJson(registryFilePath)
+  const modificationOwnedFilesKeys = Object.entries(registryData)
+    .filter(([_, ownerModificationId]) => String(ownerModificationId) === String(modificationId))
+    .map(([fileKey]) => fileKey)
 
-    const stats = fs.statSync(sourcePath)
+  if (modificationOwnedFilesKeys.length === 0) return { status: 'success', message: 'Nothing to uninstall' }
+
+  let vanillaFilesCategory = 'misc'
+  try {
+    const modificationManifest = await CloudRepository.getModManifest(modificationId)
+    if (modificationManifest.instructionSet?.[0]?.vanilla) {
+      vanillaFilesCategory = modificationManifest.instructionSet[0].vanilla
+    }
+  } catch (manifestFetchError) {}
+
+  const restorationTasksBatch = []
+  const recoveryTemporaryDirectory = path.join(INSTALLATION_TEMPORARY_DIRECTORY, `restore_${modificationId}`)
+  await fs.ensureDir(recoveryTemporaryDirectory)
+
+  let processedFilesCounter = 0
+  const restorationDownloadsPromises = modificationOwnedFilesKeys.map(async (registryKey) => {
+    const [rpfArchiveRelativePath, internalFileRelativePath] = registryKey.split('|')
+    const fileName = path.basename(internalFileRelativePath)
+    const localRecoveryFilePath = path.join(recoveryTemporaryDirectory, fileName)
     
-    if (stats.isDirectory()) {
-      const files = fs.readdirSync(sourcePath)
-      files.forEach(file => {
-        const fullSourceFilePath = path.join(sourcePath, file)
-        if (file === 'manifest.json' || file === 'payload.zip') return
-
-        if (fs.statSync(fullSourceFilePath).isFile()) {
-          batchItems.push({
-            targetPath: path.join(gameRootPath, instr.targetPath, file),
-            sourceFilePath: fullSourceFilePath
-          })
-        }
+    try {
+      await CloudRepository.downloadFile(`/vanilla/${vanillaFilesCategory}/${encodeRemoteResourceName(fileName)}`, localRecoveryFilePath)
+      restorationTasksBatch.push({ 
+        TargetPath: path.join(rpfArchiveRelativePath, internalFileRelativePath).replace(/\\/g, '/'), 
+        SourceFilePath: localRecoveryFilePath 
       })
-    } else {
-      batchItems.push({
-        targetPath: path.join(gameRootPath, instr.targetPath),
-        sourceFilePath: sourcePath
+    } catch (downloadError) {}
+    finally {
+      processedFilesCounter++
+      userInterfaceFeedbackChannel?.send('task-progress', { 
+        type: 'download', 
+        modId: modificationId, 
+        percentage: Math.round((processedFilesCounter / modificationOwnedFilesKeys.length) * 100) 
       })
     }
   })
-  return batchItems
+
+  await Promise.all(restorationDownloadsPromises)
+
+  const uninstallationManifestTemporaryPath = path.join(INSTALLATION_TEMPORARY_DIRECTORY, `un_${modificationId}.json`)
+  await fs.writeJson(uninstallationManifestTemporaryPath, restorationTasksBatch)
+
+  const uninstallationResult = await CoreBridge.executeCoreCommand(
+    'uninstall-mod', 
+    [uninstallationManifestTemporaryPath, String(modificationId), gameDirectoryPath], 
+    userInterfaceFeedbackChannel, 
+    modificationId
+  )
+
+  if (uninstallationResult.status === 'success') {
+    await fs.remove(recoveryTemporaryDirectory)
+  }
+
+  return uninstallationResult
 }

@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, session } from 'electron'
 import { join, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -12,7 +12,7 @@ import * as CloudRepository from './services/CloudRepository'
 
 const { autoUpdater } = updaterPkg
 
-const INTEGRITY_SALT = "Obriy_System_Secure_v1_DoNotEdit_8822"
+const INTEGRITY_SALT = 'Obriy_System_Secure_v1_DoNotEdit_8822'
 
 function signAuthData(data) {
   if (!data || typeof data !== 'object') return data
@@ -31,18 +31,17 @@ function validateAuthData(data) {
 
 let store
 try {
-    store = new Store({ clearInvalidConfig: true })
+  store = new Store({ clearInvalidConfig: true })
 } catch (error) {
-    console.error('[Main] Config corrupted. Resetting...', error)
-    try {
-        const configPath = join(app.getPath('userData'), 'config.json')
-        if (fs.existsSync(configPath)) {
-            fs.unlinkSync(configPath)
-        }
-    } catch (e) {
-        console.error('[Main] Failed to delete config:', e)
+  try {
+    const configPath = join(app.getPath('userData'), 'config.json')
+    if (fs.existsSync(configPath)) {
+      fs.unlinkSync(configPath)
     }
-    store = new Store()
+  } catch (e) {
+    console.error(e)
+  }
+  store = new Store()
 }
 
 let loaderWindow = null
@@ -141,10 +140,10 @@ function createMainWindow() {
     if (loaderWindow && !loaderWindow.isDestroyed()) {
       loaderWindow.close()
     }
-    
+
     const savedPath = store.get('gta_path')
     if (savedPath) {
-        ModManager.startRegistryWatcher(mainWindow, savedPath)
+      ModManager.startRegistryWatcher(mainWindow, savedPath)
     }
   })
 
@@ -160,8 +159,10 @@ function createMainWindow() {
   return mainWindow
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.obriy.launcher')
+
+  await session.defaultSession.clearCache()
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -205,9 +206,8 @@ app.whenReady().then(() => {
   ipcMain.handle('window:resize-to-loader', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMaximized()) mainWindow.unmaximize()
-      
-      // КЛЮЧОВИЙ МОМЕНТ: Скидаємо мінімальні розміри
-      mainWindow.setMinimumSize(400, 450) 
+
+      mainWindow.setMinimumSize(400, 450)
       mainWindow.setResizable(true)
       mainWindow.setSize(400, 450)
       mainWindow.setResizable(false)
@@ -236,27 +236,26 @@ app.whenReady().then(() => {
 
   ipcMain.handle('store:get', (_, key) => {
     const value = store.get(key)
-    
+
     if (key === 'auth_user' && value) {
-        if (!validateAuthData(value)) {
-            console.error('[Security] DETECTED CONFIG TAMPERING! Resetting auth_user.')
-            store.delete('auth_user')
-            return null
-        }
+      if (!validateAuthData(value)) {
+        store.delete('auth_user')
+        return null
+      }
     }
     return value
   })
-  
+
   ipcMain.handle('store:set', (_, key, value) => {
     if (key === 'auth_user') {
-        const signedValue = signAuthData(value)
-        store.set(key, signedValue)
-        return true
+      const signedValue = signAuthData(value)
+      store.set(key, signedValue)
+      return true
     }
 
     store.set(key, value)
     if (key === 'gta_path' && mainWindow) {
-        ModManager.startRegistryWatcher(mainWindow, value)
+      ModManager.startRegistryWatcher(mainWindow, value)
     }
     return true
   })
@@ -269,10 +268,10 @@ app.whenReady().then(() => {
   ipcMain.handle('auth:verify-subscription', async () => {
     const localUser = store.get('auth_user')
     if (!localUser || !localUser.id) return null
-    
+
     try {
       const freshProfile = await CloudRepository.getUserProfile(localUser.id)
-      
+
       if (freshProfile) {
         const signedProfile = signAuthData(freshProfile)
         store.set('auth_user', signedProfile)
@@ -280,7 +279,6 @@ app.whenReady().then(() => {
       }
       return null
     } catch (networkError) {
-      console.error('[Main] Subscription verification failed:', networkError.message)
       return localUser
     }
   })
@@ -298,9 +296,11 @@ app.whenReady().then(() => {
     const selectedPath = filePaths[0]
     try {
       const validationResult = await ModManager.validateGamePath(selectedPath)
-      
+
       if (validationResult.isValid) {
-        const directoryPath = validationResult.exePath ? dirname(validationResult.exePath) : selectedPath
+        const directoryPath = validationResult.exePath
+          ? dirname(validationResult.exePath)
+          : selectedPath
         if (mainWindow) ModManager.startRegistryWatcher(mainWindow, directoryPath)
         return { success: true, path: directoryPath }
       }
@@ -311,7 +311,7 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('validate-game-path', async (_, path) => {
-      return await ModManager.validateGamePath(path)
+    return await ModManager.validateGamePath(path)
   })
 
   ipcMain.handle('start-backend', async () => {
@@ -319,7 +319,7 @@ app.whenReady().then(() => {
       await ModManager.ensureBackendReady()
       return true
     } catch (backendError) {
-      throw new Error(`Failed to start backend: ${backendError.message}`)
+      throw new Error(backendError.message)
     }
   })
 
@@ -327,15 +327,14 @@ app.whenReady().then(() => {
     try {
       return await ModManager.getMarketplaceCatalog()
     } catch (networkError) {
-      console.error(networkError.message)
       return []
     }
   })
 
   ipcMain.handle('get-active-mods', async () => {
-      const gameDirectory = store.get('gta_path')
-      if (!gameDirectory) return []
-      return await ModManager.getActiveMods(gameDirectory)
+    const gameDirectory = store.get('gta_path')
+    if (!gameDirectory) return []
+    return await ModManager.getActiveMods(gameDirectory)
   })
 
   ipcMain.handle('get-mod-stats', async (_, modId) => {
@@ -346,7 +345,6 @@ app.whenReady().then(() => {
     try {
       return await ModManager.getModDetails(modId)
     } catch (detailError) {
-      console.error(detailError.message)
       return null
     }
   })
@@ -354,15 +352,13 @@ app.whenReady().then(() => {
   ipcMain.handle('install-mod', async (event, modId) => {
     try {
       const gameDirectory = store.get('gta_path')
-      
-      // 1. ПЕРЕВІРКА ШЛЯХУ (як і була)
+
       if (!gameDirectory || !fs.existsSync(gameDirectory)) {
-        console.error('[Main] Game directory not found on disk:', gameDirectory)
         store.delete('gta_path')
         event.sender.send('path:sync-directory', null)
         throw new Error('Папка з грою не знайдена. Оберіть шлях заново.')
       }
-    
+
       const directoryValidation = await ModManager.validateGamePath(gameDirectory)
       if (!directoryValidation.isValid) {
         store.delete('gta_path')
@@ -370,30 +366,24 @@ app.whenReady().then(() => {
         throw new Error('У цій папці немає файлу GTA5.exe. Оберіть шлях заново.')
       }
 
-      // 2. ПЕРЕВІРКА АВТОРИЗАЦІЇ ТА ЦІЛІСНОСТІ (ТЕПЕР ДЛЯ ВСІХ МОДІВ)
       const authUser = store.get('auth_user')
-      
-      // Перевіряємо, чи не підроблений файл config.json
+
       if (authUser && !validateAuthData(authUser)) {
-          console.error('[Security] Config tampering detected during install request')
-          store.delete('auth_user')
-          event.sender.send('auth:sync-profile', null) // Викидаємо на логін
-          throw new Error('Security Error: Profile data tampered. Session reset.')
+        store.delete('auth_user')
+        event.sender.send('auth:sync-profile', null)
+        throw new Error('Security Error: Profile data tampered.')
       }
 
-      // Перевіряємо, чи користувач взагалі залогінений
       if (!authUser || !authUser.id) {
-          throw new Error('Для встановлення модифікацій необхідно увійти в акаунт.')
+        throw new Error('Для встановлення модифікацій необхідно увійти в акаунт.')
       }
-    
+
       const modDetails = await ModManager.getModDetails(modId)
-      
-      // 3. ПЕРЕВІРКА PREMIUM (тільки якщо сам мод позначений як преміум)
+
       if (modDetails.is_premium && !authUser.isPremium) {
-          throw new Error('Ця модифікація доступна лише для Premium підписників.')
+        throw new Error('Ця модифікація доступна лише для Premium підписників.')
       }
-      
-      // Якщо всі перевірки пройдено — запускаємо встановлення
+
       const result = await ModManager.installMod(modId, gameDirectory)
       return { success: true, data: result }
     } catch (err) {
@@ -436,9 +426,9 @@ autoUpdater.on('error', (updateError) => {
 
 autoUpdater.on('download-progress', (progressInfo) => {
   if (loaderWindow && !loaderWindow.isDestroyed()) {
-    loaderWindow.webContents.send('update-status', { 
-      status: 'downloading', 
-      progress: progressInfo.percent 
+    loaderWindow.webContents.send('update-status', {
+      status: 'downloading',
+      progress: progressInfo.percent
     })
   }
 })

@@ -1,20 +1,28 @@
 const fs = require('fs-extra');
 const path = require('path');
+const colors = require('colors');
 
-// ДОДАНО: третій аргумент mediaList (список файлів з 3-assets.js)
 module.exports = async function buildManifest(modId, config, mediaList = []) {
-    console.log(`[Manifest] Building manifest for ${modId}...`);
+    console.log(`[Manifest] Building separated manifest for ${modId}...`.cyan);
 
-    // 1. Шляхи
     const modSourceDir = path.join(config.paths.modsSource, modId);
     const manifestPath = path.join(modSourceDir, 'manifest.json');
+    const modFilesDir = path.join(modSourceDir, 'mod');
 
     if (!fs.existsSync(manifestPath)) {
         throw new Error(`Manifest not found at: ${manifestPath}`);
     }
 
-    const modData = await fs.readJson(manifestPath);
-    const templateName = modData.instructionSet;
+    const sourceManifest = await fs.readJson(manifestPath);
+
+    const requiredFields = ['name', 'version', 'category'];
+    const missingFields = requiredFields.filter(field => !sourceManifest[field]);
+    
+    if (missingFields.length > 0) {
+        throw new Error(`Validation Error: Missing fields [${missingFields.join(', ')}]`.red);
+    }
+
+    const templateName = sourceManifest.instructionSet;
     const templatePath = path.join(config.paths.templates, `${templateName}.json`);
 
     if (!fs.existsSync(templatePath)) {
@@ -22,88 +30,55 @@ module.exports = async function buildManifest(modId, config, mediaList = []) {
     }
 
     const template = await fs.readJson(templatePath);
-    const modFilesPath = path.join(modSourceDir, 'mod');
-
-    if (!fs.existsSync(modFilesPath)) {
-         throw new Error(`Mod files folder not found at: ${modFilesPath}`);
-    }
-
-    // Змінна для підрахунку загального розміру
+    
     let totalInstallSize = 0;
+    let hasPayloadFiles = false;
 
-    // Трансформація інструкцій
-    const finalInstructions = await Promise.all(template.map(async (step) => {
-        if (step.type !== 'replace') return step;
-
-        const sourceSubPath = step.sourceFile || ""; 
-        const fullSourcePath = path.join(modFilesPath, sourceSubPath);
-
-        if (!fs.existsSync(fullSourcePath)) {
-            throw new Error(`Source path not found: '${sourceSubPath}'`);
+    await Promise.all(template.map(async (step) => {
+        if (step.type === 'replace' || step.type === 'replace_batch') {
+            if (fs.existsSync(modFilesDir)) {
+                const files = await fs.readdir(modFilesDir);
+                if (files.length > 0) {
+                    hasPayloadFiles = true;
+                    for (const f of files) {
+                        const s = await fs.stat(path.join(modFilesDir, f));
+                        totalInstallSize += s.size;
+                    }
+                }
+            }
         }
-
-        const files = await fs.readdir(fullSourcePath);
-        
-        const validFiles = files.filter(f => 
-            f !== '.DS_Store' && 
-            f !== 'Thumbs.db' && 
-            f !== 'Thumbs.db:encryptable' && 
-            !f.endsWith('.db') &&
-            !fs.statSync(path.join(fullSourcePath, f)).isDirectory()
-        );
-
-        // Рахуємо розмір файлів
-        for (const file of validFiles) {
-            const filePath = path.join(fullSourcePath, file);
-            const stats = await fs.stat(filePath);
-            totalInstallSize += stats.size;
-        }
-
-        if (validFiles.length === 0) {
-             console.warn(`   ⚠️ WARNING: No files found in '${sourceSubPath || "root"}'`);
-        } else {
-             console.log(`   -> Validated ${validFiles.length} files in '${sourceSubPath || "mod root"}'`);
-        }
-
-        return {
-            type: 'replace_batch',
-            targetPath: step.targetPath,
-            sourceSubPath: sourceSubPath,
-            vanilla: templateName
-        };
     }));
-
-    console.log(`   -> Total Install Size: ${(totalInstallSize / 1024 / 1024).toFixed(2)} MB`);
-
-    // --- ФОРМУЄМО ХМАРНИЙ МАНІФЕСТ ---
-    const cloudManifest = {
-        id: modData.id,
-        name: modData.name,
-        version: modData.version,
-        description: modData.description,
-        changelog: modData.changelog,
-        category: modData.category,
-        tags: modData.tags || [],
-        
-        // Преміум статус
-        is_premium: modData.is_premium || false, 
-
-        releaseDate: new Date().toISOString(),
-        installSize: totalInstallSize,
-        
-        // ✅ НОВЕ ПОЛЕ: Список медіа (відео та фото)
-        media: mediaList,
-        
-        instructionSet: finalInstructions
-    };
 
     const outputDir = path.join(config.paths.modsDist, modId);
     await fs.ensureDir(outputDir);
-    await fs.writeJson(path.join(outputDir, 'manifest.json'), cloudManifest, { spaces: 2 });
 
-    console.log(`   -> Premium Status: ${cloudManifest.is_premium ? 'YES' : 'NO'}`);
-    console.log(`   -> Media items attached: ${mediaList.length}`);
-    console.log(`[Manifest] Done for ${modId}`);
+    if (template.length > 0) {
+        const instructionPath = path.join(outputDir, 'instruction.json');
+        await fs.writeJson(instructionPath, template, { spaces: 2 });
+        
+        const instStats = await fs.stat(instructionPath);
+        totalInstallSize += instStats.size;
+        
+        console.log(`   -> 📜 Generated instruction.json (${template.length} steps)`.yellow);
+    }
 
-    return cloudManifest;
+    const cleanCloudManifest = {
+        id: sourceManifest.id,
+        name: sourceManifest.name,
+        version: sourceManifest.version,
+        description: sourceManifest.description,
+        category: sourceManifest.category,
+        tags: sourceManifest.tags || [],
+        is_premium: sourceManifest.is_premium || false,
+        releaseDate: new Date().toISOString(),
+        installSize: totalInstallSize,
+        media: mediaList,
+        hasPayload: hasPayloadFiles
+    };
+
+    await fs.writeJson(path.join(outputDir, 'manifest.json'), cleanCloudManifest, { spaces: 2 });
+    
+    console.log(`   -> Manifest generated. Payload: ${hasPayloadFiles}`.green);
+    
+    return cleanCloudManifest; 
 };

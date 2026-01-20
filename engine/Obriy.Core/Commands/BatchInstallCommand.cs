@@ -18,167 +18,134 @@ namespace Obriy.Core.Commands
     {
         public string CommandName => "install-batch";
 
-        public Task ExecuteAsync(string[] args)
+        public async Task ExecuteAsync(string[] args)
         {
-            var writer = new StreamWriter(Console.OpenStandardOutput());
-            writer.AutoFlush = true;
-            Console.SetOut(writer);
-
-            if (args.Length < 1) 
+            if (args.Length < 3) 
             {
-                Error("Manifest path required");
-                return Task.CompletedTask;
+                Error("Required arguments: tasksPath, modId, gamePath");
+                return;
             }
 
             string manifestPath = args[0];
-            string modId = args.Length > 1 ? args[1] : null;
-            string gameRootPath = args.Length > 2 ? args[2] : null;
+            string modId = args[1];
+            string gameRootPath = args[2];
+
+            Console.Error.WriteLine($"[Core] Starting batch install for ModID: {modId}");
+            Console.Error.WriteLine($"[Core] Tasks file: {manifestPath}");
 
             if (!File.Exists(manifestPath)) 
             {
-                Error($"Manifest file not found: {manifestPath}");
-                return Task.CompletedTask;
+                Error($"Task file not found: {manifestPath}");
+                return;
             }
 
             try
             {
-                string jsonContent = File.ReadAllText(manifestPath);
+                string json = await File.ReadAllTextAsync(manifestPath);
                 var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                var items = JsonSerializer.Deserialize<List<BatchItem>>(jsonContent, options);
+                var items = JsonSerializer.Deserialize<List<BatchItem>>(json, options);
                 
-                string rootForEditor = !string.IsNullOrEmpty(gameRootPath) ? gameRootPath : AppDomain.CurrentDomain.BaseDirectory;
-                
-                var editor = new RpfEditor(rootForEditor);
-                var operationsByRpf = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
-                
-                RegistryService registryService = null;
-                if (!string.IsNullOrEmpty(modId))
+                if (items == null || items.Count == 0)
                 {
-                    try 
-                    {
-                        registryService = new RegistryService(rootForEditor);
-                    }
-                    catch {}
+                    Error("No tasks provided in JSON");
+                    return;
                 }
+
+                Console.Error.WriteLine($"[Core] Deserialized {items.Count} items from manifest");
+
+                var editor = new RpfEditor(gameRootPath);
+                var operationsByRpf = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+                var registry = new RegistryService(gameRootPath);
                 
-                // === ПРОГРЕС ===
-                int totalFilesToInstall = 0;
-                
+                int validFilesCount = 0;
                 foreach (var item in items)
                 {
                     if (File.Exists(item.SourceFilePath))
                     {
                         try 
                         {
-                            var pathInfo = SplitPath(item.TargetPath);
-                            string physicalKey = Path.GetFullPath(pathInfo.PhysicalPath);
+                            string fullGamePath = Path.Combine(gameRootPath, item.TargetPath);
+                            var info = SplitPath(fullGamePath);
+                            string rpfPath = Path.GetFullPath(info.PhysicalPath);
 
-                            if (!operationsByRpf.ContainsKey(physicalKey))
-                            {
-                                operationsByRpf[physicalKey] = new Dictionary<string, string>();
-                            }
-                            operationsByRpf[physicalKey][pathInfo.InternalPath] = item.SourceFilePath;
-                            totalFilesToInstall++; // Рахуємо реальні файли
+                            if (!operationsByRpf.ContainsKey(rpfPath)) 
+                                operationsByRpf[rpfPath] = new Dictionary<string, string>();
+                            
+                            operationsByRpf[rpfPath][info.InternalPath] = item.SourceFilePath;
+                            validFilesCount++;
                         }
-                        catch {}
+                        catch (Exception ex)
+                        {
+                            Console.Error.WriteLine($"[Core] Path split error for {item.TargetPath}: {ex.Message}");
+                        }
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"[Core] Source file not found: {item.SourceFilePath}");
                     }
                 }
 
-                int processedFiles = 0;
-                int lastReportedPercent = -1;
+                if (validFilesCount == 0)
+                {
+                    Error("Zero valid files found after processing paths");
+                    return;
+                }
 
-                Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = 0 }));
+                Console.Error.WriteLine($"[Core] Grouped tasks into {operationsByRpf.Count} RPF containers");
 
+                int processedCount = 0;
                 foreach (var kvp in operationsByRpf)
                 {
-                    string physicalRpf = kvp.Key;
-                    var updates = kvp.Value;
-
-                    Console.Error.WriteLine($"[Batch] Installing to: {Path.GetFileName(physicalRpf)} ({updates.Count} files)");
-
-                    try
+                    Console.Error.WriteLine($"[Core] Processing RPF: {Path.GetFileName(kvp.Key)}");
+                    
+                    editor.InstallBatch(kvp.Key, kvp.Value, () => 
                     {
-                        editor.InstallBatch(physicalRpf, updates, () => 
-                        {
-                            processedFiles++;
-                            
-                            double rawPercent = (double)processedFiles / totalFilesToInstall;
-                            int currentPercent = (int)(rawPercent * 90); // Масштабуємо до 90%
+                        processedCount++;
+                        int percent = (int)((double)processedCount / validFilesCount * 100);
+                        Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = percent }));
+                    }, true);
 
-                            if (currentPercent > lastReportedPercent)
-                            {
-                                Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = currentPercent }));
-                                lastReportedPercent = currentPercent;
-                            }
-                        }, true);
-
-                        if (registryService != null)
-                        {
-                            string relativeRpf = Path.GetRelativePath(rootForEditor, physicalRpf).Replace("\\", "/");
-                            foreach (var fileUpdate in updates)
-                            {
-                                string internalPath = fileUpdate.Key.Replace("\\", "/");
-                                registryService.RegisterFileOwnership(relativeRpf, internalPath, modId);
-                            }
-                        }
-                    }
-                    catch (Exception rpfEx)
+                    string relRpf = Path.GetRelativePath(gameRootPath, kvp.Key).Replace("\\", "/");
+                    foreach (var update in kvp.Value)
                     {
-                        Console.Error.WriteLine($"[Batch] Error processing {Path.GetFileName(physicalRpf)}: {rpfEx.Message}");
-                        // Якщо помилка, "закриваємо" прогрес цих файлів
-                        processedFiles += updates.Count; 
+                        registry.RegisterFileOwnership(relRpf, update.Key.Replace("\\", "/"), modId);
                     }
                 }
 
-                if (registryService != null)
-                {
-                    registryService.SaveRegistry();
-                }
+                registry.SaveRegistry();
+                Console.Error.WriteLine("[Core] Registry saved successfully");
 
-                try { File.Delete(manifestPath); } catch { }
-
-                Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = 100 }));
-
-                var success = new { 
+                Console.WriteLine(JsonSerializer.Serialize(new { 
                     status = "success", 
-                    processed = items.Count,
-                    activeMods = registryService != null ? registryService.GetActiveModIds() : new List<string>()
-                };
-                Console.WriteLine(JsonSerializer.Serialize(success));
+                    activeMods = registry.GetActiveModIds() 
+                }));
             }
             catch (Exception ex)
             {
+                Console.Error.WriteLine($"[Core] Fatal Exception: {ex.Message}");
                 Error(ex.Message, ex.StackTrace);
             }
-            
-            return Task.CompletedTask;
         }
 
         private void Error(string msg, string trace = null)
         {
-            var err = new { status = "error", message = msg, trace = trace };
-            Console.WriteLine(JsonSerializer.Serialize(err));
+            Console.WriteLine(JsonSerializer.Serialize(new { status = "error", message = msg, trace = trace }));
         }
 
         private (string PhysicalPath, string InternalPath) SplitPath(string fullPath)
         {
-            string currentPath = Path.GetFullPath(fullPath);
+            string current = Path.GetFullPath(fullPath);
             string internalParts = "";
-
-            while (!string.IsNullOrEmpty(currentPath))
+            while (!string.IsNullOrEmpty(current))
             {
-                if (File.Exists(currentPath))
-                    return (currentPath, internalParts.TrimStart('/', '\\'));
-
-                string fileName = Path.GetFileName(currentPath);
-                string directory = Path.GetDirectoryName(currentPath);
-
-                if (string.IsNullOrEmpty(directory) || directory.Equals(currentPath, StringComparison.OrdinalIgnoreCase)) break;
-
-                internalParts = Path.Combine(fileName, internalParts);
-                currentPath = directory;
+                if (File.Exists(current)) return (current, internalParts.TrimStart('/', '\\'));
+                string name = Path.GetFileName(current);
+                string dir = Path.GetDirectoryName(current);
+                if (string.IsNullOrEmpty(dir) || dir.Equals(current, StringComparison.OrdinalIgnoreCase)) break;
+                internalParts = Path.Combine(name, internalParts);
+                current = dir;
             }
-            throw new FileNotFoundException($"Valid RPF root not found for: {fullPath}");
+            throw new FileNotFoundException($"RPF root not found for path: {fullPath}");
         }
     }
 }

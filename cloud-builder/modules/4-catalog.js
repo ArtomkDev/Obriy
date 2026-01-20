@@ -5,7 +5,6 @@ const colors = require('colors');
 const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 require('dotenv').config();
 
-// Налаштування S3 клієнта
 const s3Client = new S3Client({
     region: 'auto',
     endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
@@ -17,7 +16,6 @@ const s3Client = new S3Client({
 
 const R2_BUCKET = process.env.R2_BUCKET_NAME;
 
-// Функція читання прямо з S3
 async function fetchRemoteCatalogFromS3(filename) {
     const key = `v1/catalog/${filename}`;
     console.log(`[Catalog] ☁️  Reading from S3: ${key}`.gray);
@@ -49,6 +47,11 @@ async function fetchRemoteCatalogFromS3(filename) {
 module.exports = async function updateCatalog(newModManifest) {
     console.log(`[Catalog] Syncing with remote cloud (Direct S3)...`.cyan);
 
+    if (!newModManifest.category) {
+        console.error(`❌ Error: Mod ${newModManifest.id} is missing 'category'. Skipping catalog update.`.red);
+        return;
+    }
+
     const catalogDir = config.paths.catalog;
     const categoriesDir = path.join(catalogDir, 'categories');
     const indexFileName = 'index.json';
@@ -57,8 +60,6 @@ module.exports = async function updateCatalog(newModManifest) {
     await fs.ensureDir(catalogDir);
     await fs.ensureDir(categoriesDir);
 
-    // ✅ ЛОГІКА ОБКЛАДИНКИ:
-    // Беремо перше фото (webp/jpg/png) зі списку media для обкладинки
     let coverImage = null;
     if (newModManifest.media && newModManifest.media.length > 0) {
         coverImage = newModManifest.media.find(file => 
@@ -74,25 +75,18 @@ module.exports = async function updateCatalog(newModManifest) {
         t: newModManifest.tags,
         v: newModManifest.version,
         p: newModManifest.is_premium || false,
-        
-        // ✅ Додаємо обкладинку (назву файлу)
         img: coverImage || null,
-        
         d: Date.now()
     };
 
-    // 1. ОНОВЛЕННЯ ГОЛОВНОГО ІНДЕКСУ
     let mainCatalog = await fetchRemoteCatalogFromS3(indexFileName);
     
-    // Видаляємо стару версію мода, якщо вона була
     mainCatalog = mainCatalog.filter(item => item.id !== newModManifest.id);
-    // Додаємо нову версію на початок списку
     mainCatalog.unshift(catalogItem);
     
     const localIndexPath = path.join(catalogDir, indexFileName);
     await fs.writeJson(localIndexPath, mainCatalog);
 
-    // 2. ОНОВЛЕННЯ КАТЕГОРІЇ
     let categoryCatalog = await fetchRemoteCatalogFromS3(categoryFileName);
 
     categoryCatalog = categoryCatalog.filter(item => item.id !== newModManifest.id);
