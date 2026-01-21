@@ -40,23 +40,22 @@ namespace Obriy.Core.Services
 
         public void RegisterFileOwnership(string relativeRpfPath, string internalPath, string modId)
         {
-            string key = $"{relativeRpfPath}|{internalPath}";
+            // Уніфікуємо ключ, щоб він був однаковим незалежно від слешів
+            string key = $"{relativeRpfPath}|{internalPath}".Replace('\\', '/');
             _registry[key] = modId;
         }
 
         public void UnregisterFile(string relativeRpfPath, string internalPath, string modId)
         {
-            string key = $"{relativeRpfPath}|{internalPath}";
+            string key = $"{relativeRpfPath}|{internalPath}".Replace('\\', '/');
             if (_registry.ContainsKey(key) && _registry[key] == modId)
             {
                 _registry.Remove(key);
             }
         }
         
-        // ВІДНОВЛЕНО: Метод для повного видалення записів про мод
         public void RemoveMod(string modId)
         {
-            // Знаходимо всі ключі, де значення дорівнює modId
             var keysToRemove = _registry.Where(x => x.Value == modId).Select(x => x.Key).ToList();
             foreach (var key in keysToRemove)
             {

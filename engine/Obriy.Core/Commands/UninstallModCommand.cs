@@ -1,29 +1,20 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Text.Json;
-using System.Threading.Tasks;
 using Obriy.Core.Services;
 
 namespace Obriy.Core.Commands
 {
-    // Оголошення допоміжного класу ПЕРЕД або ПІСЛЯ основного класу команди, але всередині namespace
-    public class UninstallRestoreItem
-    {
-        public string TargetPath { get; set; }
-        public string SourceFilePath { get; set; }
-    }
-
     public class UninstallModCommand : ICommand
     {
         public string CommandName => "uninstall-mod";
 
         public async Task ExecuteAsync(string[] args)
         {
+            await Task.CompletedTask;
+            Console.Error.WriteLine($"[DEBUG] [Uninstall] Command started. Args: {args.Length}");
+
             if (args.Length < 3)
             {
-                Error("Not enough arguments. Expected: manifestPath, modId, gamePath");
+                Console.WriteLine(JsonSerializer.Serialize(new { status = "error", message = "Not enough arguments." }));
                 return;
             }
 
@@ -31,195 +22,142 @@ namespace Obriy.Core.Commands
             string modId = args[1];
             string gamePath = args[2];
 
-            RegistryService registryService = new RegistryService(gamePath);
-            RpfEditor rpfEditor = new RpfEditor(gamePath);
+            var registryService = new RegistryService(gamePath);
+            var rpfEditor = new RpfEditor(gamePath);
 
             try
             {
-                List<UninstallRestoreItem> restoreItems = new List<UninstallRestoreItem>();
-                
-                if (File.Exists(manifestPath))
+                if (!File.Exists(manifestPath))
                 {
-                    string jsonContent = await File.ReadAllTextAsync(manifestPath);
-                    if (!string.IsNullOrWhiteSpace(jsonContent))
-                    {
-                        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                        restoreItems = JsonSerializer.Deserialize<List<UninstallRestoreItem>>(jsonContent, options) ?? new List<UninstallRestoreItem>();
-                    }
-                }
-
-                var restoredFiles = new List<string>();
-                var failedFiles = new List<string>();
-
-                // === ЛОГІКА ПРОГРЕСУ ===
-                int totalFilesCount = restoreItems.Count;
-                int processedFiles = 0;
-                int lastReportedPercent = 0;
-                ReportProgress(0);
-
-                var operationsByRpf = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
-                var looseFiles = new List<UninstallRestoreItem>();
-
-                // Етап 1: Аналіз і групування (швидко)
-                foreach (var item in restoreItems)
-                {
-                    if (!File.Exists(item.SourceFilePath)) 
-                    {
-                        failedFiles.Add(Path.GetFileName(item.TargetPath));
-                        processedFiles++;
-                        continue;
-                    }
-
-                    try 
-                    {
-                        var pathInfo = SplitPath(item.TargetPath);
-                        
-                        if (string.IsNullOrEmpty(pathInfo.InternalPath))
-                        {
-                            looseFiles.Add(item);
-                        }
-                        else
-                        {
-                            if (!operationsByRpf.ContainsKey(pathInfo.PhysicalPath))
-                            {
-                                operationsByRpf[pathInfo.PhysicalPath] = new Dictionary<string, string>();
-                            }
-                            string internalKey = pathInfo.InternalPath.Replace("\\", "/");
-                            operationsByRpf[pathInfo.PhysicalPath][internalKey] = item.SourceFilePath;
-                        }
-                    }
-                    catch
-                    {
-                        failedFiles.Add(Path.GetFileName(item.TargetPath));
-                        processedFiles++;
-                    }
-                }
-
-                // Етап 2: Звичайні файли
-                foreach (var f in looseFiles)
-                {
-                    try
-                    {
-                        File.Copy(f.SourceFilePath, f.TargetPath, true);
-                        restoredFiles.Add(Path.GetFileName(f.TargetPath));
-                    }
-                    catch (Exception ex)
-                    {
-                        failedFiles.Add(Path.GetFileName(f.TargetPath));
-                        Console.Error.WriteLine($"[Failed File] {ex.Message}");
-                    }
-                    processedFiles++;
-                    UpdateProgress(processedFiles, totalFilesCount, ref lastReportedPercent);
-                }
-
-                // Етап 3: RPF архіви
-                foreach (var kvp in operationsByRpf)
-                {
-                    string physicalRpf = kvp.Key;
-                    var updates = kvp.Value;
-
-                    try
-                    {
-                        Console.Error.WriteLine($"[RpfEditor] Processing archive: {Path.GetFileName(physicalRpf)} ({updates.Count} files)");
-                        
-                        rpfEditor.InstallBatch(physicalRpf, updates, () => 
-                        {
-                            processedFiles++;
-                            UpdateProgress(processedFiles, totalFilesCount, ref lastReportedPercent);
-                        }, true);
-
-                        foreach(var fileName in updates.Keys)
-                        {
-                            restoredFiles.Add(Path.GetFileName(fileName));
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.Error.WriteLine($"[Failed RPF] Error in {Path.GetFileName(physicalRpf)}: {ex.Message}");
-                        processedFiles += updates.Count; 
-                        foreach(var fileName in updates.Keys)
-                        {
-                            failedFiles.Add(Path.GetFileName(fileName));
-                        }
-                        UpdateProgress(processedFiles, totalFilesCount, ref lastReportedPercent);
-                    }
-                }
-                
-                bool isCleanUninstall = failedFiles.Count == 0;
-                
-                if (isCleanUninstall)
-                {
-                    registryService.RemoveMod(modId);
+                    // Якщо файлу маніфесту немає (наприклад, видалення вручну або помилка), 
+                    // просто видаляємо запис з реєстру, щоб не блокувати UI.
+                    Console.Error.WriteLine($"[WARNING] Restoration manifest not found: {manifestPath}. Cleaning registry only.");
+                    registryService.RemoveMod(modId); // Використовуємо RemoveMod
                     registryService.SaveRegistry();
-                    Console.Error.WriteLine($"[Uninstall] Success! Registry cleaned for mod {modId}");
+                    Console.WriteLine(JsonSerializer.Serialize(new { status = "success", message = "Mod unregistered (manifest missing)." }));
+                    return;
+                }
+
+                string jsonContent = File.ReadAllText(manifestPath);
+                var tasks = JsonSerializer.Deserialize<List<RestoreTask>>(jsonContent);
+
+                if (tasks == null || tasks.Count == 0)
+                {
+                    // Нічого відновлювати - просто чистимо реєстр
+                    registryService.RemoveMod(modId); // Використовуємо RemoveMod
+                    registryService.SaveRegistry();
+                    Console.WriteLine(JsonSerializer.Serialize(new { status = "success", message = "Mod unregistered (no files to restore)." }));
+                    return;
+                }
+
+                Console.Error.WriteLine($"[DEBUG] [Uninstall] Found {tasks.Count} files to restore.");
+
+                // 1. Групування завдань по фізичних RPF файлах
+                var tasksByRpf = new Dictionary<string, Dictionary<string, string>>();
+                int errors = 0;
+
+                foreach (var task in tasks)
+                {
+                    try
+                    {
+                        string fullGamePath = Path.Combine(gamePath, task.TargetPath);
+                        
+                        var pathInfo = SplitPathToRpf(fullGamePath);
+                        string physicalPath = pathInfo.PhysicalPath;
+                        string internalPath = pathInfo.InternalPath.Replace("\\", "/");
+
+                        if (!tasksByRpf.ContainsKey(physicalPath))
+                        {
+                            tasksByRpf[physicalPath] = new Dictionary<string, string>();
+                        }
+
+                        tasksByRpf[physicalPath][internalPath] = task.SourceFilePath;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"[ERROR] [Uninstall] Failed to parse path for {task.TargetPath}: {ex.Message}");
+                        errors++;
+                    }
+                }
+
+                // 2. Виконання відновлення (Batch Install)
+                foreach (var rpfGroup in tasksByRpf)
+                {
+                    string physicalRpf = rpfGroup.Key;
+                    var updates = rpfGroup.Value;
+
+                    Console.Error.WriteLine($"[DEBUG] [Uninstall] Restoring {updates.Count} files in: {Path.GetFileName(physicalRpf)}");
+
+                    try
+                    {
+                        // Перевіряємо чи існують файли-джерела (ванільні)
+                        foreach(var update in updates)
+                        {
+                            if (!File.Exists(update.Value))
+                                throw new FileNotFoundException($"Vanilla file missing: {update.Value}");
+                        }
+
+                        // Виконуємо пакетний запис
+                        rpfEditor.InstallBatch(physicalRpf, updates, () => { }, true);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"[ERROR] [Uninstall] Failed to restore files in {Path.GetFileName(physicalRpf)}: {ex.Message}\n{ex.StackTrace}");
+                        errors += updates.Count; 
+                    }
+                }
+
+                // 3. Очищення реєстру
+                if (errors == 0)
+                {
+                    registryService.RemoveMod(modId); // Використовуємо RemoveMod
+                    registryService.SaveRegistry();
+                    
+                    Console.Error.WriteLine("[DEBUG] [Uninstall] Success. Registry cleaned.");
+                    Console.WriteLine(JsonSerializer.Serialize(new { status = "success", message = "Uninstallation complete." }));
                 }
                 else
                 {
-                    Console.Error.WriteLine($"[Uninstall] WARNING: Registry NOT cleaned due to {failedFiles.Count} errors.");
+                    Console.Error.WriteLine($"[ERROR] [Uninstall] Finished with {errors} errors. Registry NOT cleaned.");
+                    Console.WriteLine(JsonSerializer.Serialize(new { status = "error", message = $"Failed to restore {errors} files." }));
                 }
-
-                ReportProgress(100);
-
-                Console.WriteLine(JsonSerializer.Serialize(new
-                {
-                    status = isCleanUninstall ? "success" : "partial_error",
-                    modId = modId,
-                    restoredCount = restoredFiles.Count,
-                    failedCount = failedFiles.Count,
-                    failedFiles = failedFiles,
-                    message = isCleanUninstall ? "Uninstalled successfully" : "Some files failed to restore.",
-                    activeMods = registryService.GetActiveModIds()
-                }));
             }
             catch (Exception ex)
             {
-                Error(ex.Message, ex.StackTrace);
+                Console.Error.WriteLine($"[CRITICAL] [Uninstall] {ex.Message}\n{ex.StackTrace}");
+                Console.WriteLine(JsonSerializer.Serialize(new { status = "error", message = ex.Message }));
             }
         }
 
-        private void UpdateProgress(int current, int total, ref int lastPercent)
-        {
-            if (total == 0) return;
-            double rawPercent = (double)current / total;
-            int displayPercent = (int)(rawPercent * 90); 
-            if (displayPercent > lastPercent)
-            {
-                lastPercent = displayPercent;
-                ReportProgress(displayPercent);
-            }
-        }
-
-        private void ReportProgress(int percent)
-        {
-            Console.WriteLine(JsonSerializer.Serialize(new { type = "progress", value = percent }));
-        }
-
-        private void Error(string message, string trace = null)
-        {
-            Console.Error.WriteLine(message);
-            Console.WriteLine(JsonSerializer.Serialize(new
-            {
-                status = "error",
-                message = message,
-                trace = trace
-            }));
-        }
-
-        private (string PhysicalPath, string InternalPath) SplitPath(string fullPath)
+        private (string PhysicalPath, string InternalPath) SplitPathToRpf(string fullPath)
         {
             string currentPath = Path.GetFullPath(fullPath);
             string internalParts = "";
 
             while (!string.IsNullOrEmpty(currentPath))
             {
-                if (File.Exists(currentPath)) return (currentPath, internalParts.TrimStart('/', '\\'));
+                if (File.Exists(currentPath))
+                {
+                    return (currentPath, internalParts.TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Replace('\\', '/'));
+                }
+
                 string fileName = Path.GetFileName(currentPath);
                 string directory = Path.GetDirectoryName(currentPath);
-                if (string.IsNullOrEmpty(directory) || directory.Equals(currentPath, StringComparison.OrdinalIgnoreCase)) break;
+
+                if (string.IsNullOrEmpty(directory) || directory.Equals(currentPath, StringComparison.OrdinalIgnoreCase))
+                    break;
+
                 internalParts = Path.Combine(fileName, internalParts);
                 currentPath = directory;
             }
-            throw new FileNotFoundException($"Valid base RPF archive not found on disk for path: {fullPath}");
+
+            throw new FileNotFoundException($"Valid RPF root not found for: {fullPath}");
+        }
+
+        private class RestoreTask
+        {
+            public string TargetPath { get; set; }
+            public string SourceFilePath { get; set; }
         }
     }
 }

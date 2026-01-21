@@ -110,11 +110,8 @@ export async function getModDetails(modificationId) {
   }
 }
 
-// --- ВИПРАВЛЕНА ТА ОНОВЛЕНА ФУНКЦІЯ INSTALLMOD ---
 export async function installMod(modificationId, gameDirectoryPath) {
   const modificationSessionDirectory = path.join(MODIFICATION_CACHE_ROOT, modificationId.toString())
-  
-  // 1. Очищаємо папку перед завантаженням (видаляємо старі/кешовані файли локально)
   await fs.emptyDir(modificationSessionDirectory)
   
   const instructionFileLocalPath = path.join(modificationSessionDirectory, 'instruction.json')
@@ -122,10 +119,8 @@ export async function installMod(modificationId, gameDirectoryPath) {
   const extractionDirectoryPath = path.join(modificationSessionDirectory, 'extracted')
   const userInterfaceFeedbackChannel = BrowserWindow.getAllWindows()[0]?.webContents
 
-  // Генеруємо timestamp для обходу кешування на стороні сервера/CDN
   const timestamp = Date.now()
 
-  // 2. Скачуємо свіжу інструкцію (з timestamp)
   await CloudRepository.downloadFile(
     `/mods/${modificationId}/instruction.json?t=${timestamp}`, 
     instructionFileLocalPath
@@ -134,7 +129,6 @@ export async function installMod(modificationId, gameDirectoryPath) {
   const modificationManifest = await CloudRepository.getModManifest(modificationId)
   const isBinaryPayloadRequired = modificationManifest.hasPayload === true
 
-  // 3. Якщо є файли (payload) - качаємо свіжий архів і розпаковуємо
   if (isBinaryPayloadRequired) {
     await CloudRepository.downloadFile(
       `/mods/${modificationId}/payload.zip?t=${timestamp}`, 
@@ -148,21 +142,18 @@ export async function installMod(modificationId, gameDirectoryPath) {
     archiveUnpacker.extractAllTo(extractionDirectoryPath, true)
   }
 
-  // 4. ВИКЛИКАЄМО C# CORE
-  // Передаємо шлях до instruction.json, щоб C# сам розібрався з типами (edit/replace)
   const backendExecutionResult = await CoreBridge.executeCoreCommand(
     'install-mod', 
     [
-      gameDirectoryPath,           // arg[0]
-      instructionFileLocalPath,    // arg[1] - шлях до JSON файлу
-      String(modificationId),      // arg[2]
-      isBinaryPayloadRequired ? extractionDirectoryPath : '' // arg[3] - sourceDirectory
+      gameDirectoryPath,           
+      instructionFileLocalPath,    
+      String(modificationId),      
+      isBinaryPayloadRequired ? extractionDirectoryPath : '' 
     ], 
     userInterfaceFeedbackChannel, 
     modificationId
   )
 
-  // 5. Прибираємо за собою, якщо успішно
   if (backendExecutionResult.status === 'success') {
     await fs.remove(modificationSessionDirectory)
   }
@@ -171,6 +162,7 @@ export async function installMod(modificationId, gameDirectoryPath) {
   return backendExecutionResult
 }
 
+// --- ОНОВЛЕНА ФУНКЦІЯ UNINSTALL ---
 export async function uninstallMod(modificationId, gameDirectoryPath) {
   const userInterfaceFeedbackChannel = BrowserWindow.getAllWindows()[0]?.webContents
   const registryFilePath = path.join(gameDirectoryPath, 'obriy_registry.json')
@@ -185,12 +177,35 @@ export async function uninstallMod(modificationId, gameDirectoryPath) {
   if (modificationOwnedFilesKeys.length === 0) return { status: 'success', message: 'Nothing to uninstall' }
 
   let vanillaFilesCategory = 'misc'
+
+  // СПРОБА ОТРИМАТИ КАТЕГОРІЮ ВАНІЛЬНИХ ФАЙЛІВ З INSTRUCTION.JSON
   try {
-    const modificationManifest = await CloudRepository.getModManifest(modificationId)
-    if (modificationManifest.instructionSet?.[0]?.vanilla) {
-      vanillaFilesCategory = modificationManifest.instructionSet[0].vanilla
+    const timestamp = Date.now()
+    const tempInstructionPath = path.join(INSTALLATION_TEMPORARY_DIRECTORY, `inst_${modificationId}_${timestamp}.json`)
+    await fs.ensureDir(INSTALLATION_TEMPORARY_DIRECTORY)
+    
+    // Скачуємо інструкцію
+    await CloudRepository.downloadFile(`/mods/${modificationId}/instruction.json?t=${timestamp}`, tempInstructionPath)
+    
+    if (await fs.pathExists(tempInstructionPath)) {
+        const instructions = await fs.readJson(tempInstructionPath)
+        // Шукаємо першу інструкцію (переважно replace), яка має параметр vanillaFile
+        const instructionWithVanilla = instructions.find(i => i.vanillaFile)
+        if (instructionWithVanilla) {
+            vanillaFilesCategory = instructionWithVanilla.vanillaFile
+        }
+        await fs.remove(tempInstructionPath)
     }
-  } catch (manifestFetchError) {}
+  } catch (error) {
+    console.error(`[Uninstall] Failed to fetch instruction.json, falling back to manifest logic.`)
+    // Фолбек на старий маніфест (для сумісності зі старими модами)
+    try {
+      const modificationManifest = await CloudRepository.getModManifest(modificationId)
+      if (modificationManifest.instructionSet?.[0]?.vanilla) {
+        vanillaFilesCategory = modificationManifest.instructionSet[0].vanilla
+      }
+    } catch (manifestFetchError) {}
+  }
 
   const restorationTasksBatch = []
   const recoveryTemporaryDirectory = path.join(INSTALLATION_TEMPORARY_DIRECTORY, `restore_${modificationId}`)
@@ -202,13 +217,18 @@ export async function uninstallMod(modificationId, gameDirectoryPath) {
     const fileName = path.basename(internalFileRelativePath)
     const localRecoveryFilePath = path.join(recoveryTemporaryDirectory, fileName)
     
+    // Формуємо посилання на ванільний файл
+    const vanillaUrl = `/vanilla/${vanillaFilesCategory}/${encodeRemoteResourceName(fileName)}`
+    
     try {
-      await CloudRepository.downloadFile(`/vanilla/${vanillaFilesCategory}/${encodeRemoteResourceName(fileName)}`, localRecoveryFilePath)
+      await CloudRepository.downloadFile(vanillaUrl, localRecoveryFilePath)
       restorationTasksBatch.push({ 
         TargetPath: path.join(rpfArchiveRelativePath, internalFileRelativePath).replace(/\\/g, '/'), 
         SourceFilePath: localRecoveryFilePath 
       })
-    } catch (downloadError) {}
+    } catch (downloadError) {
+       console.error(`[Uninstall] Failed to download vanilla file: ${vanillaUrl}`, downloadError)
+    }
     finally {
       processedFilesCounter++
       userInterfaceFeedbackChannel?.send('task-progress', { 

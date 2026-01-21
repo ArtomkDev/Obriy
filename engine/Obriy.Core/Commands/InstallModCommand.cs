@@ -20,7 +20,7 @@ namespace Obriy.Core.Commands
             }
 
             string gameDirectoryPath = args[0];
-            string jsonInstructionsPath = args[1];
+            string jsonInstructionsPath = args[1]; // Шлях до файлу instruction.json
             string modIdentifier = args[2];
             string sourceDirectory = args.Length > 3 ? args[3] : string.Empty;
 
@@ -50,28 +50,26 @@ namespace Obriy.Core.Commands
                     string targetPath = operation.TargetPath.Replace('\\', '/');
                     Console.Error.WriteLine($"[DEBUG] [InstallMod] Processing operation: {operation.Type} -> {targetPath}");
                     
+                    // Знаходимо фізичний шлях до архіву та внутрішній шлях
+                    string fullGamePath = Path.Combine(gameDirectoryPath, targetPath);
+                    var pathInfo = SplitPathToRpf(fullGamePath);
+                    
+                    // Отримуємо відносний шлях до RPF архіву від кореня гри (наприклад, "update/update.rpf")
+                    string relativeRpfPath = Path.GetRelativePath(gameDirectoryPath, pathInfo.PhysicalPath).Replace('\\', '/');
+
                     if (operation.Type.Equals("replace", StringComparison.OrdinalIgnoreCase))
                     {
-                        // --- ЛОГІКА REPLACE: МАСОВА ВСТАВКА ВСІХ ФАЙЛІВ ---
+                        // --- ЛОГІКА REPLACE (Пакетна заміна) ---
                         if (string.IsNullOrEmpty(sourceDirectory) || !Directory.Exists(sourceDirectory)) 
                             throw new DirectoryNotFoundException($"Source directory is required and must exist for 'replace'. Path: {sourceDirectory}");
 
-                        // 1. Беремо всі файли з папки payload
                         string[] sourceFiles = Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories);
-                        
-                        if (sourceFiles.Length == 0)
+                        if (sourceFiles.Length == 0) 
                             throw new FileNotFoundException($"No files found in source directory: {sourceDirectory}");
 
                         Console.Error.WriteLine($"[DEBUG] [InstallMod] Found {sourceFiles.Length} files to install into {targetPath}");
 
-                        // 2. Знаходимо фізичний архів
-                        string fullGamePath = Path.Combine(gameDirectoryPath, targetPath);
-                        var pathInfo = SplitPathToRpf(fullGamePath);
-                        
-                        // 3. Формуємо словник для пакетної установки
-                        // Key: внутрішній шлях в RPF, Value: повний шлях до файлу на диску
                         var batchFiles = new Dictionary<string, string>();
-
                         bool isTargetArchive = targetPath.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase);
 
                         foreach (var srcFilePath in sourceFiles)
@@ -79,37 +77,40 @@ namespace Obriy.Core.Commands
                             string fileName = Path.GetFileName(srcFilePath);
                             string internalDestinationPath;
 
+                            // Визначаємо куди саме класти файл всередині архіву
                             if (isTargetArchive)
                             {
-                                // Якщо ціль - архів (weapons.rpf), кладемо файли всередину
+                                // Якщо ціль вказана як сам архів (weapons.rpf), кладемо файли всередину нього
                                 internalDestinationPath = Path.Combine(pathInfo.InternalPath, fileName).Replace("\\", "/");
                             }
                             else
                             {
-                                // Якщо ціль - конкретний файл, замінюємо його (тільки якщо імена співпадають або це єдиний файл)
-                                internalDestinationPath = pathInfo.InternalPath;
+                                // Якщо ціль вказана як конкретний файл, замінюємо саме цей шлях
+                                internalDestinationPath = pathInfo.InternalPath.Replace("\\", "/");
                             }
 
                             batchFiles[internalDestinationPath] = srcFilePath;
 
-                            // Реєструємо кожен файл окремо, щоб знати, що ми замінили
-                            // Для реєстру нам потрібен відносний шлях від кореня гри
-                            string registryKey = isTargetArchive ? Path.Combine(targetPath, fileName).Replace("\\", "/") : targetPath;
-                            
-                            registryService.RegisterFileOwnership(registryKey, srcFilePath, modIdentifier);
-                            installedFiles.Add(registryKey);
+                            // Реєструємо файл у реєстрі (Ключ = ШляхДоРПФ | ШляхВсередині)
+                            registryService.RegisterFileOwnership(relativeRpfPath, internalDestinationPath, modIdentifier);
+                            installedFiles.Add(internalDestinationPath);
                         }
 
-                        // 4. Виконуємо пакетну заміну
-                        Console.Error.WriteLine($"[DEBUG] [InstallMod] Executing InstallBatch on {pathInfo.PhysicalPath}...");
+                        Console.Error.WriteLine($"[DEBUG] [InstallMod] Executing InstallBatch on {Path.GetFileName(pathInfo.PhysicalPath)}...");
                         rpfEditor.InstallBatch(pathInfo.PhysicalPath, batchFiles, () => {}, true);
-                        Console.Error.WriteLine($"[DEBUG] [InstallMod] Batch install complete.");
                     }
                     else if (operation.Type.Equals("edit", StringComparison.OrdinalIgnoreCase))
                     {
                         // --- ЛОГІКА EDIT ---
                         Console.Error.WriteLine($"[DEBUG] [InstallMod] Calling RpfEditor.EditFileInRpf...");
+                        
                         rpfEditor.EditFileInRpf(targetPath, operation.Actions);
+                        
+                        // ВАЖЛИВО: Реєструємо файл, щоб Uninstaller знав, що цей файл змінено і його треба відновити.
+                        // Використовуємо "EDITED" як джерело, бо при видаленні файл буде скачуватися з сервера.
+                        string internalPath = pathInfo.InternalPath.Replace("\\", "/");
+                        registryService.RegisterFileOwnership(relativeRpfPath, internalPath, modIdentifier);
+                        
                         installedFiles.Add(targetPath);
                         Console.Error.WriteLine($"[DEBUG] [InstallMod] Edit finished successfully.");
                     }
@@ -161,9 +162,8 @@ namespace Obriy.Core.Commands
                 internalParts = Path.Combine(fileName, internalParts);
                 currentPath = directory;
             }
-            // Якщо фізичний файл не знайдено, спробуємо знайти найближчий існуючий батьківський каталог, 
-            // припускаючи, що це RPF шлях, який ще не існує (хоча для RPF це рідкість, зазвичай base архів є)
-            throw new FileNotFoundException($"Valid RPF root not found for: {fullPath}");
+            // Якщо RPF файл не знайдено на диску
+            throw new FileNotFoundException($"Valid RPF root not found for path: {fullPath}");
         }
     }
 }
