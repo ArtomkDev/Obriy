@@ -1,31 +1,87 @@
-import { useInstaller } from '../context/InstallerContext';
+import { useState, useCallback, useEffect } from 'react'
 
-export function useModInstaller() {
-  // 1. ЗМІНА: Дістаємо startUninstall з контексту (вам потрібно додати це в ContextProvider)
-  const { tasks, startInstall, startUninstall, cancelTask, retryTask } = useInstaller();
+export function useModInstaller(gamePath) {
+  const [installedMods, setInstalledMods] = useState(new Set())
+  const [loading, setLoading] = useState(false)
+  const [processingModId, setProcessingModId] = useState(null)
 
-  const getModStatus = (modId) => {
-      const task = tasks[modId];
-      if (!task) return 'idle'; 
-      return task.status; // 'downloading', 'installing', 'uninstalling', 'success', 'error'
+  const refreshInstalledMods = useCallback(async () => {
+    if (!gamePath) return
+    try {
+      // Викликаємо наш оновлений метод на бекенді
+      const mods = await window.api.getInstalledMods(gamePath)
+      setInstalledMods(new Set(mods))
+    } catch (error) {
+      console.error('Failed to fetch installed mods:', error)
+    }
+  }, [gamePath])
+
+  // Авто-оновлення при зміні шляху до гри
+  useEffect(() => {
+    refreshInstalledMods()
+  }, [refreshInstalledMods])
+
+  const installMod = async (mod, instructionPath, sourceDir) => {
+    if (!gamePath) return { status: 'error', message: 'Game path not set' }
+    
+    setLoading(true)
+    setProcessingModId(mod.id)
+    
+    try {
+      const result = await window.api.installMod({
+        gamePath,
+        modId: mod.id.toString(), // Приводимо до рядка для надійності
+        instructionPath,
+        sourceDir
+      })
+
+      // Після успішної операції оновлюємо список
+      if (result.status === 'success') {
+        await refreshInstalledMods()
+      }
+      
+      return result
+    } finally {
+      setLoading(false)
+      setProcessingModId(null)
+    }
   }
 
-  const getModProgress = (modId) => {
-      const task = tasks[modId];
-      if (!task) return { download: 0, install: 0 };
-      return { 
-          download: task.downloadProgress || 0, 
-          install: task.installProgress || 0 
-      };
+  const uninstallMod = async (mod, instructionPath) => {
+    if (!gamePath) return { status: 'error', message: 'Game path not set' }
+
+    setLoading(true)
+    setProcessingModId(mod.id)
+
+    try {
+      const result = await window.api.uninstallMod({
+        gamePath,
+        modId: mod.id.toString(),
+        instructionPath
+      })
+
+      if (result.status === 'success') {
+        await refreshInstalledMods()
+      }
+
+      return result
+    } finally {
+      setLoading(false)
+      setProcessingModId(null)
+    }
+  }
+
+  const isInstalled = (modId) => {
+    return installedMods.has(modId.toString())
   }
 
   return {
-    getModStatus,
-    getModProgress,
-    installMod: startInstall,
-    uninstallMod: startUninstall, // 2. ЗМІНА: Експортуємо функцію видалення
-    cancelMod: cancelTask,
-    retryMod: retryTask,
-    tasks 
+    installedMods,
+    installMod,
+    uninstallMod,
+    isInstalled,
+    loading,
+    processingModId,
+    refreshInstalledMods
   }
 }

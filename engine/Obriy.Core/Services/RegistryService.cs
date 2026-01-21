@@ -1,85 +1,168 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Text.Json;
-using System.Linq;
+using Obriy.Core.Models;
+using Obriy.Core.Services.Helpers;
 
-namespace Obriy.Core.Services
+namespace Obriy.Core.Services;
+
+public class RegistryService
 {
-    public class RegistryService
+    private readonly string _registryPath;
+    private RegistryData _data;
+
+    public RegistryService(string registryPath)
     {
-        private readonly string _registryPath;
-        private Dictionary<string, string> _registry;
+        _registryPath = registryPath;
+        LoadRegistry();
+    }
 
-        public RegistryService(string gameRootPath)
+    public void RegisterFileReplacement(string gamePath, string modId, bool saveImmediately = true)
+    {
+        _data.FileReplacements[gamePath] = modId;
+        if (saveImmediately) SaveRegistry();
+    }
+
+    public void UnregisterFileReplacement(string gamePath, bool saveImmediately = true)
+    {
+        if (_data.FileReplacements.ContainsKey(gamePath))
         {
-            _registryPath = Path.Combine(gameRootPath, "obriy_registry.json");
-            LoadRegistry();
+            _data.FileReplacements.Remove(gamePath);
+            if (saveImmediately) SaveRegistry();
+        }
+    }
+
+    public bool IsModRegisteredForFile(string gamePath, string modId)
+    {
+        if (_data.FileReplacements.TryGetValue(gamePath, out var ownerId))
+        {
+            return ownerId == modId;
         }
 
-        private void LoadRegistry()
+        if (_data.FileEdits.TryGetValue(gamePath, out var lockedPatterns))
         {
-            if (File.Exists(_registryPath))
+            return lockedPatterns.ContainsValue(modId);
+        }
+
+        return false;
+    }
+
+    public void RegisterEdit(string gamePath, string pattern, string modId, bool saveImmediately = true)
+    {
+        var patternHash = HashHelper.GeneratePatternHash(pattern);
+
+        if (!_data.FileEdits.ContainsKey(gamePath))
+        {
+            _data.FileEdits[gamePath] = new Dictionary<string, string>();
+        }
+
+        _data.FileEdits[gamePath][patternHash] = modId;
+        if (saveImmediately) SaveRegistry();
+    }
+
+    public void UnregisterEdit(string gamePath, string pattern, bool saveImmediately = true)
+    {
+        var patternHash = HashHelper.GeneratePatternHash(pattern);
+
+        if (_data.FileEdits.TryGetValue(gamePath, out var lockedPatterns))
+        {
+            lockedPatterns.Remove(patternHash);
+
+            if (lockedPatterns.Count == 0)
             {
-                try
+                _data.FileEdits.Remove(gamePath);
+            }
+            
+            if (saveImmediately) SaveRegistry();
+        }
+    }
+
+    public bool IsPatternLockedByOtherMod(string gamePath, string pattern, string currentModId)
+    {
+        var patternHash = HashHelper.GeneratePatternHash(pattern);
+
+        if (_data.FileEdits.TryGetValue(gamePath, out var lockedPatterns))
+        {
+            if (lockedPatterns.TryGetValue(patternHash, out var ownerId))
+            {
+                return ownerId != currentModId;
+            }
+        }
+
+        return false;
+    }
+
+    public List<string> GetActiveModIds()
+    {
+        var ids = new HashSet<string>();
+        if (_data.FileReplacements != null)
+            foreach (var id in _data.FileReplacements.Values) ids.Add(id);
+        if (_data.FileEdits != null)
+            foreach (var fileEdits in _data.FileEdits.Values)
+                foreach (var id in fileEdits.Values) ids.Add(id);
+        return ids.ToList();
+    }
+
+    public List<string> GetFilesOwnedByMod(string modId)
+    {
+        var files = new List<string>();
+        if (_data.FileReplacements != null)
+        {
+            foreach (var entry in _data.FileReplacements)
+            {
+                if (entry.Value == modId)
                 {
-                    string json = File.ReadAllText(_registryPath);
-                    _registry = JsonSerializer.Deserialize<Dictionary<string, string>>(json) 
-                                ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                }
-                catch
-                {
-                    _registry = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    files.Add(entry.Key);
                 }
             }
-            else
+        }
+        return files;
+    }
+    
+    public void RemoveMod(string modId)
+    {
+        var replacementsToRemove = _data.FileReplacements
+            .Where(x => x.Value == modId).Select(x => x.Key).ToList();
+        foreach (var key in replacementsToRemove) _data.FileReplacements.Remove(key);
+
+        var editsToClean = new List<string>();
+        foreach (var fileEntry in _data.FileEdits)
+        {
+            var hashesToRemove = fileEntry.Value
+                .Where(x => x.Value == modId).Select(x => x.Key).ToList();
+            foreach (var hash in hashesToRemove) fileEntry.Value.Remove(hash);
+            if (fileEntry.Value.Count == 0) editsToClean.Add(fileEntry.Key);
+        }
+        foreach (var key in editsToClean) _data.FileEdits.Remove(key);
+        SaveRegistry();
+    }
+
+    public void SaveRegistry()
+    {
+        var options = new JsonSerializerOptions { WriteIndented = true };
+        var json = JsonSerializer.Serialize(_data, options);
+        File.WriteAllText(_registryPath, json);
+    }
+
+    private void LoadRegistry()
+    {
+        if (File.Exists(_registryPath))
+        {
+            try 
             {
-                _registry = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var json = File.ReadAllText(_registryPath);
+                _data = JsonSerializer.Deserialize<RegistryData>(json) ?? new RegistryData();
             }
+            catch
+            {
+                _data = new RegistryData();
+            }
+        }
+        else
+        {
+            _data = new RegistryData();
         }
 
-        public void RegisterFileOwnership(string relativeRpfPath, string internalPath, string modId)
-        {
-            // Уніфікуємо ключ, щоб він був однаковим незалежно від слешів
-            string key = $"{relativeRpfPath}|{internalPath}".Replace('\\', '/');
-            _registry[key] = modId;
-        }
-
-        public void UnregisterFile(string relativeRpfPath, string internalPath, string modId)
-        {
-            string key = $"{relativeRpfPath}|{internalPath}".Replace('\\', '/');
-            if (_registry.ContainsKey(key) && _registry[key] == modId)
-            {
-                _registry.Remove(key);
-            }
-        }
-        
-        public void RemoveMod(string modId)
-        {
-            var keysToRemove = _registry.Where(x => x.Value == modId).Select(x => x.Key).ToList();
-            foreach (var key in keysToRemove)
-            {
-                _registry.Remove(key);
-            }
-        }
-
-        public List<string> GetActiveModIds()
-        {
-            return _registry.Values.Distinct().ToList();
-        }
-
-        public void SaveRegistry()
-        {
-            try
-            {
-                var options = new JsonSerializerOptions { WriteIndented = true };
-                string json = JsonSerializer.Serialize(_registry, options);
-                File.WriteAllText(_registryPath, json);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Failed to save registry: {ex.Message}");
-            }
-        }
+        // КРИТИЧНО: Гарантуємо, що колекції існують, навіть якщо JSON був пошкоджений або null
+        if (_data.FileReplacements == null) _data.FileReplacements = new();
+        if (_data.FileEdits == null) _data.FileEdits = new();
     }
 }

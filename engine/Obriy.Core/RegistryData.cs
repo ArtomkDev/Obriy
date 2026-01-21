@@ -1,9 +1,12 @@
-using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
-namespace Obriy.Core.Models
+namespace Obriy.Core.Models;
+
+public class RegistryData
 {
-    public class RegistryData
-    {
-        public Dictionary<string, string> Registry { get; set; } = new Dictionary<string, string>();
-    }
+    [JsonPropertyName("file_replacements")]
+    public Dictionary<string, string> FileReplacements { get; set; } = new();
+
+    [JsonPropertyName("file_edits")]
+    public Dictionary<string, Dictionary<string, string>> FileEdits { get; set; } = new();
 }

@@ -27,15 +27,25 @@ export async function validateGamePath(gameDirectoryPath) {
 
 export async function getActiveMods(gameDirectoryPath) {
   if (!gameDirectoryPath) return []
+  const registryPath = path.join(gameDirectoryPath, 'obriy_registry.json')
   try {
-    const coreServiceResponse = await CoreBridge.executeCoreCommand('get-active-mods', [gameDirectoryPath])
-    if (coreServiceResponse && coreServiceResponse.status === 'success') {
-      return coreServiceResponse.activeMods || []
+    if (!await fs.pathExists(registryPath)) return []
+    const registry = await fs.readJson(registryPath)
+    const activeMods = new Set()
+
+    if (registry.file_replacements) {
+      Object.values(registry.file_replacements).forEach(modId => { if (modId) activeMods.add(String(modId)) })
     }
-  } catch (executionError) {
-    console.error(executionError)
+    if (registry.file_edits) {
+      Object.values(registry.file_edits).forEach(patternsMap => {
+        if (typeof patternsMap === 'object') Object.values(patternsMap).forEach(modId => { if (modId) activeMods.add(String(modId)) })
+      })
+    }
+    return Array.from(activeMods)
+  } catch (error) {
+    console.error('[ModManager] Failed to read registry:', error)
+    return []
   }
-  return []
 }
 
 export function startRegistryWatcher(mainWindowInstance, gameDirectoryPath) {
@@ -43,10 +53,8 @@ export function startRegistryWatcher(mainWindowInstance, gameDirectoryPath) {
     activeRegistryWatcher.close()
     activeRegistryWatcher = null
   }
-  
   const registryFilePath = path.join(gameDirectoryPath, 'obriy_registry.json')
   if (!fs.existsSync(registryFilePath)) return 
-  
   try {
     activeRegistryWatcher = fs.watch(registryFilePath, { persistent: false }, (fileEventType) => {
       if (fileEventType === 'change') {
@@ -64,6 +72,7 @@ export function startRegistryWatcher(mainWindowInstance, gameDirectoryPath) {
   }
 }
 
+// ... getMarketplaceCatalog, getModDetails ... (без змін)
 export async function getMarketplaceCatalog() {
   const marketplaceRawData = await CloudRepository.getCatalog()
   return marketplaceRawData.map(marketplaceItem => {
@@ -118,14 +127,9 @@ export async function installMod(modificationId, gameDirectoryPath) {
   const payloadArchiveLocalPath = path.join(modificationSessionDirectory, 'payload.zip')
   const extractionDirectoryPath = path.join(modificationSessionDirectory, 'extracted')
   const userInterfaceFeedbackChannel = BrowserWindow.getAllWindows()[0]?.webContents
-
   const timestamp = Date.now()
 
-  await CloudRepository.downloadFile(
-    `/mods/${modificationId}/instruction.json?t=${timestamp}`, 
-    instructionFileLocalPath
-  )
-
+  await CloudRepository.downloadFile(`/mods/${modificationId}/instruction.json?t=${timestamp}`, instructionFileLocalPath)
   const modificationManifest = await CloudRepository.getModManifest(modificationId)
   const isBinaryPayloadRequired = modificationManifest.hasPayload === true
 
@@ -133,127 +137,103 @@ export async function installMod(modificationId, gameDirectoryPath) {
     await CloudRepository.downloadFile(
       `/mods/${modificationId}/payload.zip?t=${timestamp}`, 
       payloadArchiveLocalPath, 
-      (downloadProgressPercentage) => userInterfaceFeedbackChannel?.send('installation-progress', { 
-        type: 'download', 
-        value: downloadProgressPercentage 
-      })
+      (progress) => userInterfaceFeedbackChannel?.send('installation-progress', { type: 'download', value: progress })
     )
     const archiveUnpacker = new AdmZip(payloadArchiveLocalPath)
     archiveUnpacker.extractAllTo(extractionDirectoryPath, true)
   }
 
-  const backendExecutionResult = await CoreBridge.executeCoreCommand(
-    'install-mod', 
-    [
-      gameDirectoryPath,           
-      instructionFileLocalPath,    
-      String(modificationId),      
-      isBinaryPayloadRequired ? extractionDirectoryPath : '' 
-    ], 
-    userInterfaceFeedbackChannel, 
-    modificationId
-  )
+  const backendExecutionResult = await CoreBridge.executeCoreCommand('install-mod', [
+      gameDirectoryPath, instructionFileLocalPath, String(modificationId), isBinaryPayloadRequired ? extractionDirectoryPath : '' 
+    ], userInterfaceFeedbackChannel, modificationId)
 
   if (backendExecutionResult.status === 'success') {
     await fs.remove(modificationSessionDirectory)
+    const updatedMods = await getActiveMods(gameDirectoryPath)
+    userInterfaceFeedbackChannel?.send('mods-updated', updatedMods)
   }
-
   userInterfaceFeedbackChannel?.send('installation-progress', { type: 'install', value: 100 })
   return backendExecutionResult
 }
 
-// --- ОНОВЛЕНА ФУНКЦІЯ UNINSTALL ---
+// --- ГОЛОВНЕ ВИПРАВЛЕННЯ UNINSTALL ---
 export async function uninstallMod(modificationId, gameDirectoryPath) {
   const userInterfaceFeedbackChannel = BrowserWindow.getAllWindows()[0]?.webContents
   const registryFilePath = path.join(gameDirectoryPath, 'obriy_registry.json')
   
   if (!fs.existsSync(registryFilePath)) return { status: 'error', message: 'Registry not found' }
   
+  // 1. Знаходимо файли, що належать моду (тільки Replacements)
   const registryData = await fs.readJson(registryFilePath)
-  const modificationOwnedFilesKeys = Object.entries(registryData)
-    .filter(([_, ownerModificationId]) => String(ownerModificationId) === String(modificationId))
-    .map(([fileKey]) => fileKey)
-
-  if (modificationOwnedFilesKeys.length === 0) return { status: 'success', message: 'Nothing to uninstall' }
-
-  let vanillaFilesCategory = 'misc'
-
-  // СПРОБА ОТРИМАТИ КАТЕГОРІЮ ВАНІЛЬНИХ ФАЙЛІВ З INSTRUCTION.JSON
-  try {
-    const timestamp = Date.now()
-    const tempInstructionPath = path.join(INSTALLATION_TEMPORARY_DIRECTORY, `inst_${modificationId}_${timestamp}.json`)
-    await fs.ensureDir(INSTALLATION_TEMPORARY_DIRECTORY)
-    
-    // Скачуємо інструкцію
-    await CloudRepository.downloadFile(`/mods/${modificationId}/instruction.json?t=${timestamp}`, tempInstructionPath)
-    
-    if (await fs.pathExists(tempInstructionPath)) {
-        const instructions = await fs.readJson(tempInstructionPath)
-        // Шукаємо першу інструкцію (переважно replace), яка має параметр vanillaFile
-        const instructionWithVanilla = instructions.find(i => i.vanillaFile)
-        if (instructionWithVanilla) {
-            vanillaFilesCategory = instructionWithVanilla.vanillaFile
-        }
-        await fs.remove(tempInstructionPath)
-    }
-  } catch (error) {
-    console.error(`[Uninstall] Failed to fetch instruction.json, falling back to manifest logic.`)
-    // Фолбек на старий маніфест (для сумісності зі старими модами)
-    try {
-      const modificationManifest = await CloudRepository.getModManifest(modificationId)
-      if (modificationManifest.instructionSet?.[0]?.vanilla) {
-        vanillaFilesCategory = modificationManifest.instructionSet[0].vanilla
+  const replacementFiles = []
+  
+  if (registryData.file_replacements) {
+    Object.entries(registryData.file_replacements).forEach(([key, ownerId]) => {
+      if (String(ownerId) === String(modificationId)) {
+        replacementFiles.push(key) // key = "path/to.rpf|internal/file.ytd"
       }
-    } catch (manifestFetchError) {}
+    })
   }
 
-  const restorationTasksBatch = []
-  const recoveryTemporaryDirectory = path.join(INSTALLATION_TEMPORARY_DIRECTORY, `restore_${modificationId}`)
-  await fs.ensureDir(recoveryTemporaryDirectory)
-
-  let processedFilesCounter = 0
-  const restorationDownloadsPromises = modificationOwnedFilesKeys.map(async (registryKey) => {
-    const [rpfArchiveRelativePath, internalFileRelativePath] = registryKey.split('|')
-    const fileName = path.basename(internalFileRelativePath)
-    const localRecoveryFilePath = path.join(recoveryTemporaryDirectory, fileName)
-    
-    // Формуємо посилання на ванільний файл
-    const vanillaUrl = `/vanilla/${vanillaFilesCategory}/${encodeRemoteResourceName(fileName)}`
-    
-    try {
-      await CloudRepository.downloadFile(vanillaUrl, localRecoveryFilePath)
-      restorationTasksBatch.push({ 
-        TargetPath: path.join(rpfArchiveRelativePath, internalFileRelativePath).replace(/\\/g, '/'), 
-        SourceFilePath: localRecoveryFilePath 
-      })
-    } catch (downloadError) {
-       console.error(`[Uninstall] Failed to download vanilla file: ${vanillaUrl}`, downloadError)
+  // 2. Отримуємо категорію ванільних файлів з інструкції
+  let vanillaCategory = null
+  const tempDir = path.join(INSTALLATION_TEMPORARY_DIRECTORY, `uninstall_${modificationId}`)
+  await fs.ensureDir(tempDir)
+  const instructionPath = path.join(tempDir, 'instruction.json')
+  
+  try {
+    await CloudRepository.downloadFile(`/mods/${modificationId}/instruction.json?t=${Date.now()}`, instructionPath)
+    if (await fs.pathExists(instructionPath)) {
+      const instructions = await fs.readJson(instructionPath)
+      // Шукаємо першу replace інструкцію, щоб взяти з неї vanillaFile
+      const replaceInstr = instructions.find(i => i.type && i.type.toLowerCase() === 'replace' && i.vanillaFile)
+      if (replaceInstr) vanillaCategory = replaceInstr.vanillaFile
     }
-    finally {
-      processedFilesCounter++
-      userInterfaceFeedbackChannel?.send('task-progress', { 
-        type: 'download', 
-        modId: modificationId, 
-        percentage: Math.round((processedFilesCounter / modificationOwnedFilesKeys.length) * 100) 
-      })
-    }
-  })
+  } catch (e) { console.warn('Instruction download failed, trying manifest fallback') }
 
-  await Promise.all(restorationDownloadsPromises)
+  // 3. Скачуємо ванільні файли
+  const restoreDir = path.join(tempDir, 'restore_files')
+  await fs.ensureDir(restoreDir)
+  
+  if (vanillaCategory && replacementFiles.length > 0) {
+    let processedCount = 0
+    const downloadPromises = replacementFiles.map(async (registryKey) => {
+      // registryKey: update/update.rpf|common/data/levels/gta5/trains.xml
+      const [_, internalPath] = registryKey.split('|')
+      const fileName = path.basename(internalPath) // trains.xml
+      const localPath = path.join(restoreDir, fileName)
+      
+      const url = `/vanilla/${vanillaCategory}/${encodeRemoteResourceName(fileName)}`
+      try {
+        await CloudRepository.downloadFile(url, localPath)
+      } catch (err) {
+        console.error(`Failed to download vanilla file: ${fileName}`, err)
+      } finally {
+        processedCount++
+        userInterfaceFeedbackChannel?.send('task-progress', { 
+           type: 'download', modId: modificationId, 
+           percentage: Math.round((processedCount / replacementFiles.length) * 100) 
+        })
+      }
+    })
+    await Promise.all(downloadPromises)
+  }
 
-  const uninstallationManifestTemporaryPath = path.join(INSTALLATION_TEMPORARY_DIRECTORY, `un_${modificationId}.json`)
-  await fs.writeJson(uninstallationManifestTemporaryPath, restorationTasksBatch)
-
-  const uninstallationResult = await CoreBridge.executeCoreCommand(
+  // 4. Викликаємо Backend (передаємо папку з ванільними файлами)
+  // Аргументи: gamePath, instructionPath, modId, restoreDir
+  const result = await CoreBridge.executeCoreCommand(
     'uninstall-mod', 
-    [uninstallationManifestTemporaryPath, String(modificationId), gameDirectoryPath], 
+    [gameDirectoryPath, instructionPath, String(modificationId), restoreDir], 
     userInterfaceFeedbackChannel, 
     modificationId
   )
 
-  if (uninstallationResult.status === 'success') {
-    await fs.remove(recoveryTemporaryDirectory)
+  await fs.remove(tempDir) // Чистимо сміття
+
+  if (result.status === 'success') {
+    const updatedMods = await getActiveMods(gameDirectoryPath)
+    userInterfaceFeedbackChannel?.send('mods-updated', updatedMods)
   }
 
-  return uninstallationResult
+  return result
 }
