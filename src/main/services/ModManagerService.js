@@ -110,8 +110,11 @@ export async function getModDetails(modificationId) {
   }
 }
 
+// --- ВИПРАВЛЕНА ТА ОНОВЛЕНА ФУНКЦІЯ INSTALLMOD ---
 export async function installMod(modificationId, gameDirectoryPath) {
   const modificationSessionDirectory = path.join(MODIFICATION_CACHE_ROOT, modificationId.toString())
+  
+  // 1. Очищаємо папку перед завантаженням (видаляємо старі/кешовані файли локально)
   await fs.emptyDir(modificationSessionDirectory)
   
   const instructionFileLocalPath = path.join(modificationSessionDirectory, 'instruction.json')
@@ -119,14 +122,22 @@ export async function installMod(modificationId, gameDirectoryPath) {
   const extractionDirectoryPath = path.join(modificationSessionDirectory, 'extracted')
   const userInterfaceFeedbackChannel = BrowserWindow.getAllWindows()[0]?.webContents
 
-  await CloudRepository.downloadFile(`/mods/${modificationId}/instruction.json`, instructionFileLocalPath)
+  // Генеруємо timestamp для обходу кешування на стороні сервера/CDN
+  const timestamp = Date.now()
+
+  // 2. Скачуємо свіжу інструкцію (з timestamp)
+  await CloudRepository.downloadFile(
+    `/mods/${modificationId}/instruction.json?t=${timestamp}`, 
+    instructionFileLocalPath
+  )
 
   const modificationManifest = await CloudRepository.getModManifest(modificationId)
   const isBinaryPayloadRequired = modificationManifest.hasPayload === true
 
+  // 3. Якщо є файли (payload) - качаємо свіжий архів і розпаковуємо
   if (isBinaryPayloadRequired) {
     await CloudRepository.downloadFile(
-      `/mods/${modificationId}/payload.zip`, 
+      `/mods/${modificationId}/payload.zip?t=${timestamp}`, 
       payloadArchiveLocalPath, 
       (downloadProgressPercentage) => userInterfaceFeedbackChannel?.send('installation-progress', { 
         type: 'download', 
@@ -137,46 +148,21 @@ export async function installMod(modificationId, gameDirectoryPath) {
     archiveUnpacker.extractAllTo(extractionDirectoryPath, true)
   }
 
-  const modificationInstructionsSet = await fs.readJson(instructionFileLocalPath)
-  const installationTasksBatch = []
-
-  if (isBinaryPayloadRequired) {
-    for (const instruction of modificationInstructionsSet) {
-      if (instruction.type !== 'replace') continue
-
-      const sourceContentSubPath = instruction.sourceSubPath || ''
-      const absoluteSourceContentPath = path.normalize(path.join(extractionDirectoryPath, sourceContentSubPath))
-
-      if (!fs.existsSync(absoluteSourceContentPath)) continue
-
-      const directoryFilesList = fs.readdirSync(absoluteSourceContentPath)
-      for (const fileName of directoryFilesList) {
-        const fullSourceFilePath = path.join(absoluteSourceContentPath, fileName)
-        if (fs.statSync(fullSourceFilePath).isDirectory()) continue
-
-        installationTasksBatch.push({
-          TargetPath: path.join(instruction.targetPath, fileName).replace(/\\/g, '/'),
-          SourceFilePath: path.normalize(fullSourceFilePath)
-        })
-      }
-    }
-  }
-
-  if (installationTasksBatch.length === 0) {
-    return { status: 'error', message: 'Task list empty' }
-  }
-
-  const tasksManifestTemporaryPath = path.join(INSTALLATION_TEMPORARY_DIRECTORY, `tasks_${modificationId}.json`)
-  await fs.ensureDir(INSTALLATION_TEMPORARY_DIRECTORY)
-  await fs.writeJson(tasksManifestTemporaryPath, installationTasksBatch)
-
+  // 4. ВИКЛИКАЄМО C# CORE
+  // Передаємо шлях до instruction.json, щоб C# сам розібрався з типами (edit/replace)
   const backendExecutionResult = await CoreBridge.executeCoreCommand(
-    'install-batch', 
-    [tasksManifestTemporaryPath, String(modificationId), gameDirectoryPath], 
+    'install-mod', 
+    [
+      gameDirectoryPath,           // arg[0]
+      instructionFileLocalPath,    // arg[1] - шлях до JSON файлу
+      String(modificationId),      // arg[2]
+      isBinaryPayloadRequired ? extractionDirectoryPath : '' // arg[3] - sourceDirectory
+    ], 
     userInterfaceFeedbackChannel, 
     modificationId
   )
 
+  // 5. Прибираємо за собою, якщо успішно
   if (backendExecutionResult.status === 'success') {
     await fs.remove(modificationSessionDirectory)
   }

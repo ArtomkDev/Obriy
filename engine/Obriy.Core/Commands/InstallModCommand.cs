@@ -1,9 +1,5 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Text.Json;
-using System.Threading.Tasks;
+using Obriy.Core.Models;
 using Obriy.Core.Services;
 
 namespace Obriy.Core.Commands
@@ -14,87 +10,112 @@ namespace Obriy.Core.Commands
 
         public async Task ExecuteAsync(string[] args)
         {
-            // Fixes warning CS1998 (async method runs synchronously)
             await Task.CompletedTask;
+            Console.Error.WriteLine($"[DEBUG] [InstallMod] Command started. Args count: {args.Length}");
 
-            if (args.Length < 4)
+            if (args.Length < 3)
             {
-                Error("Not enough arguments. Expected: gameDirectoryPath, modFilesSourcePath, targetRpfRelativePath, modIdentifier");
+                Console.WriteLine(JsonSerializer.Serialize(new { status = "error", message = "Not enough arguments." }));
                 return;
             }
 
             string gameDirectoryPath = args[0];
-            string modFilesSourcePath = args[1];
-            string targetRpfRelativePath = args[2];
-            string modIdentifier = args[3];
+            string jsonInstructionsPath = args[1];
+            string modIdentifier = args[2];
+            string sourceDirectory = args.Length > 3 ? args[3] : string.Empty;
 
-            RegistryService registryService = new RegistryService(gameDirectoryPath);
-            RpfEditor rpfEditor = new RpfEditor(gameDirectoryPath);
+            Console.Error.WriteLine($"[DEBUG] [InstallMod] GamePath: {gameDirectoryPath}");
+            Console.Error.WriteLine($"[DEBUG] [InstallMod] InstructionFile: {jsonInstructionsPath}");
+            Console.Error.WriteLine($"[DEBUG] [InstallMod] SourceDir: {sourceDirectory}");
+
+            var registryService = new RegistryService(gameDirectoryPath);
+            var rpfEditor = new RpfEditor(gameDirectoryPath);
+            var installedFiles = new List<string>();
 
             try
             {
-                if (!Directory.Exists(modFilesSourcePath))
-                {
-                    throw new DirectoryNotFoundException($"Source directory not found: {modFilesSourcePath}");
-                }
-
-                string[] filesToInstall = Directory.GetFiles(modFilesSourcePath);
+                if (!File.Exists(jsonInstructionsPath))
+                    throw new FileNotFoundException($"Instruction file not found: {jsonInstructionsPath}");
                 
-                // Словник для групування операцій по фізичних RPF файлах
-                // Key: повний шлях до dlc.rpf
-                // Value: словник (внутрішній шлях -> шлях до source файлу)
-                var operationsByRpf = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
-                var successfullyInstalledFiles = new List<string>();
+                string jsonContent = File.ReadAllText(jsonInstructionsPath);
+                var operations = JsonSerializer.Deserialize<List<ModOperation>>(jsonContent);
 
-                foreach (string filePath in filesToInstall)
+                if (operations == null || operations.Count == 0)
+                    throw new ArgumentException("No operations found in JSON.");
+
+                Console.Error.WriteLine($"[DEBUG] [InstallMod] Found {operations.Count} operations.");
+
+                foreach (var operation in operations)
                 {
-                    string fileName = Path.GetFileName(filePath);
-                    // Формуємо повний шлях, куди цей файл має потрапити в грі
-                    // Наприклад: D:\GTA\update\x64\dlcpacks\patchday8ng\dlc.rpf\x64\models\cdimages\weapons.rpf\w_pistol.ytd
-                    string internalPath = Path.Combine(targetRpfRelativePath, fileName);
-                    string fullGamePath = Path.Combine(gameDirectoryPath, internalPath);
-
-                    try 
+                    string targetPath = operation.TargetPath.Replace('\\', '/');
+                    Console.Error.WriteLine($"[DEBUG] [InstallMod] Processing operation: {operation.Type} -> {targetPath}");
+                    
+                    if (operation.Type.Equals("replace", StringComparison.OrdinalIgnoreCase))
                     {
-                        // Використовуємо SplitPath, щоб знайти реальний архів на диску (dlc.rpf)
-                        var pathInfo = SplitPath(fullGamePath);
-                        string physicalRpfPath = pathInfo.PhysicalPath;
-                        // Внутрішній шлях має бути з сслешами для CodeWalker (x64/models/...)
-                        string relativeInternalPath = pathInfo.InternalPath.Replace("\\", "/");
+                        // --- ЛОГІКА REPLACE: МАСОВА ВСТАВКА ВСІХ ФАЙЛІВ ---
+                        if (string.IsNullOrEmpty(sourceDirectory) || !Directory.Exists(sourceDirectory)) 
+                            throw new DirectoryNotFoundException($"Source directory is required and must exist for 'replace'. Path: {sourceDirectory}");
 
-                        if (!operationsByRpf.ContainsKey(physicalRpfPath))
+                        // 1. Беремо всі файли з папки payload
+                        string[] sourceFiles = Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories);
+                        
+                        if (sourceFiles.Length == 0)
+                            throw new FileNotFoundException($"No files found in source directory: {sourceDirectory}");
+
+                        Console.Error.WriteLine($"[DEBUG] [InstallMod] Found {sourceFiles.Length} files to install into {targetPath}");
+
+                        // 2. Знаходимо фізичний архів
+                        string fullGamePath = Path.Combine(gameDirectoryPath, targetPath);
+                        var pathInfo = SplitPathToRpf(fullGamePath);
+                        
+                        // 3. Формуємо словник для пакетної установки
+                        // Key: внутрішній шлях в RPF, Value: повний шлях до файлу на диску
+                        var batchFiles = new Dictionary<string, string>();
+
+                        bool isTargetArchive = targetPath.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase);
+
+                        foreach (var srcFilePath in sourceFiles)
                         {
-                            operationsByRpf[physicalRpfPath] = new Dictionary<string, string>();
+                            string fileName = Path.GetFileName(srcFilePath);
+                            string internalDestinationPath;
+
+                            if (isTargetArchive)
+                            {
+                                // Якщо ціль - архів (weapons.rpf), кладемо файли всередину
+                                internalDestinationPath = Path.Combine(pathInfo.InternalPath, fileName).Replace("\\", "/");
+                            }
+                            else
+                            {
+                                // Якщо ціль - конкретний файл, замінюємо його (тільки якщо імена співпадають або це єдиний файл)
+                                internalDestinationPath = pathInfo.InternalPath;
+                            }
+
+                            batchFiles[internalDestinationPath] = srcFilePath;
+
+                            // Реєструємо кожен файл окремо, щоб знати, що ми замінили
+                            // Для реєстру нам потрібен відносний шлях від кореня гри
+                            string registryKey = isTargetArchive ? Path.Combine(targetPath, fileName).Replace("\\", "/") : targetPath;
+                            
+                            registryService.RegisterFileOwnership(registryKey, srcFilePath, modIdentifier);
+                            installedFiles.Add(registryKey);
                         }
 
-                        operationsByRpf[physicalRpfPath][relativeInternalPath] = filePath;
-                        successfullyInstalledFiles.Add(fileName);
+                        // 4. Виконуємо пакетну заміну
+                        Console.Error.WriteLine($"[DEBUG] [InstallMod] Executing InstallBatch on {pathInfo.PhysicalPath}...");
+                        rpfEditor.InstallBatch(pathInfo.PhysicalPath, batchFiles, () => {}, true);
+                        Console.Error.WriteLine($"[DEBUG] [InstallMod] Batch install complete.");
                     }
-                    catch (Exception fileEx)
+                    else if (operation.Type.Equals("edit", StringComparison.OrdinalIgnoreCase))
                     {
-                        Console.Error.WriteLine($"[InstallMod] Error analyzing path for {fileName}: {fileEx.Message}");
+                        // --- ЛОГІКА EDIT ---
+                        Console.Error.WriteLine($"[DEBUG] [InstallMod] Calling RpfEditor.EditFileInRpf...");
+                        rpfEditor.EditFileInRpf(targetPath, operation.Actions);
+                        installedFiles.Add(targetPath);
+                        Console.Error.WriteLine($"[DEBUG] [InstallMod] Edit finished successfully.");
                     }
-                }
-
-                // Виконуємо пакетну інсталяцію для кожного знайденого RPF
-                foreach (var rpfGroup in operationsByRpf)
-                {
-                    string physicalRpf = rpfGroup.Key;
-                    var updates = rpfGroup.Value;
-
-                    Console.Error.WriteLine($"[InstallMod] Installing {updates.Count} files to {Path.GetFileName(physicalRpf)}");
-
-                    // Використовуємо InstallBatch з новим RpfEditor (Action без параметрів)
-                    rpfEditor.InstallBatch(physicalRpf, updates, () => 
+                    else
                     {
-                        // Тут можна додати логіку прогресу, якщо потрібно
-                    }, true);
-
-                    // Реєструємо зміни
-                    string relativeRpfPath = Path.GetRelativePath(gameDirectoryPath, physicalRpf).Replace("\\", "/");
-                    foreach (var update in updates)
-                    {
-                        registryService.RegisterFileOwnership(relativeRpfPath, update.Key, modIdentifier);
+                        Console.Error.WriteLine($"[DEBUG] [InstallMod] Unknown type: {operation.Type}");
                     }
                 }
 
@@ -103,27 +124,24 @@ namespace Obriy.Core.Commands
                 Console.WriteLine(JsonSerializer.Serialize(new
                 {
                     status = "success",
-                    installedFiles = successfullyInstalledFiles,
+                    message = "Operations completed successfully",
+                    installedFiles = installedFiles,
                     activeMods = registryService.GetActiveModIds()
                 }));
             }
             catch (Exception ex)
             {
-                Error(ex.Message, ex.StackTrace);
+                Console.Error.WriteLine($"[CRITICAL ERROR] [InstallMod] {ex.Message}\n{ex.StackTrace}");
+                Console.WriteLine(JsonSerializer.Serialize(new
+                {
+                    status = "error",
+                    message = ex.Message,
+                    trace = ex.StackTrace
+                }));
             }
         }
 
-        private void Error(string message, string trace = null)
-        {
-            Console.WriteLine(JsonSerializer.Serialize(new
-            {
-                status = "error",
-                message = message,
-                trace = trace
-            }));
-        }
-
-        private (string PhysicalPath, string InternalPath) SplitPath(string fullPath)
+        private (string PhysicalPath, string InternalPath) SplitPathToRpf(string fullPath)
         {
             string currentPath = Path.GetFullPath(fullPath);
             string internalParts = "";
@@ -132,20 +150,19 @@ namespace Obriy.Core.Commands
             {
                 if (File.Exists(currentPath))
                 {
-                    // Знайшли файл на диску (це наш базовий RPF)
-                    return (currentPath, internalParts.TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                    return (currentPath, internalParts.TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Replace('\\', '/'));
                 }
 
                 string fileName = Path.GetFileName(currentPath);
                 string directory = Path.GetDirectoryName(currentPath);
 
-                if (string.IsNullOrEmpty(directory) || directory.Equals(currentPath, StringComparison.OrdinalIgnoreCase))
-                    break;
+                if (string.IsNullOrEmpty(directory) || directory.Equals(currentPath, StringComparison.OrdinalIgnoreCase)) break;
 
                 internalParts = Path.Combine(fileName, internalParts);
                 currentPath = directory;
             }
-
+            // Якщо фізичний файл не знайдено, спробуємо знайти найближчий існуючий батьківський каталог, 
+            // припускаючи, що це RPF шлях, який ще не існує (хоча для RPF це рідкість, зазвичай base архів є)
             throw new FileNotFoundException($"Valid RPF root not found for: {fullPath}");
         }
     }
