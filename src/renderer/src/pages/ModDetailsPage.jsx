@@ -26,18 +26,15 @@ export default function ModDetailsPage() {
       
       try {
         const response = await window.api.getModDetails(id)
-        console.log('[ModDetails][Diagnostic] API Response:', response)
-
         if (isRequestValid) {
           if (response) {
             setModData(response)
           } else {
-            console.warn(`[ModDetails][Diagnostic] Mod not found for ID: ${id}`)
             navigate('/mods')
           }
         }
       } catch (err) {
-        console.error('[ModDetails][Diagnostic] Critical Fetch Error:', err)
+        console.error('[ModDetails] Error:', err)
         if (isRequestValid) navigate('/mods')
       } finally {
         if (isRequestValid) setIsPageLoading(false)
@@ -48,11 +45,9 @@ export default function ModDetailsPage() {
     return () => { isRequestValid = false }
   }, [id, navigate])
 
-  // --- Logic to process manifest media (NO GUESSING) ---
   const mediaList = useMemo(() => {
     if (!modData) return []
 
-    // If media is missing or empty, provide a strict fallback based on ID (usually 1.webp)
     if (!modData.media || modData.media.length === 0) {
        return [{
            type: 'image',
@@ -61,27 +56,44 @@ export default function ModDetailsPage() {
        }]
     }
 
-    return modData.media.map(item => {
-        // 1. Support legacy/backend-processed objects (if backend sends { type, source })
-        if (typeof item === 'object' && item !== null) {
-            return item
-        }
-
-        // 2. Handle RAW MANIFEST strings (e.g. "1.webp", "video.mp4")
+    let normalized = modData.media.map(item => {
         if (typeof item === 'string') {
             const fileName = item
             const ext = fileName.split('.').pop().toLowerCase()
             const isVideo = ['mp4', 'webm', 'mov'].includes(ext)
-            
             return {
                 type: isVideo ? 'video' : 'image',
                 source: `${GATEWAY_BASE}/mods/${modData.id}/assets/${fileName}`,
-                // For videos, use 1.webp as the poster/thumbnail convention
-                thumbnail: isVideo ? `${GATEWAY_BASE}/mods/${modData.id}/assets/1.webp` : null
+                thumbnail: isVideo ? `${GATEWAY_BASE}/mods/${modData.id}/assets/1.webp` : null,
+                _debugName: fileName
             }
         }
+        if (typeof item === 'object' && item !== null) return { ...item }
         return null
     }).filter(Boolean)
+
+    const getFileName = (m) => {
+        if (m._debugName) return m._debugName;
+        if (m.source) return m.source.split('/').pop();
+        return '';
+    }
+
+    const bgItem = normalized.find(m => {
+        const name = getFileName(m).toLowerCase();
+        return name.startsWith('0.') || name.startsWith('img0.') || name === '0.webp';
+    })
+
+    const fgItem = normalized.find(m => {
+        const name = getFileName(m).toLowerCase();
+        return name.startsWith('1.') || name.startsWith('img1.') || name === '1.webp';
+    })
+
+    if (bgItem && fgItem) {
+        fgItem.backgroundSource = bgItem.source
+        normalized = normalized.filter(item => item !== bgItem)
+    }
+
+    return normalized
   }, [modData])
 
   const modStatus = getModStatus(id?.toString())

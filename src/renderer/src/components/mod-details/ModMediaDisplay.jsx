@@ -1,15 +1,20 @@
 import React from 'react'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import CustomPlayer from '../CustomPlayer'
+
+// Спеціальна крива для "дорогого" відчуття анімації (Ultra Smooth Easing)
+const SMOOTH_EASE = [0.16, 1, 0.3, 1]; 
 
 export default function ModMediaDisplay({ currentMedia, modThumbnail }) {
   const navigate = useNavigate()
 
   const isVideo = currentMedia && (currentMedia.type === 'video' || currentMedia.type === 'video_file')
+  const hasDualLayer = currentMedia && currentMedia.backgroundSource
+  const maskSource = hasDualLayer ? currentMedia.backgroundSource : currentMedia?.source
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-black relative group overflow-hidden">
+    <div className="flex-1 flex flex-col h-full bg-black relative group overflow-hidden isolate">
       <div className="absolute top-6 left-6 z-30">
         <button 
           onClick={() => navigate('/mods')} 
@@ -20,9 +25,9 @@ export default function ModMediaDisplay({ currentMedia, modThumbnail }) {
         </button>
       </div>
 
-      <div className="flex-1 w-full relative z-10 bg-black flex items-center justify-center overflow-hidden">
+      <div className="flex-1 w-full h-full relative z-10 bg-black flex items-center justify-center overflow-hidden">
          {isVideo ? (
-             <div className="w-full h-full"> 
+             <div className="w-full h-full overflow-hidden"> 
                 <CustomPlayer 
                     url={currentMedia.source} 
                     thumbnail={modThumbnail}
@@ -30,19 +35,73 @@ export default function ModMediaDisplay({ currentMedia, modThumbnail }) {
                 />
              </div>
          ) : (
-             <div className="w-full h-full relative">
+             <div className="w-full h-full relative flex items-center justify-center overflow-hidden">
+                {/* Глобальний розмитий фон */}
                 <div 
-                    className="absolute inset-0 bg-cover bg-center blur-3xl opacity-30 scale-110"
+                    className="absolute inset-0 bg-cover bg-center blur-3xl opacity-30 scale-125"
                     style={{ backgroundImage: `url(${currentMedia?.source})` }}
                 />
-                <motion.div 
-                    key={currentMedia?.source}
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-                    className="absolute inset-0 bg-contain bg-center bg-no-repeat z-10"
-                    style={{ backgroundImage: `url(${currentMedia?.source})` }}
-                />
+
+                {/* КОНТЕЙНЕР З МАСКОЮ */}
+                <div 
+                    className="relative w-full h-full flex items-center justify-center isolate"
+                    style={{
+                        maskImage: `url(${maskSource})`,
+                        WebkitMaskImage: `url(${maskSource})`,
+                        maskSize: 'contain',
+                        WebkitMaskSize: 'contain',
+                        maskPosition: 'center',
+                        WebkitMaskPosition: 'center',
+                        maskRepeat: 'no-repeat',
+                        WebkitMaskRepeat: 'no-repeat'
+                    }}
+                >
+                    <AnimatePresence mode='wait'>
+                        {hasDualLayer ? (
+                          <div key={currentMedia.source + '-dual'} className="relative w-full h-full">
+                            
+                            {/* LAYER 0 (ФОН): Плавніша, "важча" анімація */}
+                            <motion.img
+                              src={currentMedia.backgroundSource}
+                              alt="Background Layer"
+                              initial={{ opacity: 0, scale: 1.08 }} // Трохи менший старт, ніж у переднього
+                              animate={{ opacity: 1, scale: 1.0 }}
+                              transition={{ 
+                                duration: 0.8, 
+                                ease: SMOOTH_EASE 
+                              }}
+                              className="absolute inset-0 w-full h-full object-contain z-10"
+                            />
+
+                            {/* LAYER 1 (ПЕРЕДНІЙ ПЛАН): Більш динамічна анімація */}
+                            <motion.img
+                              src={currentMedia.source}
+                              alt="Foreground Layer"
+                              initial={{ opacity: 0, scale: 1.25 }} // Сильніший Zoom Out
+                              animate={{ opacity: 1, scale: 1.0 }}
+                              transition={{ 
+                                duration: 0.8, 
+                                ease: SMOOTH_EASE,
+                                delay: 0.05 // Мікро-затримка для розділення планів
+                              }}
+                              className="absolute inset-0 w-full h-full object-contain z-20"
+                            />
+                            
+                          </div>
+                        ) : (
+                          // Одинарне фото
+                          <motion.img
+                              key={currentMedia?.source}
+                              src={currentMedia?.source}
+                              alt="Mod Preview"
+                              initial={{ opacity: 0, scale: 1.1 }}
+                              animate={{ opacity: 1, scale: 1.0 }}
+                              transition={{ duration: 0.6, ease: SMOOTH_EASE }}
+                              className="block w-full h-full object-contain z-10"
+                          />
+                        )}
+                    </AnimatePresence>
+                </div>
              </div>
          )}
       </div>

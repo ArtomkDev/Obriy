@@ -54,6 +54,9 @@ export default function ModGalleryStrip({ mediaItems, currentIndex, onSelect }) 
             {mediaItems.map((item, idx) => {
                 const isActive = idx === currentIndex
                 const isVideo = item.type === 'video' || item.type === 'video_file'
+                // Перевіряємо, чи є це подвійне фото
+                const hasDualLayer = item.backgroundSource
+
                 return (
                 <motion.div 
                     key={idx}
@@ -84,7 +87,18 @@ export default function ModGalleryStrip({ mediaItems, currentIndex, onSelect }) 
                             {isActive && <div className="absolute bottom-2 right-2 w-2 h-2 bg-indigo-500 rounded-full animate-pulse shadow-[0_0_8px_#6366f1] z-20" />}
                         </div>
                     ) : (
-                        <img src={item.source} className="w-full h-full object-cover" alt="" />
+                        // ТУТ ЗМІНИ: Якщо є подвійний шар, рендеримо обидва фото
+                        hasDualLayer ? (
+                             <div className="w-full h-full relative bg-black">
+                                {/* Шар 1: Фон (заповнює все) */}
+                                <img src={item.backgroundSource} className="absolute inset-0 w-full h-full object-cover opacity-80" alt="" />
+                                {/* Шар 2: Основне фото (поверх) */}
+                                <img src={item.source} className="absolute inset-0 w-full h-full object-contain z-10" alt="" />
+                             </div>
+                        ) : (
+                             // Звичайне фото
+                             <img src={item.source} className="w-full h-full object-cover" alt="" />
+                        )
                     )}
                 </motion.div>
                 )})}
