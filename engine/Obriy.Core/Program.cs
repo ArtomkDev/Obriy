@@ -105,6 +105,7 @@ namespace Obriy.Core
                 "install-mod" => new InstallModCommand(),
                 "uninstall-mod" => new UninstallModCommand(),
                 "install-batch" => new BatchInstallCommand(),
+                "batch-edit" => new BatchEditCommand(),
                 "get-active-mods" => new GetActiveModsCommand(),
                 "ping" => new PingCommand(),
                 _ => null

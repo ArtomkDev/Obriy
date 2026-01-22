@@ -10,7 +10,7 @@ public class ModOperation
     [JsonPropertyName("targetPath")]
     public string TargetPath { get; set; }
 
-    [JsonPropertyName("actions")]
+    [JsonPropertyName("edits")]
     public List<DynamicEditAction> Actions { get; set; }
 }
 
@@ -19,14 +19,12 @@ public class DynamicEditAction
     [JsonPropertyName("description")]
     public string Description { get; set; }
 
-    // Основні поля (новий формат)
     [JsonPropertyName("searchPattern")]
     public string SearchPattern { get; set; }
 
     [JsonPropertyName("template")]
     public string Template { get; set; }
 
-    // Поля для сумісності (старий формат JSON)
     [JsonPropertyName("find")]
     public string Find { get; set; }
 

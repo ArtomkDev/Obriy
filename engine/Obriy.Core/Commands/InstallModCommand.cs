@@ -48,13 +48,16 @@ public class InstallModCommand : ICommand
             {
                 string targetPath = operation.TargetPath.Replace('\\', '/');
                 string fullGamePath = Path.Combine(gameDirectoryPath, targetPath);
+                
+                // Отримуємо інформацію про шлях (RPF чи звичайний файл)
                 var pathInfo = SplitPathToRpf(fullGamePath);
+                bool isRpfFile = pathInfo.PhysicalPath.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase);
 
                 string relativeRpfPath = Path.GetRelativePath(gameDirectoryPath, pathInfo.PhysicalPath).Replace('\\', '/');
                 string internalPath = pathInfo.InternalPath.Replace("\\", "/");
                 string registryKey = $"{relativeRpfPath}|{internalPath}";
 
-                Console.Error.WriteLine($"[DEBUG] Operation: {operation.Type} -> {targetPath}");
+                Console.Error.WriteLine($"[DEBUG] Operation: {operation.Type} -> {targetPath} (IsRPF: {isRpfFile})");
 
                 if (operation.Type.Equals("replace", StringComparison.OrdinalIgnoreCase))
                 {
@@ -62,31 +65,55 @@ public class InstallModCommand : ICommand
                         throw new DirectoryNotFoundException($"Source directory required/missing: {sourceDirectory}");
 
                     string[] sourceFiles = Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories);
-                    Console.Error.WriteLine($"[DEBUG] Found {sourceFiles.Length} source files to replace.");
-
-                    var batchFiles = new Dictionary<string, string>();
-                    bool isTargetArchive = targetPath.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase);
-
-                    foreach (var srcFilePath in sourceFiles)
+                    
+                    if (isRpfFile)
                     {
-                        string fileName = Path.GetFileName(srcFilePath);
-                        string destInternalPath = isTargetArchive 
-                            ? Path.Combine(pathInfo.InternalPath, fileName).Replace("\\", "/") 
-                            : internalPath;
+                        // Логіка для RPF
+                        var batchFiles = new Dictionary<string, string>();
+                        bool isTargetArchive = targetPath.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase);
 
-                        string fileKey = $"{relativeRpfPath}|{destInternalPath}";
+                        foreach (var srcFilePath in sourceFiles)
+                        {
+                            string fileName = Path.GetFileName(srcFilePath);
+                            string destInternalPath = isTargetArchive 
+                                ? Path.Combine(pathInfo.InternalPath, fileName).Replace("\\", "/") 
+                                : internalPath;
+
+                            string fileKey = $"{relativeRpfPath}|{destInternalPath}";
+                            registryService.RegisterFileReplacement(fileKey, modIdentifier, saveImmediately: false);
+                            batchFiles[destInternalPath] = srcFilePath;
+                            installedFiles.Add(destInternalPath);
+                        }
                         
-                        // Реєструємо, але не зберігаємо диск щоразу
-                        registryService.RegisterFileReplacement(fileKey, modIdentifier, saveImmediately: false);
-                        
-                        batchFiles[destInternalPath] = srcFilePath;
-                        installedFiles.Add(destInternalPath);
+                        rpfEditor.InstallBatch(pathInfo.PhysicalPath, batchFiles, () => { }, true);
                     }
+                    else
+                    {
+                        // Логіка для звичайних файлів (Loose files)
+                        foreach (var srcFilePath in sourceFiles)
+                        {
+                            // Для loose files ми просто копіюємо файл
+                            // Якщо targetPath вказує на конкретний файл, замінюємо його
+                            // Якщо на папку - копіюємо всередину (спрощена логіка для одного файлу)
+                            
+                            string destinationPath = fullGamePath;
+                            
+                            // Якщо ціль це директорія (і вона існує), формуємо шлях до файлу всередині
+                            if (Directory.Exists(fullGamePath))
+                            {
+                                destinationPath = Path.Combine(fullGamePath, Path.GetFileName(srcFilePath));
+                            }
 
-                    // Виконуємо запис
-                    Console.Error.WriteLine($"[DEBUG] Calling RpfEditor.InstallBatch for {batchFiles.Count} files...");
-                    rpfEditor.InstallBatch(pathInfo.PhysicalPath, batchFiles, () => { }, true);
-                    Console.Error.WriteLine("[DEBUG] Batch install finished.");
+                            // Бекап не робимо явно тут, але для повноти можна додати
+                            // Реєструємо
+                            string fileKey = $"{relativeRpfPath}|"; // Для loose files internal path порожній
+                            registryService.RegisterFileReplacement(fileKey, modIdentifier, saveImmediately: false);
+
+                            Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+                            File.Copy(srcFilePath, destinationPath, true);
+                            installedFiles.Add(Path.GetRelativePath(gameDirectoryPath, destinationPath));
+                        }
+                    }
                 }
                 else if (operation.Type.Equals("edit", StringComparison.OrdinalIgnoreCase))
                 {
@@ -97,10 +124,23 @@ public class InstallModCommand : ICommand
                     }
 
                     Console.Error.WriteLine($"[Edit] Checking content for {targetPath}...");
-                    string originalContent = await rpfEditor.GetFileTextAsync(targetPath);
+                    
+                    string originalContent;
+
+                    // ВИПРАВЛЕННЯ ТУТ: Розділяємо логіку читання для RPF та звичайних файлів
+                    if (isRpfFile)
+                    {
+                        originalContent = await rpfEditor.GetFileTextAsync(targetPath);
+                    }
+                    else
+                    {
+                        if (!File.Exists(fullGamePath))
+                            throw new FileNotFoundException($"File not found on disk: {fullGamePath}");
+                        originalContent = await File.ReadAllTextAsync(fullGamePath);
+                    }
                     
                     if (string.IsNullOrEmpty(originalContent))
-                        throw new FileNotFoundException($"File not found inside RPF: {targetPath}");
+                        throw new FileNotFoundException($"Content is empty or file not found: {targetPath}");
 
                     // Перевірка конфліктів
                     foreach (var action in operation.Actions)
@@ -118,17 +158,26 @@ public class InstallModCommand : ICommand
 
                     foreach (var res in results)
                     {
-                        Console.Error.WriteLine($"[Edit Result] {res.Status}: {res.Message}");
                         if (res.Status == EditResultStatus.Error || res.Status == EditResultStatus.Conflict)
                         {
-                             Console.Error.WriteLine("[Warning] Skipping problematic edit action.");
+                             Console.Error.WriteLine($"[Warning] Problematic edit action: {res.Message}");
                         }
                     }
 
                     if (originalContent != newContent)
                     {
-                        Console.Error.WriteLine("[DEBUG] Writing modified text back to RPF...");
-                        await rpfEditor.WriteFileTextAsync(targetPath, newContent);
+                        Console.Error.WriteLine("[DEBUG] Writing modified text...");
+                        
+                        // ВИПРАВЛЕННЯ ТУТ: Розділяємо логіку запису
+                        if (isRpfFile)
+                        {
+                            await rpfEditor.WriteFileTextAsync(targetPath, newContent);
+                        }
+                        else
+                        {
+                            // Робимо бекап перед записом, якщо треба (тут спрощено)
+                            await File.WriteAllTextAsync(fullGamePath, newContent);
+                        }
                     }
                     else
                     {
@@ -149,9 +198,7 @@ public class InstallModCommand : ICommand
                 }
             }
 
-            Console.Error.WriteLine("[DEBUG] Saving registry...");
             registryService.SaveRegistry();
-            Console.Error.WriteLine("[DEBUG] Registry saved.");
 
             Console.WriteLine(JsonSerializer.Serialize(new
             {
@@ -176,15 +223,25 @@ public class InstallModCommand : ICommand
     {
         string currentPath = Path.GetFullPath(fullPath);
         string internalParts = "";
+        
+        // Додана перевірка для звичайних файлів, що вже існують
+        if (File.Exists(currentPath) && !currentPath.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase))
+        {
+            return (currentPath, "");
+        }
+
         while (!string.IsNullOrEmpty(currentPath))
         {
-            if (File.Exists(currentPath)) return (currentPath, internalParts.TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Replace('\\', '/'));
+            if (File.Exists(currentPath)) 
+                return (currentPath, internalParts.TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Replace('\\', '/'));
+            
             string fileName = Path.GetFileName(currentPath);
             string directory = Path.GetDirectoryName(currentPath);
             if (string.IsNullOrEmpty(directory) || directory.Equals(currentPath, StringComparison.OrdinalIgnoreCase)) break;
+            
             internalParts = Path.Combine(fileName, internalParts);
             currentPath = directory;
         }
-        throw new FileNotFoundException($"Valid RPF root not found for path: {fullPath}");
+        throw new FileNotFoundException($"Valid RPF root or file not found for path: {fullPath}");
     }
 }

@@ -161,7 +161,6 @@ public class RegistryService
             _data = new RegistryData();
         }
 
-        // КРИТИЧНО: Гарантуємо, що колекції існують, навіть якщо JSON був пошкоджений або null
         if (_data.FileReplacements == null) _data.FileReplacements = new();
         if (_data.FileEdits == null) _data.FileEdits = new();
     }

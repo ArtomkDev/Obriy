@@ -54,6 +54,42 @@ public class RpfEditor
         }
     }
 
+    public void UpdateBatchTextFiles(string physicalRpfPath, Dictionary<string, string> updates)
+    {
+        if (!File.Exists(physicalRpfPath))
+            throw new FileNotFoundException($"RPF file not found: {physicalRpfPath}");
+
+        EnsureWritable(physicalRpfPath);
+        BackupFile(physicalRpfPath);
+
+        var rpfFile = new RpfFile(physicalRpfPath, physicalRpfPath);
+        rpfFile.ScanStructure(null, null);
+
+        foreach (var update in updates)
+        {
+            string internalPath = update.Key;
+            string newContent = update.Value;
+            byte[] newData = Encoding.UTF8.GetBytes(newContent);
+
+            string dirPath = Path.GetDirectoryName(internalPath)?.Replace('\\', '/') ?? "";
+            string fileName = Path.GetFileName(internalPath);
+
+            RpfDirectoryEntry targetDir = GetDirectory(rpfFile, dirPath);
+
+            // ВИПРАВЛЕННЯ: Спочатку видаляємо старий файл, якщо він є
+            var existingEntry = targetDir.Files.FirstOrDefault(f => f.Name.Equals(fileName, StringComparison.OrdinalIgnoreCase));
+            if (existingEntry != null)
+            {
+                RpfFile.DeleteEntry(existingEntry);
+            }
+
+            RpfFile.CreateFile(targetDir, fileName, newData, true);
+        }
+        
+        rpfFile = null;
+        GC.Collect();
+    }
+
     public void InstallMod(string physicalRpfPath, string internalPath, string replacementFilePath)
     {
         var dict = new Dictionary<string, string> { { internalPath, replacementFilePath } };
@@ -67,19 +103,16 @@ public class RpfEditor
         if (!File.Exists(physicalRpfPath))
             throw new FileNotFoundException($"RPF file not found: {physicalRpfPath}");
 
-        // 1. Знімаємо Read-Only
         EnsureWritable(physicalRpfPath);
 
         if (isRoot) BackupFile(physicalRpfPath);
 
-        // 2. Відкриваємо RPF
         RpfFile rpfFile = new RpfFile(physicalRpfPath, physicalRpfPath);
         rpfFile.ScanStructure(null, null);
 
         var directFiles = new Dictionary<string, string>();
         var nestedGroups = new Dictionary<string, Dictionary<string, string>>();
 
-        // 3. Сортуємо файли
         foreach (var file in files)
         {
             string path = file.Key.Replace('\\', '/');
@@ -102,7 +135,7 @@ public class RpfEditor
             }
         }
 
-        // 4. Обробка вкладених RPF (Рекурсія)
+        // Обробка вкладених RPF
         foreach (var group in nestedGroups)
         {
             string nestedRpfInternalPath = group.Key;
@@ -114,20 +147,19 @@ public class RpfEditor
             try
             {
                 ExtractFileFromRpf(rpfFile, nestedRpfInternalPath, tempRpfPath);
-                
-                // Важливо: знімаємо атрибути з витягнутого файлу перед записом
                 EnsureWritable(tempRpfPath);
 
                 InstallBatch(tempRpfPath, group.Value, onFileProcessed, false);
+                
                 directFiles[nestedRpfInternalPath] = tempRpfPath;
             }
             finally 
             {
-                // Директорію видалимо в кінці
+                // clean up handled later
             }
         }
 
-        // 5. Запис файлів
+        // Запис файлів
         foreach (var item in directFiles)
         {
             string internalPath = item.Key;
@@ -139,21 +171,29 @@ public class RpfEditor
             RpfDirectoryEntry targetDir = GetDirectory(rpfFile, dirPath);
             byte[] data = File.ReadAllBytes(sourcePath);
             
-            // Console.Error.WriteLine($"[RpfEditor] Writing file: {fileName} to {dirPath}");
-            RpfFile.CreateFile(targetDir, fileName, data);
+            // ВИПРАВЛЕННЯ ТУТ: Обов'язково видаляємо старий запис перед створенням нового
+            var existingEntry = targetDir.Files.FirstOrDefault(f => f.Name.Equals(fileName, StringComparison.OrdinalIgnoreCase));
+            if (existingEntry != null)
+            {
+                RpfFile.DeleteEntry(existingEntry);
+            }
+            
+            RpfFile.CreateFile(targetDir, fileName, data, true);
 
             bool isIntermediateRpf = nestedGroups.ContainsKey(internalPath);
             if (!isIntermediateRpf) onFileProcessed?.Invoke();
         }
-
-        // 6. Чистка
+        
         foreach (var group in nestedGroups)
         {
-            string tempPath = directFiles[group.Key];
-            string tempDir = Path.GetDirectoryName(tempPath);
-            try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true); } catch { }
+            if (directFiles.ContainsKey(group.Key))
+            {
+                string tempPath = directFiles[group.Key];
+                string tempDir = Path.GetDirectoryName(tempPath);
+                try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true); } catch { }
+            }
         }
-        
+
         if (isRoot) Console.Error.WriteLine($"[RpfEditor] Finished install into {Path.GetFileName(physicalRpfPath)}");
     }
 
@@ -162,7 +202,7 @@ public class RpfEditor
             if (!File.Exists(physicalRpfPath)) throw new FileNotFoundException(physicalRpfPath);
 
             RpfFile rpfFile = new RpfFile(physicalRpfPath, physicalRpfPath);
-            rpfFile.ScanStructure(null, null);
+            rpfFile.ScanStructure(null, null); 
             
             ExtractFileFromRpf(rpfFile, internalPath, outputPath);
     }
@@ -175,7 +215,6 @@ public class RpfEditor
             if ((attributes & FileAttributes.ReadOnly) == FileAttributes.ReadOnly)
             {
                 File.SetAttributes(filePath, attributes & ~FileAttributes.ReadOnly);
-                // Console.Error.WriteLine($"[RpfEditor] Removed Read-Only attribute from: {Path.GetFileName(filePath)}");
             }
         }
         catch (Exception ex)

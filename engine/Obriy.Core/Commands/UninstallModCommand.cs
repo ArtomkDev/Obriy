@@ -31,7 +31,6 @@ public class UninstallModCommand : ICommand
 
         try
         {
-            // --- ЕТАП 1: EDIT (Текст) ---
             if (File.Exists(jsonInstructionsPath))
             {
                 string jsonContent = File.ReadAllText(jsonInstructionsPath);
@@ -46,10 +45,25 @@ public class UninstallModCommand : ICommand
                         {
                             if (operation.Actions == null) continue;
                             string targetPath = operation.TargetPath.Replace('\\', '/');
+                            string fullGamePath = Path.Combine(gameDirectoryPath, targetPath);
+                            bool isRpfFile = targetPath.Contains(".rpf", StringComparison.OrdinalIgnoreCase);
                             
                             try
                             {
-                                string currentContent = await rpfEditor.GetFileTextAsync(targetPath);
+                                string currentContent = null;
+
+                                if (isRpfFile)
+                                {
+                                    currentContent = await rpfEditor.GetFileTextAsync(targetPath);
+                                }
+                                else
+                                {
+                                    if (File.Exists(fullGamePath))
+                                    {
+                                        currentContent = await File.ReadAllTextAsync(fullGamePath);
+                                    }
+                                }
+
                                 if (!string.IsNullOrEmpty(currentContent))
                                 {
                                     var (revertedContent, results) = textService.ApplySmartUninstalls(currentContent, operation.Actions);
@@ -58,12 +72,18 @@ public class UninstallModCommand : ICommand
 
                                     if (hasChanges && currentContent != revertedContent)
                                     {
-                                        await rpfEditor.WriteFileTextAsync(targetPath, revertedContent);
+                                        if (isRpfFile)
+                                        {
+                                            await rpfEditor.WriteFileTextAsync(targetPath, revertedContent);
+                                        }
+                                        else
+                                        {
+                                            await File.WriteAllTextAsync(fullGamePath, revertedContent);
+                                        }
                                         processedFiles.Add(targetPath);
                                     }
                                 }
                                 
-                                // Знімаємо блокування
                                 string relativeRpfPath = GetRelativeRpfPath(targetPath);
                                 string internalPath = GetInternalPath(targetPath);
                                 string registryKey = $"{relativeRpfPath}|{internalPath}";
@@ -81,13 +101,13 @@ public class UninstallModCommand : ICommand
                 }
             }
 
-            // --- ЕТАП 2: REPLACE (Файли) ---
             var filesToRestore = registryService.GetFilesOwnedByMod(modIdentifier);
             
             if (filesToRestore.Count > 0 && Directory.Exists(restorationSourceDir))
             {
                 Console.Error.WriteLine($"[Uninstall] Found {filesToRestore.Count} files to restore from registry.");
                 var batchGroups = new Dictionary<string, Dictionary<string, string>>();
+                var looseFilesToRestore = new List<string>();
 
                 foreach (var registryKey in filesToRestore)
                 {
@@ -96,29 +116,44 @@ public class UninstallModCommand : ICommand
 
                     string rpfRelativePath = parts[0];
                     string internalPath = parts[1];
-                    string fileName = Path.GetFileName(internalPath);
+                    string fileName = Path.GetFileName(string.IsNullOrEmpty(internalPath) ? rpfRelativePath : internalPath);
                     string sourceFile = Path.Combine(restorationSourceDir, fileName);
 
-                    if (File.Exists(sourceFile))
+                    if (!File.Exists(sourceFile))
                     {
-                        var info = new FileInfo(sourceFile);
-                        if (info.Length == 0)
-                        {
-                            Console.Error.WriteLine($"[Error] Vanilla file is empty (0 bytes): {fileName}. Skipping restore to prevent corruption.");
-                            continue;
-                        }
+                         Console.Error.WriteLine($"[Warning] Vanilla file missing: {fileName}");
+                         continue;
+                    }
 
-                        string rpfPhysicalPath = Path.Combine(gameDirectoryPath, rpfRelativePath);
+                    var info = new FileInfo(sourceFile);
+                    if (info.Length == 0)
+                    {
+                        Console.Error.WriteLine($"[Error] Vanilla file is empty (0 bytes): {fileName}. Skipping.");
+                        continue;
+                    }
+
+                    if (string.IsNullOrEmpty(internalPath))
+                    {
+                        looseFilesToRestore.Add(registryKey);
                         
+                        string destPath = Path.Combine(gameDirectoryPath, rpfRelativePath);
+                        Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+                        File.Copy(sourceFile, destPath, true);
+                        processedFiles.Add(rpfRelativePath);
+                    }
+                    else
+                    {
+                        string rpfPhysicalPath = Path.Combine(gameDirectoryPath, rpfRelativePath);
                         if (!batchGroups.ContainsKey(rpfPhysicalPath))
                             batchGroups[rpfPhysicalPath] = new Dictionary<string, string>();
 
                         batchGroups[rpfPhysicalPath][internalPath] = sourceFile;
                     }
-                    else
-                    {
-                        Console.Error.WriteLine($"[Warning] Vanilla file missing: {fileName}");
-                    }
+                }
+
+                foreach (var looseKey in looseFilesToRestore)
+                {
+                     registryService.UnregisterFileReplacement(looseKey, saveImmediately: false);
                 }
 
                 foreach (var group in batchGroups)
@@ -131,7 +166,6 @@ public class UninstallModCommand : ICommand
                         Console.Error.WriteLine($"[Uninstall] Writing {files.Count} files to physical archive: {rpfPath}");
                         rpfEditor.InstallBatch(rpfPath, files, () => { }, true);
                         
-                        // Успіх - видаляємо з реєстру
                         foreach (var internalPath in files.Keys)
                         {
                             string regKey = $"{Path.GetRelativePath(gameDirectoryPath, rpfPath).Replace('\\','/')}|{internalPath}";
@@ -162,7 +196,6 @@ public class UninstallModCommand : ICommand
         }
     }
 
-    // Helpers
     private string GetRelativeRpfPath(string targetPath) 
     {
         int idx = targetPath.IndexOf(".rpf", StringComparison.OrdinalIgnoreCase);
