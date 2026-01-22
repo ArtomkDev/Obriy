@@ -3,7 +3,6 @@ const path = require('path');
 const sharp = require('sharp');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
-const mime = require('mime-types');
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -13,7 +12,6 @@ module.exports = async (config) => {
     const srcDir = path.join(config.inputDir, 'media');
     const distDir = path.join(config.outputDir, 'assets');
 
-    // Очищаємо папку призначення
     await fs.emptyDir(distDir);
 
     if (!fs.existsSync(srcDir)) {
@@ -21,13 +19,11 @@ module.exports = async (config) => {
         return [];
     }
 
-    // 1. Отримуємо всі файли
     const rawFiles = await fs.readdir(srcDir);
     const files = rawFiles.filter(f => f !== '.DS_Store');
 
     if (files.length === 0) return [];
 
-    // 2. Розділяємо на Відео та Фото
     const videoExtensions = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
     const imageExtensions = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
 
@@ -43,21 +39,18 @@ module.exports = async (config) => {
         }
     }
 
-    // Сортуємо всередині груп за алфавітом, щоб порядок був передбачуваним
     videoFiles.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
     imageFiles.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
-    // 3. Обробка (Спочатку ВІДЕО, потім ФОТО)
     const generatedAssets = [];
-    let counter = 1;
+    let assetCounter = 1;
 
-    // --- ОБРОБКА ВІДЕО ---
     for (const fileName of videoFiles) {
         const inputPath = path.join(srcDir, fileName);
-        const outName = `${counter}.mp4`;
+        const outName = `${assetCounter}.mp4`;
         const outPath = path.join(distDir, outName);
 
-        console.log(`[Assets] Processing Video #${counter}: ${fileName} -> ${outName}`);
+        console.log(`[Assets] Processing Video #${assetCounter}: ${fileName} -> ${outName}`);
 
         try {
             await new Promise((resolve, reject) => {
@@ -65,25 +58,34 @@ module.exports = async (config) => {
                     .output(outPath)
                     .videoCodec('libx264')
                     .audioCodec('aac')
-                    .size('?x720') // 720p
+                    .size('?x720')
                     .on('end', resolve)
                     .on('error', reject)
                     .run();
             });
             generatedAssets.push(outName);
-            counter++;
+            assetCounter++;
         } catch (err) {
             console.error(`[Assets] Failed video ${fileName}:`, err.message);
         }
     }
 
-    // --- ОБРОБКА ФОТО ---
     for (const fileName of imageFiles) {
         const inputPath = path.join(srcDir, fileName);
-        const outName = `${counter}.webp`;
+        const fileBaseName = path.parse(fileName).name;
+
+        let outName;
+        
+        if (fileBaseName === 'img0') {
+            outName = '0.webp';
+        } else {
+            outName = `${assetCounter}.webp`;
+            assetCounter++;
+        }
+
         const outPath = path.join(distDir, outName);
 
-        console.log(`[Assets] Processing Image #${counter}: ${fileName} -> ${outName}`);
+        console.log(`[Assets] Processing Image: ${fileName} -> ${outName}`);
 
         try {
             await sharp(inputPath)
@@ -92,12 +94,11 @@ module.exports = async (config) => {
                 .toFile(outPath);
 
             generatedAssets.push(outName);
-            counter++;
         } catch (err) {
             console.error(`[Assets] Failed image ${fileName}:`, err.message);
         }
     }
 
     console.log(`[Assets] Done! Generated files: ${generatedAssets.join(', ')}`);
-    return generatedAssets; // Повертаємо список (наприклад: ['1.mp4', '2.mp4', '3.webp'])
+    return generatedAssets;
 };

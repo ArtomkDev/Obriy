@@ -5,8 +5,10 @@ import { app, BrowserWindow } from 'electron'
 import * as CloudRepository from './CloudRepository'
 import * as CoreBridge from './CoreBridge'
 
-const MODIFICATION_CACHE_ROOT = path.join(app.getPath('userData'), 'ModsCache')
-const INSTALLATION_TEMPORARY_DIRECTORY = path.join(app.getPath('temp'), 'ObriyTemp')
+// Шляхи через функції, щоб не ламався старт
+const getCacheRoot = () => path.join(app.getPath('userData'), 'ModsCache')
+const getTempDir = () => path.join(app.getPath('temp'), 'ObriyTemp')
+
 const REMOTE_API_BASE_URL = 'https://obriy-auth.artomk-dev.workers.dev'
 const APPLICATION_SESSION_ID = Date.now()
 
@@ -72,18 +74,50 @@ export function startRegistryWatcher(mainWindowInstance, gameDirectoryPath) {
   }
 }
 
-// ... getMarketplaceCatalog, getModDetails ... (без змін)
+// --- ГОЛОВНА ЗМІНА ТУТ ---
 export async function getMarketplaceCatalog() {
   const marketplaceRawData = await CloudRepository.getCatalog()
+  
   return marketplaceRawData.map(marketplaceItem => {
     const itemCoverFileName = marketplaceItem.img || '1.webp'
+    const baseUrl = `${REMOTE_API_BASE_URL}/mods/${marketplaceItem.id}/assets`
+    const versionSuffix = `?v=${APPLICATION_SESSION_ID}`
+    
+    // Формуємо повне HTTPS посилання на головну картинку
+    const mainImageUrl = `${baseUrl}/${itemCoverFileName}${versionSuffix}`
+
+    let assets = []
+
+    // ЛОГІКА ДЛЯ PARALLAX (DUAL LAYER)
+    // Якщо головна картинка називається "0.webm" або "img0...", ми знаємо, що має бути і "1.webm"
+    if (itemCoverFileName.startsWith('0') || itemCoverFileName.startsWith('img0')) {
+        // Додаємо пряме посилання на 0 (фон)
+        assets.push(mainImageUrl)
+        
+        // Створюємо пряме посилання на 1 (передній план)
+        // Припускаємо, що розширення таке саме (webm)
+        const pairFileName = itemCoverFileName.replace('0', '1')
+        assets.push(`${baseUrl}/${pairFileName}${versionSuffix}`)
+        
+    } else if (marketplaceItem.media && Array.isArray(marketplaceItem.media)) {
+        // Якщо сервер повернув список, перетворюємо все в HTTPS посилання
+        assets = marketplaceItem.media.map(f => `${baseUrl}/${f}${versionSuffix}`)
+    } else {
+        // Інакше просто кладемо одну картинку
+        assets = [mainImageUrl]
+    }
+
     return {
       id: marketplaceItem.id,
       name: marketplaceItem.n || marketplaceItem.name,
       author: marketplaceItem.a || marketplaceItem.author,
       category: marketplaceItem.c || marketplaceItem.category,
       version: marketplaceItem.v || marketplaceItem.version,
-      image: `${REMOTE_API_BASE_URL}/mods/${marketplaceItem.id}/assets/${itemCoverFileName}?v=${APPLICATION_SESSION_ID}`,
+      image: mainImageUrl,
+      
+      // Тепер тут список готових HTTPS посилань: ['https://.../0.webm', 'https://.../1.webm']
+      assets: assets,
+      
       is_premium: (marketplaceItem.p === true || marketplaceItem.p === 1)
     }
   })
@@ -120,7 +154,7 @@ export async function getModDetails(modificationId) {
 }
 
 export async function installMod(modificationId, gameDirectoryPath) {
-  const modificationSessionDirectory = path.join(MODIFICATION_CACHE_ROOT, modificationId.toString())
+  const modificationSessionDirectory = path.join(getCacheRoot(), modificationId.toString())
   await fs.emptyDir(modificationSessionDirectory)
   
   const instructionFileLocalPath = path.join(modificationSessionDirectory, 'instruction.json')
@@ -156,28 +190,25 @@ export async function installMod(modificationId, gameDirectoryPath) {
   return backendExecutionResult
 }
 
-// --- ГОЛОВНЕ ВИПРАВЛЕННЯ UNINSTALL ---
 export async function uninstallMod(modificationId, gameDirectoryPath) {
   const userInterfaceFeedbackChannel = BrowserWindow.getAllWindows()[0]?.webContents
   const registryFilePath = path.join(gameDirectoryPath, 'obriy_registry.json')
   
   if (!fs.existsSync(registryFilePath)) return { status: 'error', message: 'Registry not found' }
   
-  // 1. Знаходимо файли, що належать моду (тільки Replacements)
   const registryData = await fs.readJson(registryFilePath)
   const replacementFiles = []
   
   if (registryData.file_replacements) {
     Object.entries(registryData.file_replacements).forEach(([key, ownerId]) => {
       if (String(ownerId) === String(modificationId)) {
-        replacementFiles.push(key) // key = "path/to.rpf|internal/file.ytd"
+        replacementFiles.push(key) 
       }
     })
   }
 
-  // 2. Отримуємо категорію ванільних файлів з інструкції
   let vanillaCategory = null
-  const tempDir = path.join(INSTALLATION_TEMPORARY_DIRECTORY, `uninstall_${modificationId}`)
+  const tempDir = path.join(getTempDir(), `uninstall_${modificationId}`)
   await fs.ensureDir(tempDir)
   const instructionPath = path.join(tempDir, 'instruction.json')
   
@@ -185,22 +216,19 @@ export async function uninstallMod(modificationId, gameDirectoryPath) {
     await CloudRepository.downloadFile(`/mods/${modificationId}/instruction.json?t=${Date.now()}`, instructionPath)
     if (await fs.pathExists(instructionPath)) {
       const instructions = await fs.readJson(instructionPath)
-      // Шукаємо першу replace інструкцію, щоб взяти з неї vanillaFile
       const replaceInstr = instructions.find(i => i.type && i.type.toLowerCase() === 'replace' && i.vanillaFile)
       if (replaceInstr) vanillaCategory = replaceInstr.vanillaFile
     }
   } catch (e) { console.warn('Instruction download failed, trying manifest fallback') }
 
-  // 3. Скачуємо ванільні файли
   const restoreDir = path.join(tempDir, 'restore_files')
   await fs.ensureDir(restoreDir)
   
   if (vanillaCategory && replacementFiles.length > 0) {
     let processedCount = 0
     const downloadPromises = replacementFiles.map(async (registryKey) => {
-      // registryKey: update/update.rpf|common/data/levels/gta5/trains.xml
       const [_, internalPath] = registryKey.split('|')
-      const fileName = path.basename(internalPath) // trains.xml
+      const fileName = path.basename(internalPath) 
       const localPath = path.join(restoreDir, fileName)
       
       const url = `/vanilla/${vanillaCategory}/${encodeRemoteResourceName(fileName)}`
@@ -219,8 +247,6 @@ export async function uninstallMod(modificationId, gameDirectoryPath) {
     await Promise.all(downloadPromises)
   }
 
-  // 4. Викликаємо Backend (передаємо папку з ванільними файлами)
-  // Аргументи: gamePath, instructionPath, modId, restoreDir
   const result = await CoreBridge.executeCoreCommand(
     'uninstall-mod', 
     [gameDirectoryPath, instructionPath, String(modificationId), restoreDir], 
@@ -228,7 +254,7 @@ export async function uninstallMod(modificationId, gameDirectoryPath) {
     modificationId
   )
 
-  await fs.remove(tempDir) // Чистимо сміття
+  await fs.remove(tempDir) 
 
   if (result.status === 'success') {
     const updatedMods = await getActiveMods(gameDirectoryPath)

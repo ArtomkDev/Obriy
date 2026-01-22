@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useInstaller } from '../context/InstallerContext'
 import ProgressBar from './ProgressBar'
@@ -38,6 +38,25 @@ export default function ModCard({ mod }) {
     currentUser 
   } = useInstaller()
 
+  const { backgroundMedia, foregroundMedia, isDualLayer } = useMemo(() => {
+    const assets = mod.assets || []
+    
+    // Шукаємо фон (0.webm або img0)
+    const bg = assets.find(a => a.includes('/0.') || a.includes('/img0.') || a.startsWith('0'))
+    // Шукаємо передній план (1.webm)
+    const fg = assets.find(a => a.includes('/1.') || a.startsWith('1'))
+
+    if (bg && fg) {
+      return { backgroundMedia: bg, foregroundMedia: fg, isDualLayer: true }
+    }
+
+    return { 
+      backgroundMedia: null, 
+      foregroundMedia: fg || mod.image || assets[0], 
+      isDualLayer: false 
+    }
+  }, [mod])
+
   const modIdString = mod.id.toString()
   const status = getModStatus(modIdString)
   const progress = getModProgress(modIdString)
@@ -45,10 +64,6 @@ export default function ModCard({ mod }) {
   
   const isModPremium = mod.is_premium
   const userHasPremium = currentUser?.isPremium === true
-
-  const activePercent = status === 'downloading'
-    ? Math.round(progress.download)
-    : Math.round(progress.install)
 
   const handleCardClick = () => {
     navigate(`/mods/${mod.id}`)
@@ -66,6 +81,68 @@ export default function ModCard({ mod }) {
     startUninstall(mod)
   }
 
+  const getMediaUrl = (filename) => {
+    if (!filename) return ''
+    if (filename.startsWith('http') || filename.startsWith('data:')) return filename
+    return `media://${mod.id}/${filename}`
+  }
+
+  const renderMedia = (filename, layerType) => {
+    if (!filename) return null
+    const url = getMediaUrl(filename)
+    const isVideo = filename.toLowerCase().endsWith('.webm') || filename.toLowerCase().endsWith('.mp4')
+
+    let animationClass = ''
+    let zIndexClass = ''
+
+    if (isDualLayer) {
+        if (layerType === 'background') {
+            // ФОН (ЗМІНЕНО):
+            // Початковий масштаб 125% (scale-125), при наведенні зменшується до 100% (scale-100).
+            // Це гарантує, що картинка ніколи не стане меншою за картку.
+            animationClass = 'scale-125 group-hover:scale-100 opacity-100'
+            zIndexClass = 'z-0'
+        } else if (layerType === 'foreground') {
+            // ПЕРЕДНІЙ ПЛАН: Збільшується при наведенні (scale-100 -> scale-110)
+            animationClass = 'scale-100 group-hover:scale-110 z-10'
+            zIndexClass = 'z-10'
+        }
+    } else {
+        // Одинарний режим
+        animationClass = 'opacity-90 group-hover:opacity-100 group-hover:scale-105'
+        zIndexClass = 'z-0'
+    }
+
+    const commonClass = `w-full h-full object-cover transition-all duration-700 ease-in-out absolute inset-0 ${animationClass} ${zIndexClass}`
+    
+    const handleError = (e) => {
+        e.target.style.display = 'none';
+    }
+
+    if (isVideo) {
+      return (
+        <video
+          src={url}
+          autoPlay
+          loop
+          muted
+          playsInline
+          className={commonClass}
+          onError={handleError}
+        />
+      )
+    }
+
+    return (
+      <img
+        src={url}
+        alt={mod.name}
+        className={commonClass}
+        onError={handleError}
+      />
+    )
+  }
+
   const isProcessing = ['downloading', 'installing', 'uninstalling', 'queued', 'queued_download', 'queued_uninstall'].includes(status)
   const showAsInstalled = isInstalledInRegistry && !isProcessing
   const isLocked = isModPremium && !userHasPremium && !showAsInstalled
@@ -79,24 +156,35 @@ export default function ModCard({ mod }) {
             : 'ring-white/5 hover:ring-white/20 shadow-xl'}
       `}
     >
-      <div className="absolute inset-0 z-0">
-        <img
-          src={mod.image || mod.thumbnail}
-          alt={mod.name}
-          className="w-full h-full object-cover transition-all duration-700 opacity-90 group-hover:opacity-100 group-hover:scale-105"
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent opacity-100 transition-opacity duration-500" />
+      <div className="absolute inset-0 w-full h-full bg-black">
+        {isDualLayer ? (
+            <>
+                {/* 1. ФОН */}
+                {renderMedia(backgroundMedia, 'background')}
+                
+                {/* 2. ЗАТІНЕННЯ */}
+                <div className="absolute inset-0 z-[5] bg-black/40 group-hover:bg-black/20 transition-colors duration-500" />
+                
+                {/* 3. ПЕРЕДНІЙ ПЛАН */}
+                {renderMedia(foregroundMedia, 'foreground')}
+            </>
+        ) : (
+            renderMedia(foregroundMedia, 'single')
+        )}
+        
+        {/* Градієнт */}
+        <div className="absolute inset-0 z-20 bg-gradient-to-t from-black/20 via-transparent to-transparent opacity-100 pointer-events-none" />
       </div>
 
       {isModPremium && (
-        <div className="absolute top-2 right-2 z-20">
+        <div className="absolute top-2 right-2 z-30">
             <div className="w-6 h-6 flex items-center justify-center bg-black/30 backdrop-blur-md rounded-md border border-yellow-500/20 shadow-lg">
                 <CrownIcon className="w-3.5 h-3.5 text-yellow-500/80" />
             </div>
         </div>
       )}
 
-      <div className="absolute inset-0 p-3 flex flex-col justify-end z-20">
+      <div className="absolute inset-0 p-3 flex flex-col justify-end z-30">
         <div className="flex items-center justify-between gap-3">
             <div className="flex-1 min-w-0">
                 <h3 className="text-sm font-bold uppercase tracking-tight leading-tight text-white drop-shadow-[0_1.5px_3px_rgba(0,0,0,1)] truncate">
