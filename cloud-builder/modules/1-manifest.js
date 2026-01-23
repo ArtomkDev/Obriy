@@ -2,6 +2,199 @@ const fs = require('fs-extra');
 const path = require('path');
 const colors = require('colors');
 
+/**
+ * Створює АБСОЛЮТНО УНІВЕРСАЛЬНИЙ Regex.
+ * Перетворює всі значення атрибутів на wildcard [^"]*, щоб знаходити блок у будь-якому стані.
+ */
+function createUniversalXmlRegex(text) {
+    // 1. Тимчасово ховаємо атрибути зі значеннями
+    const placeholders = [];
+    const processed = text.replace(/(\w+)\s*=\s*"[^"]*"/g, (match, attrName) => {
+        placeholders.push(`${attrName}\\s*=\\s*"[^"]*"`); 
+        return `__UNIV_ATTR_${placeholders.length - 1}__`;
+    });
+
+    // 2. Екрануємо структуру тегів
+    let escaped = processed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    // 3. Дозволяємо будь-які пробіли/відступи
+    let pattern = escaped.replace(/\s+/g, '\\s+');
+
+    // 4. Послаблення для XML синтаксису
+    pattern = pattern.replace(/</g, '<\\s*');
+    pattern = pattern.replace(/>/g, '\\s*>');
+    pattern = pattern.replace(/\/\\s*>/g, '\\s*\/\\s*>');
+
+    // 5. Повертаємо універсальні атрибути
+    pattern = pattern.replace(/__UNIV_ATTR_(\d+)__/g, (match, index) => {
+        return placeholders[index];
+    });
+
+    return pattern;
+}
+
+/**
+ * Генерує шаблон заміни {{vanilla|modded}}
+ */
+function generateValueTemplate(vanillaBlock, moddedBlock) {
+    const tokenRegex = /(-?\d+(\.\d+)?)|(true|false)|(\$[a-zA-Z0-9_]+)|([A-Z0-9_]{2,})/g;
+    
+    const vTokens = [...vanillaBlock.matchAll(tokenRegex)].map(m => m[0]);
+    const mTokens = [...moddedBlock.matchAll(tokenRegex)].map(m => m[0]);
+    
+    if (vTokens.length !== mTokens.length) return moddedBlock;
+
+    let result = "";
+    let lastIndex = 0;
+    let match;
+    let i = 0;
+    
+    const modWalker = new RegExp(tokenRegex);
+
+    while ((match = modWalker.exec(moddedBlock)) !== null) {
+        result += moddedBlock.slice(lastIndex, match.index);
+        const mVal = match[0];
+        const vVal = vTokens[i];
+
+        if (vVal !== undefined && vVal !== mVal) {
+            result += `{{${vVal}|${mVal}}}`;
+        } else {
+            result += mVal;
+        }
+        lastIndex = modWalker.lastIndex;
+        i++;
+    }
+    result += moddedBlock.slice(lastIndex);
+    return result;
+}
+
+/**
+ * Витягує XML блок, враховуючи вкладеність
+ */
+function extractXmlBlock(fullText, keyIndex, startTagName, endTagName) {
+    const startIndex = fullText.lastIndexOf(startTagName, keyIndex);
+    if (startIndex === -1) return null;
+
+    let depth = 0;
+    let currentIndex = startIndex;
+    let foundEnd = false;
+    const maxSearch = currentIndex + 1000000;
+
+    while (currentIndex < fullText.length && currentIndex < maxSearch) {
+        if (fullText.startsWith(startTagName, currentIndex)) {
+            depth++;
+            currentIndex += startTagName.length;
+        } else if (fullText.startsWith(endTagName, currentIndex)) {
+            depth--;
+            currentIndex += endTagName.length;
+            if (depth === 0) {
+                foundEnd = true;
+                break;
+            }
+        } else {
+            currentIndex++;
+        }
+    }
+    if (!foundEnd) return null;
+    return { content: fullText.substring(startIndex, currentIndex), start: startIndex, end: currentIndex };
+}
+
+/**
+ * Основна логіка генерації: Block-Based Approach
+ */
+async function generateBlockEdits(vContent, mContent) {
+    const edits = [];
+    
+    // Пріоритетні стратегії пошуку блоків
+    const strategies = [
+        { type: 'nested_tag', keyTag: 'templateId', parentTag: '<Item>', closeTag: '</Item>' },
+        { type: 'nested_tag', keyTag: 'archetypeName', parentTag: '<Item>', closeTag: '</Item>' },
+        { type: 'nested_tag', keyTag: 'propertyId', parentTag: '<Item>', closeTag: '</Item>' },
+        { type: 'regex', regex: /(<modifier name="([^"]+)".*?>[\s\S]*?<\/modifier>)/g, idGroup: 2 }
+    ];
+
+    // 1. Знаходимо ВСІ можливі блоки
+    let candidates = [];
+    for (const strat of strategies) {
+        if (strat.type === 'nested_tag') {
+            const keyRegex = new RegExp(`<${strat.keyTag}>([^<]+)<\\/${strat.keyTag}>`, 'g');
+            let match;
+            while ((match = keyRegex.exec(vContent)) !== null) {
+                const id = match[1];
+                const extracted = extractXmlBlock(vContent, match.index, strat.parentTag, strat.closeTag);
+                if (extracted) candidates.push({ id, ...extracted, strat });
+            }
+        } else if (strat.type === 'regex') {
+            let match;
+            const regex = new RegExp(strat.regex.source, 'g');
+            while ((match = regex.exec(vContent)) !== null) {
+                candidates.push({
+                    id: match[strat.idGroup],
+                    content: match[1],
+                    start: match.index,
+                    end: match.index + match[0].length,
+                    strat
+                });
+            }
+        }
+    }
+
+    // 2. Фільтруємо вкладеність (залишаємо тільки найбільші батьківські блоки)
+    // Це критично: якщо ми знайшли TEXT (propertyId) всередині CUSTOM (templateId), ми беремо CUSTOM.
+    candidates.sort((a, b) => (b.end - b.start) - (a.end - a.start));
+    
+    const uniqueRoots = [];
+    for (const cand of candidates) {
+        const isInside = uniqueRoots.some(root => cand.start >= root.start && cand.end <= root.end);
+        const isDuplicate = uniqueRoots.some(root => root.start === cand.start && root.end === cand.end);
+        if (!isInside && !isDuplicate) uniqueRoots.push(cand);
+    }
+
+    console.log(`      Found ${candidates.length} candidates, reduced to ${uniqueRoots.length} unique root blocks.`);
+
+    // 3. Порівнюємо і створюємо патчі
+    for (const vRoot of uniqueRoots) {
+        let mRootContent = null;
+        const strat = vRoot.strat;
+
+        // Шукаємо цей же блок у моді
+        if (strat.type === 'nested_tag') {
+            const keySearch = `<${strat.keyTag}>${vRoot.id}</${strat.keyTag}>`;
+            const keyIndex = mContent.indexOf(keySearch);
+            if (keyIndex !== -1) {
+                const extracted = extractXmlBlock(mContent, keyIndex, strat.parentTag, strat.closeTag);
+                if (extracted) mRootContent = extracted.content;
+            }
+        } else if (strat.type === 'regex') {
+             const regex = new RegExp(strat.regex.source, 'g');
+             let match;
+             while ((match = regex.exec(mContent)) !== null) {
+                 if (match[strat.idGroup] === vRoot.id) {
+                     mRootContent = match[1];
+                     break;
+                 }
+             }
+        }
+
+        if (!mRootContent) continue;
+
+        // Порівняння (ігноруючи пробіли для точності детекції змін)
+        if (vRoot.content.replace(/\s+/g, '') !== mRootContent.replace(/\s+/g, '')) {
+            
+            // ГЕНЕРУЄМО ПАТЧ ДЛЯ ВСЬОГО БЛОКУ
+            // searchPattern: Універсальний Regex (ігнорує поточні значення у файлі)
+            const searchPattern = `(?s)(${createUniversalXmlRegex(vRoot.content)})`;
+            
+            // template: Новий текст з {{v|m}} для значень
+            const template = generateValueTemplate(vRoot.content, mRootContent);
+            
+            edits.push({ searchPattern, template });
+        }
+    }
+    
+    return edits;
+}
+
 module.exports = async function buildManifest(modId, config, mediaList = []) {
     console.log(`[Manifest] Building separated manifest for ${modId}...`.cyan);
 
@@ -9,45 +202,64 @@ module.exports = async function buildManifest(modId, config, mediaList = []) {
     const manifestPath = path.join(modSourceDir, 'manifest.json');
     const modFilesDir = path.join(modSourceDir, 'mod');
 
-    if (!fs.existsSync(manifestPath)) {
-        throw new Error(`Manifest not found at: ${manifestPath}`);
-    }
-
+    if (!fs.existsSync(manifestPath)) throw new Error(`Manifest not found`);
     const sourceManifest = await fs.readJson(manifestPath);
-
-    const requiredFields = ['name', 'version', 'category'];
-    const missingFields = requiredFields.filter(field => !sourceManifest[field]);
-    
-    if (missingFields.length > 0) {
-        throw new Error(`Validation Error: Missing fields [${missingFields.join(', ')}]`.red);
-    }
 
     const templateName = sourceManifest.instructionSet;
     const templatePath = path.join(config.paths.templates, `${templateName}.json`);
+    if (!fs.existsSync(templatePath)) throw new Error(`Template not found`);
 
-    if (!fs.existsSync(templatePath)) {
-        throw new Error(`Template not found: ${templateName}`);
-    }
+    let template = await fs.readJson(templatePath);
+    const editDir = path.join(modSourceDir, 'edit');
+    const editDirExists = await fs.pathExists(editDir);
 
-    const template = await fs.readJson(templatePath);
-    
-    let totalInstallSize = 0;
-    let hasPayloadFiles = false;
+    if (Array.isArray(template) && editDirExists) {
+        const dirFiles = await fs.readdir(editDir);
+        
+        for (const step of template) {
+            if (step.type === 'edit' && step.edits && (typeof step.edits === 'string' || typeof step.edits === 'number')) {
+                const patchId = String(step.edits);
+                const vFileName = dirFiles.find(f => new RegExp(`^${patchId}v(\\..+)?$`).test(f));
 
-    await Promise.all(template.map(async (step) => {
-        if (step.type === 'replace' || step.type === 'replace_batch') {
-            if (fs.existsSync(modFilesDir)) {
-                const files = await fs.readdir(modFilesDir);
-                if (files.length > 0) {
-                    hasPayloadFiles = true;
-                    for (const f of files) {
-                        const s = await fs.stat(path.join(modFilesDir, f));
-                        totalInstallSize += s.size;
+                if (vFileName) {
+                    const ext = path.extname(vFileName);
+                    const mFileName = `${patchId}m${ext}`;
+
+                    if (dirFiles.includes(mFileName)) {
+                        const vPath = path.join(editDir, vFileName);
+                        const mPath = path.join(editDir, mFileName);
+                        const vContent = await fs.readFile(vPath, 'utf8');
+                        const mContent = await fs.readFile(mPath, 'utf8');
+
+                        // Генеруємо стабільні блокові патчі
+                        let generatedEdits = await generateBlockEdits(vContent, mContent);
+
+                        // Якщо структура файлу надто нестандартна і блоки не знайдені, але файли різні
+                        if (generatedEdits.length === 0 && vContent.replace(/\s+/g,'') !== mContent.replace(/\s+/g,'')) {
+                             console.warn(`   -> ⚠️ No blocks found. Creating Full File Patch for '${patchId}'.`.yellow);
+                             generatedEdits.push({
+                                 searchPattern: `(?s)(${createUniversalXmlRegex(vContent)})`,
+                                 template: generateValueTemplate(vContent, mContent)
+                             });
+                        }
+
+                        step.edits = generatedEdits;
+                        console.log(`   -> 🧩 Smart Patch: Generated ${generatedEdits.length} robust block edits for '${patchId}'`.cyan);
+                    } else {
+                        console.warn(`   -> ⚠️ Missing mod file: ${mFileName}`.yellow);
                     }
                 }
             }
         }
-    }));
+    }
+
+    let totalInstallSize = 0;
+    let hasPayloadFiles = false;
+    if (await fs.pathExists(modFilesDir)) {
+        const files = await fs.readdir(modFilesDir);
+        if (files.length > 0) hasPayloadFiles = true;
+        for (const f of files) totalInstallSize += (await fs.stat(path.join(modFilesDir, f))).size;
+    }
 
     const outputDir = path.join(config.paths.modsDist, modId);
     await fs.ensureDir(outputDir);
@@ -55,11 +267,7 @@ module.exports = async function buildManifest(modId, config, mediaList = []) {
     if (template.length > 0) {
         const instructionPath = path.join(outputDir, 'instruction.json');
         await fs.writeJson(instructionPath, template, { spaces: 2 });
-        
-        const instStats = await fs.stat(instructionPath);
-        totalInstallSize += instStats.size;
-        
-        console.log(`   -> 📜 Generated instruction.json (${template.length} steps)`.yellow);
+        totalInstallSize += (await fs.stat(instructionPath)).size;
     }
 
     const cleanCloudManifest = {
@@ -77,8 +285,5 @@ module.exports = async function buildManifest(modId, config, mediaList = []) {
     };
 
     await fs.writeJson(path.join(outputDir, 'manifest.json'), cleanCloudManifest, { spaces: 2 });
-    
-    console.log(`   -> Manifest generated. Payload: ${hasPayloadFiles}`.green);
-    
-    return cleanCloudManifest; 
+    return cleanCloudManifest;
 };
