@@ -4,8 +4,8 @@ import AdmZip from 'adm-zip'
 import { app, BrowserWindow } from 'electron'
 import * as CloudRepository from './CloudRepository'
 import * as CoreBridge from './CoreBridge'
+import glob from 'fast-glob' // Можливо, доведеться використати вбудований рекурсивний пошук, якщо бібліотеки немає
 
-// Шляхи через функції, щоб не ламався старт
 const getCacheRoot = () => path.join(app.getPath('userData'), 'ModsCache')
 const getTempDir = () => path.join(app.getPath('temp'), 'ObriyTemp')
 
@@ -15,16 +15,62 @@ const APPLICATION_SESSION_ID = Date.now()
 let activeRegistryWatcher = null
 let registryWatcherDebounceTimer = null
 
-function encodeRemoteResourceName(resourceName) {
-  return encodeURIComponent(resourceName).replace(/%2B/g, '+')
+// --- Helpers ---
+
+async function recursiveFindAssets(dir) {
+  // Список розширень, які RAGE/GTA V сприймає як асети
+  const validExtensions = ['.ytd', '.ydr', '.yft', '.ybn', '.ymap', '.ytyp', '.ymt', '.xml', '.meta', '.dat', '.fxc']
+  let results = []
+  const list = await fs.readdir(dir)
+  
+  for (const file of list) {
+    const filePath = path.join(dir, file)
+    const stat = await fs.stat(filePath)
+    if (stat && stat.isDirectory()) {
+      results = results.concat(await recursiveFindAssets(filePath))
+    } else {
+      const ext = path.extname(file).toLowerCase()
+      if (validExtensions.includes(ext)) {
+        results.push(filePath)
+      }
+    }
+  }
+  return results
 }
+
+async function updateRegistry(gamePath, modId, installedFiles) {
+  const registryPath = path.join(gamePath, 'obriy_registry.json')
+  let registry = {}
+  try {
+    if (await fs.pathExists(registryPath)) {
+      registry = await fs.readJson(registryPath)
+    }
+  } catch (e) { console.error('Error reading registry', e) }
+
+  if (!registry.dlc_mods) registry.dlc_mods = {}
+  
+  // Зберігаємо тільки імена файлів для цього мода
+  registry.dlc_mods[modId] = installedFiles.map(p => path.basename(p))
+  
+  await fs.writeJson(registryPath, registry, { spaces: 2 })
+}
+
+// --- Main Exports ---
 
 export async function ensureBackendReady() {
   return await CoreBridge.executeCoreCommand('ping', [])
 }
 
 export async function validateGamePath(gameDirectoryPath) {
-  return await CoreBridge.executeCoreCommand('validate-path', [gameDirectoryPath])
+  const validationResult = await CoreBridge.executeCoreCommand('validate-path', [gameDirectoryPath])
+  
+  if (validationResult.status === 'success') {
+    // Автоматична ініціалізація DLC системи при виборі правильної папки
+    console.log('[ModManager] Valid game path detected. Initializing DLC container...')
+    await CoreBridge.executeCoreCommand('init-dlc', [gameDirectoryPath])
+  }
+  
+  return validationResult
 }
 
 export async function getActiveMods(gameDirectoryPath) {
@@ -35,14 +81,16 @@ export async function getActiveMods(gameDirectoryPath) {
     const registry = await fs.readJson(registryPath)
     const activeMods = new Set()
 
+    // Підтримка старої структури (на всяк випадок)
     if (registry.file_replacements) {
       Object.values(registry.file_replacements).forEach(modId => { if (modId) activeMods.add(String(modId)) })
     }
-    if (registry.file_edits) {
-      Object.values(registry.file_edits).forEach(patternsMap => {
-        if (typeof patternsMap === 'object') Object.values(patternsMap).forEach(modId => { if (modId) activeMods.add(String(modId)) })
-      })
+    
+    // Нова структура DLC
+    if (registry.dlc_mods) {
+       Object.keys(registry.dlc_mods).forEach(modId => activeMods.add(String(modId)))
     }
+
     return Array.from(activeMods)
   } catch (error) {
     console.error('[ModManager] Failed to read registry:', error)
@@ -74,7 +122,6 @@ export function startRegistryWatcher(mainWindowInstance, gameDirectoryPath) {
   }
 }
 
-// --- ГОЛОВНА ЗМІНА ТУТ ---
 export async function getMarketplaceCatalog() {
   const marketplaceRawData = await CloudRepository.getCatalog()
   
@@ -82,28 +129,16 @@ export async function getMarketplaceCatalog() {
     const itemCoverFileName = marketplaceItem.img || '1.webp'
     const baseUrl = `${REMOTE_API_BASE_URL}/mods/${marketplaceItem.id}/assets`
     const versionSuffix = `?v=${APPLICATION_SESSION_ID}`
-    
-    // Формуємо повне HTTPS посилання на головну картинку
     const mainImageUrl = `${baseUrl}/${itemCoverFileName}${versionSuffix}`
 
     let assets = []
-
-    // ЛОГІКА ДЛЯ PARALLAX (DUAL LAYER)
-    // Якщо головна картинка називається "0.webm" або "img0...", ми знаємо, що має бути і "1.webm"
     if (itemCoverFileName.startsWith('0') || itemCoverFileName.startsWith('img0')) {
-        // Додаємо пряме посилання на 0 (фон)
         assets.push(mainImageUrl)
-        
-        // Створюємо пряме посилання на 1 (передній план)
-        // Припускаємо, що розширення таке саме (webm)
         const pairFileName = itemCoverFileName.replace('0', '1')
         assets.push(`${baseUrl}/${pairFileName}${versionSuffix}`)
-        
     } else if (marketplaceItem.media && Array.isArray(marketplaceItem.media)) {
-        // Якщо сервер повернув список, перетворюємо все в HTTPS посилання
         assets = marketplaceItem.media.map(f => `${baseUrl}/${f}${versionSuffix}`)
     } else {
-        // Інакше просто кладемо одну картинку
         assets = [mainImageUrl]
     }
 
@@ -114,10 +149,7 @@ export async function getMarketplaceCatalog() {
       category: marketplaceItem.c || marketplaceItem.category,
       version: marketplaceItem.v || marketplaceItem.version,
       image: mainImageUrl,
-      
-      // Тепер тут список готових HTTPS посилань: ['https://.../0.webm', 'https://.../1.webm']
       assets: assets,
-      
       is_premium: (marketplaceItem.p === true || marketplaceItem.p === 1)
     }
   })
@@ -132,7 +164,6 @@ export async function getModDetails(modificationId) {
       const mediaFileExtension = mediaFileName.split('.').pop().toLowerCase()
       const isVideoMedia = ['mp4', 'webm', 'mov'].includes(mediaFileExtension)
       const mediaSourceUrl = `${REMOTE_API_BASE_URL}/mods/${modificationId}/assets/${mediaFileName}?v=${APPLICATION_SESSION_ID}`
-      
       return {
         type: isVideoMedia ? 'video' : 'image',
         source: mediaSourceUrl,
@@ -146,120 +177,122 @@ export async function getModDetails(modificationId) {
     })
   }
 
-  return { 
-    ...modificationManifestData, 
-    id: modificationId, 
-    media: modificationMediaGallery 
-  }
+  return { ...modificationManifestData, id: modificationId, media: modificationMediaGallery }
 }
 
 export async function installMod(modificationId, gameDirectoryPath) {
+  const userInterfaceFeedbackChannel = BrowserWindow.getAllWindows()[0]?.webContents
   const modificationSessionDirectory = path.join(getCacheRoot(), modificationId.toString())
+  
   await fs.emptyDir(modificationSessionDirectory)
   
-  const instructionFileLocalPath = path.join(modificationSessionDirectory, 'instruction.json')
   const payloadArchiveLocalPath = path.join(modificationSessionDirectory, 'payload.zip')
   const extractionDirectoryPath = path.join(modificationSessionDirectory, 'extracted')
-  const userInterfaceFeedbackChannel = BrowserWindow.getAllWindows()[0]?.webContents
   const timestamp = Date.now()
 
-  await CloudRepository.downloadFile(`/mods/${modificationId}/instruction.json?t=${timestamp}`, instructionFileLocalPath)
-  const modificationManifest = await CloudRepository.getModManifest(modificationId)
-  const isBinaryPayloadRequired = modificationManifest.hasPayload === true
-
-  if (isBinaryPayloadRequired) {
+  // 1. Завантаження (без instruction.json, він нам більше не потрібен для логіки)
+  try {
+    userInterfaceFeedbackChannel?.send('installation-progress', { type: 'download', value: 10 })
+    
+    // Завантажуємо архів
     await CloudRepository.downloadFile(
       `/mods/${modificationId}/payload.zip?t=${timestamp}`, 
       payloadArchiveLocalPath, 
       (progress) => userInterfaceFeedbackChannel?.send('installation-progress', { type: 'download', value: progress })
     )
+
+    // 2. Розпакування
+    userInterfaceFeedbackChannel?.send('installation-progress', { type: 'install', value: 20 })
     const archiveUnpacker = new AdmZip(payloadArchiveLocalPath)
     archiveUnpacker.extractAllTo(extractionDirectoryPath, true)
-  }
 
-  const backendExecutionResult = await CoreBridge.executeCoreCommand('install-mod', [
-      gameDirectoryPath, instructionFileLocalPath, String(modificationId), isBinaryPayloadRequired ? extractionDirectoryPath : '' 
-    ], userInterfaceFeedbackChannel, modificationId)
+    // 3. Пошук файлів для ін'єкції
+    const assetFiles = await recursiveFindAssets(extractionDirectoryPath)
+    
+    if (assetFiles.length === 0) {
+      throw new Error('No compatible game assets (.ytd, .yft, etc) found in the mod archive.')
+    }
 
-  if (backendExecutionResult.status === 'success') {
+    // 4. Виклик Backend для ін'єкції в DLC
+    // Передаємо: GamePath, FilePath1, FilePath2...
+    const commandArgs = [gameDirectoryPath, ...assetFiles]
+    
+    const backendExecutionResult = await CoreBridge.executeCoreCommand(
+      'install-mod', 
+      commandArgs, 
+      userInterfaceFeedbackChannel, 
+      modificationId
+    )
+
+    if (backendExecutionResult.status === 'success') {
+      // 5. Оновлення локального реєстру
+      await updateRegistry(gameDirectoryPath, modificationId, assetFiles)
+      
+      const updatedMods = await getActiveMods(gameDirectoryPath)
+      userInterfaceFeedbackChannel?.send('mods-updated', updatedMods)
+    }
+
     await fs.remove(modificationSessionDirectory)
-    const updatedMods = await getActiveMods(gameDirectoryPath)
-    userInterfaceFeedbackChannel?.send('mods-updated', updatedMods)
+    userInterfaceFeedbackChannel?.send('installation-progress', { type: 'install', value: 100 })
+    
+    return backendExecutionResult
+
+  } catch (error) {
+    console.error(error)
+    userInterfaceFeedbackChannel?.send('installation-error', { message: error.message })
+    return { status: 'error', message: error.message }
   }
-  userInterfaceFeedbackChannel?.send('installation-progress', { type: 'install', value: 100 })
-  return backendExecutionResult
 }
 
 export async function uninstallMod(modificationId, gameDirectoryPath) {
   const userInterfaceFeedbackChannel = BrowserWindow.getAllWindows()[0]?.webContents
-  const registryFilePath = path.join(gameDirectoryPath, 'obriy_registry.json')
-  
-  if (!fs.existsSync(registryFilePath)) return { status: 'error', message: 'Registry not found' }
-  
-  const registryData = await fs.readJson(registryFilePath)
-  const replacementFiles = []
-  
-  if (registryData.file_replacements) {
-    Object.entries(registryData.file_replacements).forEach(([key, ownerId]) => {
-      if (String(ownerId) === String(modificationId)) {
-        replacementFiles.push(key) 
-      }
-    })
-  }
-
-  let vanillaCategory = null
-  const tempDir = path.join(getTempDir(), `uninstall_${modificationId}`)
-  await fs.ensureDir(tempDir)
-  const instructionPath = path.join(tempDir, 'instruction.json')
+  const registryPath = path.join(gameDirectoryPath, 'obriy_registry.json')
   
   try {
-    await CloudRepository.downloadFile(`/mods/${modificationId}/instruction.json?t=${Date.now()}`, instructionPath)
-    if (await fs.pathExists(instructionPath)) {
-      const instructions = await fs.readJson(instructionPath)
-      const replaceInstr = instructions.find(i => i.type && i.type.toLowerCase() === 'replace' && i.vanillaFile)
-      if (replaceInstr) vanillaCategory = replaceInstr.vanillaFile
+    if (!await fs.pathExists(registryPath)) {
+        throw new Error('Registry file not found')
     }
-  } catch (e) { console.warn('Instruction download failed, trying manifest fallback') }
 
-  const restoreDir = path.join(tempDir, 'restore_files')
-  await fs.ensureDir(restoreDir)
-  
-  if (vanillaCategory && replacementFiles.length > 0) {
-    let processedCount = 0
-    const downloadPromises = replacementFiles.map(async (registryKey) => {
-      const [_, internalPath] = registryKey.split('|')
-      const fileName = path.basename(internalPath) 
-      const localPath = path.join(restoreDir, fileName)
-      
-      const url = `/vanilla/${vanillaCategory}/${encodeRemoteResourceName(fileName)}`
-      try {
-        await CloudRepository.downloadFile(url, localPath)
-      } catch (err) {
-        console.error(`Failed to download vanilla file: ${fileName}`, err)
-      } finally {
-        processedCount++
-        userInterfaceFeedbackChannel?.send('task-progress', { 
-           type: 'download', modId: modificationId, 
-           percentage: Math.round((processedCount / replacementFiles.length) * 100) 
-        })
-      }
-    })
-    await Promise.all(downloadPromises)
+    const registry = await fs.readJson(registryPath)
+    
+    // Перевіряємо, чи є записи про файли цього мода
+    if (!registry.dlc_mods || !registry.dlc_mods[modificationId]) {
+        console.warn(`[ModManager] No installed files record found for mod ${modificationId}`)
+        // Якщо запису немає, просто "забуваємо" мод в UI, бо видаляти нічого
+        return { status: 'success', message: 'Mod record removed (no files were tracked)' }
+    }
+
+    const filesToRemove = registry.dlc_mods[modificationId] // Це масив: ['w_ar_carbinerifle.ytd', ...]
+
+    if (!filesToRemove || filesToRemove.length === 0) {
+        throw new Error('File list for modification is empty')
+    }
+
+    userInterfaceFeedbackChannel?.send('installation-progress', { type: 'uninstall', value: 50 })
+
+    // ВИКЛИК BACKEND: Передаємо шлях до гри + список файлів
+    const commandArgs = [gameDirectoryPath, ...filesToRemove]
+    const backendResult = await CoreBridge.executeCoreCommand(
+        'uninstall-mod', 
+        commandArgs, 
+        userInterfaceFeedbackChannel, 
+        modificationId
+    )
+
+    if (backendResult.status === 'success') {
+        // Чистимо реєстр
+        delete registry.dlc_mods[modificationId]
+        await fs.writeJson(registryPath, registry, { spaces: 2 })
+
+        const updatedMods = await getActiveMods(gameDirectoryPath)
+        userInterfaceFeedbackChannel?.send('mods-updated', updatedMods)
+    }
+
+    userInterfaceFeedbackChannel?.send('installation-progress', { type: 'uninstall', value: 100 })
+    return backendResult
+
+  } catch (error) {
+    console.error(error)
+    return { status: 'error', message: error.message }
   }
-
-  const result = await CoreBridge.executeCoreCommand(
-    'uninstall-mod', 
-    [gameDirectoryPath, instructionPath, String(modificationId), restoreDir], 
-    userInterfaceFeedbackChannel, 
-    modificationId
-  )
-
-  await fs.remove(tempDir) 
-
-  if (result.status === 'success') {
-    const updatedMods = await getActiveMods(gameDirectoryPath)
-    userInterfaceFeedbackChannel?.send('mods-updated', updatedMods)
-  }
-
-  return result
 }

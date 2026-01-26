@@ -108,6 +108,7 @@ namespace Obriy.Core
                 "batch-edit" => new BatchEditCommand(),
                 "get-active-mods" => new GetActiveModsCommand(),
                 "ping" => new PingCommand(),
+                "init-dlc" => new InitDlcCommand(),
                 _ => null
             };
         }
