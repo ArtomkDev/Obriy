@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import { app } from 'electron'
 import { pipeline } from 'stream/promises'
-import { Transform } from 'stream'
+import { Transform, Readable } from 'stream'
 import Store from 'electron-store'
 
 // --- 1. Persistent Store (Тільки для налаштувань та авторизації) ---
@@ -69,11 +69,7 @@ export async function checkResourceExists(subPath) {
   if (match) {
     const number = parseInt(match[1], 10)
     const ext = match[2]
-    
-    // Логіка: Якщо ми шукаємо файл "2.webp", але раніше ми вже з'ясували, 
-    // що "1.webp" не існує (для цього ж мода) - то "2.webp" точно немає.
-    // Але це складно реалізувати без контексту ID мода в цій функції.
-    // Тому спростимо: кешуємо негативні результати назавжди в межах сесії.
+    // Логіка спрощена для прикладу
   }
 
   const cacheKey = `resource_check_${subPath}`
@@ -81,7 +77,7 @@ export async function checkResourceExists(subPath) {
   // 1. Швидка перевірка в кеші
   const cached = sessionCache.get(cacheKey)
   if (cached && (Date.now() - cached.timestamp < DEFAULT_CACHE_TTL)) {
-     return cached.data
+      return cached.data
   }
   
   // Якщо ми точно знаємо, що ресурсу немає (з попередніх перевірок), повертаємо false миттєво
@@ -95,8 +91,6 @@ export async function checkResourceExists(subPath) {
   }
 
   // 3. Виконання запиту
-  // console.log(`[CloudRepository] 🔍 Checking: ${subPath}`) // Лог тільки для дебагу, можна прибрати
-  
   const requestPromise = (async () => {
     try {
       const resourceUrl = `${GATEWAY_URL}/mods/${subPath}`
@@ -111,9 +105,6 @@ export async function checkResourceExists(subPath) {
       
       if (!exists) {
         missingResourcesCache.add(cacheKey)
-        // console.log(`[CloudRepository] ❌ Missing: ${subPath}`)
-      } else {
-        // console.log(`[CloudRepository] ✅ Exists: ${subPath}`)
       }
 
       return exists
@@ -162,11 +153,18 @@ export async function downloadFile(remotePath, localDestPath, onProgress) {
 
   const destinationStream = fs.createWriteStream(localDestPath)
   
+  // ВИПРАВЛЕННЯ: Конвертуємо Web Stream у Node Stream для коректної роботи pipeline
+  const nodeReadableStream = Readable.fromWeb 
+      ? Readable.fromWeb(fetchResponse.body) 
+      : Readable.from(fetchResponse.body);
+
   await pipeline(
-    fetchResponse.body,
+    nodeReadableStream,
     progressMonitor,
     destinationStream
   )
+  
+  console.log(`[CloudRepository] ✅ Download complete: ${localDestPath}`)
 }
 
 // --- PRIVATE HELPERS ---
@@ -177,18 +175,14 @@ async function fetchWithDeduplication(endpoint, { force, ttl, key }) {
     if (cachedEntry) {
       const age = Date.now() - cachedEntry.timestamp
       if (age < ttl) {
-        // console.log(`[CloudRepository] ✅ CACHE HIT: "${key}"`)
         return cachedEntry.data
       }
     }
   }
 
   if (pendingRequests.has(key)) {
-    // console.log(`[CloudRepository] ⚡ REQUEST DEDUPED: "${key}"`)
     return pendingRequests.get(key)
   }
-
-  // console.log(`[CloudRepository] 🌐 NETWORK REQUEST: ${endpoint}`)
 
   const requestPromise = (async () => {
     try {
@@ -198,7 +192,6 @@ async function fetchWithDeduplication(endpoint, { force, ttl, key }) {
         timestamp: Date.now(),
         data: data
       })
-      // console.log(`[CloudRepository] 💾 CACHE SAVED: "${key}"`)
       return data
     } catch (error) {
       throw error
@@ -212,8 +205,6 @@ async function fetchWithDeduplication(endpoint, { force, ttl, key }) {
 }
 
 export async function getModStats(modId) {
-  // Використовуємо існуючий механізм кешування
-  // Це автоматично збереже результат у sessionCache (оперативну пам'ять)
   const endpoint = `/api/stats/mod/${modId}`
   const cacheKey = `stats:${modId}` 
   return await fetchResource(endpoint, cacheKey)
@@ -246,7 +237,7 @@ function getAuthHeaders() {
 }
 
 // =================================================================
-// 1. УНІВЕРСАЛЬНА ФУНКЦІЯ КЕШУВАННЯ (Вставити перед performRequest)
+// 1. УНІВЕРСАЛЬНА ФУНКЦІЯ КЕШУВАННЯ
 // =================================================================
 
 export async function fetchResource(endpoint, key, useCache = true) {

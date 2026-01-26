@@ -1,60 +1,76 @@
 using System;
-using System.IO;
-using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Obriy.Core.Models;
 using Obriy.Core.Services;
 
 namespace Obriy.Core.Commands
 {
     public class InstallModCommand : ICommand
     {
-        private readonly ModInjectionService _injectionService;
+        private readonly InstructionProcessorService _processor;
+        private readonly JsonSerializerOptions _jsonOptions;
 
         public InstallModCommand()
         {
-            _injectionService = new ModInjectionService();
+            _processor = new InstructionProcessorService();
+            // НАЛАШТУВАННЯ: Ігнорувати регістр (archivePath -> ArchivePath)
+            _jsonOptions = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            };
         }
 
         public string CommandName => "install-mod";
 
         public async Task ExecuteAsync(string[] args)
         {
-            try
+            await Task.Run(() => 
             {
-                if (args.Length < 2)
+                try
                 {
-                    throw new ArgumentException("Arguments required: [GamePath] [ModFilePath1] [ModFilePath2]...");
+                    if (args.Length == 0)
+                    {
+                        throw new ArgumentException("Arguments cannot be empty");
+                    }
+
+                    var jsonInput = string.Join(" ", args);
+                    
+                    // ВИПРАВЛЕННЯ: Передаємо опції десеріалізації
+                    var request = JsonSerializer.Deserialize<InstallModRequest>(jsonInput, _jsonOptions);
+
+                    if (request == null)
+                    {
+                        throw new ArgumentNullException(nameof(request));
+                    }
+
+                    // Валідація отриманих даних перед запуском
+                    if (string.IsNullOrWhiteSpace(request.ArchivePath))
+                    {
+                        throw new ArgumentException("ArchivePath is empty. JSON parsing might have failed.");
+                    }
+
+                    Console.Error.WriteLine($"[InstallModCommand] Path received: {request.ArchivePath}");
+                    Console.Error.WriteLine($"[InstallModCommand] Starting installation...");
+
+                    _processor.ProcessInstructions(request);
+
+                    Console.WriteLine(JsonSerializer.Serialize(new
+                    {
+                        status = "success",
+                        message = "Mod installed successfully into patchday18ng container"
+                    }));
                 }
-
-                string gamePath = args[0];
-                string[] modFiles = args.Skip(1).ToArray();
-
-                Console.Error.WriteLine($"[InstallMod] Processing {modFiles.Length} files for game at {gamePath}");
-
-                _injectionService.InjectFiles(gamePath, modFiles);
-
-                var result = new
+                catch (Exception ex)
                 {
-                    status = "success",
-                    message = $"Successfully installed {modFiles.Length} files into Obriy DLC",
-                    files = modFiles.Select(Path.GetFileName).ToArray()
-                };
-
-                Console.WriteLine(JsonSerializer.Serialize(result));
-            }
-            catch (Exception ex)
-            {
-                var error = new
-                {
-                    status = "error",
-                    message = ex.Message,
-                    trace = ex.StackTrace
-                };
-                Console.WriteLine(JsonSerializer.Serialize(error));
-            }
-
-            await Task.CompletedTask;
+                    Console.WriteLine(JsonSerializer.Serialize(new
+                    {
+                        status = "error",
+                        message = ex.Message,
+                        trace = ex.StackTrace
+                    }));
+                }
+            });
         }
     }
 }
