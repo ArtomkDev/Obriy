@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
 namespace Obriy.Core.Models;
@@ -7,7 +8,13 @@ public class ModOperation
     [JsonPropertyName("type")]
     public string Type { get; set; }
 
-    [JsonPropertyName("targetPath")]
+    [JsonPropertyName("target")]
+    public string Target { get; set; }
+
+    [JsonPropertyName("path")] // Шлях до файлу на диску (Source)
+    public string Path { get; set; }
+
+    [JsonPropertyName("targetPath")] // Внутрішній шлях в архіві (якщо треба)
     public string TargetPath { get; set; }
 
     [JsonPropertyName("edits")]
@@ -30,14 +37,4 @@ public class DynamicEditAction
 
     [JsonPropertyName("replace")]
     public string Replace { get; set; }
-
-    public string GetEffectiveSearchPattern()
-    {
-        return !string.IsNullOrEmpty(SearchPattern) ? SearchPattern : Find;
-    }
-
-    public string GetEffectiveTemplate()
-    {
-        return !string.IsNullOrEmpty(Template) ? Template : Replace;
-    }
 }

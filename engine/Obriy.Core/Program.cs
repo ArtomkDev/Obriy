@@ -1,208 +1,100 @@
 ﻿using System;
 using System.IO;
-using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-using Obriy.Core.Commands;
-using CodeWalker.Utils;
-using CodeWalker.GameFiles;
-using System.Collections.Generic;
+using Microsoft.Extensions.DependencyInjection;
+using Obriy.Core.Abstractions;
+using Obriy.Core.Handlers;
+using Obriy.Core.Models;
+using Obriy.Core.Services;
 
-namespace Obriy.Core
+namespace Obriy.Core;
+
+public class Program
 {
-    class CommandRequest 
+    public static async Task Main(string[] args)
     {
-        public string Command { get; set; }
-        public string[] Args { get; set; }
-    }
+        InitializeGtaKeys();
 
-    public static class GameEnvironment
-    {
-        public static void Initialize()
+        var services = new ServiceCollection();
+        ConfigureServices(services);
+        var provider = services.BuildServiceProvider();
+
+        // Налаштування для JSON (ігнорувати регістр Path/path)
+        var jsonOptions = new JsonSerializerOptions 
+        { 
+            PropertyNameCaseInsensitive = true 
+        };
+
+        try
         {
-            string basePath = AppDomain.CurrentDomain.BaseDirectory;
-            string keysDirectory = Path.Combine(basePath, "keys");
-            
-            string aesKeyPath = Path.Combine(keysDirectory, "gtav_aes_key.dat");
-            if (!File.Exists(aesKeyPath))
+            var input = await Console.In.ReadToEndAsync();
+            if (string.IsNullOrWhiteSpace(input)) return;
+
+            var request = JsonSerializer.Deserialize<CommandRequest>(input, jsonOptions);
+            if (request == null) return;
+
+            object response = request.Command switch
             {
-                aesKeyPath = Path.Combine(basePath, "gtav_aes_key.dat");
-                keysDirectory = basePath;
-            }
-
-            if (!File.Exists(aesKeyPath))
-            {
-                throw new FileNotFoundException($"GTA V AES Key not found at {aesKeyPath}");
-            }
-
-            GTA5Keys.PC_AES_KEY = File.ReadAllBytes(aesKeyPath);
-            GTA5Keys.PC_LUT = File.ReadAllBytes(Path.Combine(keysDirectory, "gtav_hash_lut.dat"));
-            GTA5Keys.PC_NG_KEYS = CryptoIO.ReadNgKeys(Path.Combine(keysDirectory, "gtav_ng_key.dat"));
-            GTA5Keys.PC_NG_DECRYPT_TABLES = CryptoIO.ReadNgTables(Path.Combine(keysDirectory, "gtav_ng_decrypt_tables.dat"));
-            GTA5Keys.PC_NG_ENCRYPT_TABLES = CryptoIO.ReadNgTables(Path.Combine(keysDirectory, "gtav_ng_encrypt_tables.dat"));
-            GTA5Keys.PC_NG_ENCRYPT_LUTs = CryptoIO.ReadNgLuts(Path.Combine(keysDirectory, "gtav_ng_encrypt_luts.dat"));
-        }
-    }
-
-    class Program
-    {
-        static async Task Main(string[] args)
-        {
-            Console.OutputEncoding = Encoding.UTF8;
-            Console.InputEncoding = Encoding.UTF8;
-
-            string gamePath = AppDomain.CurrentDomain.BaseDirectory; 
-
-            try 
-            {
-                GameEnvironment.Initialize();
-                PrintJson(new { status = "ready", message = "Backend initialized" });
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Fatal Startup Error: {ex.Message}");
-                PrintJson(new { status = "fatal", error = ex.Message });
-                return;
-            }
-
-            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-
-            while (true)
-            {
-                string input = await Console.In.ReadLineAsync();
+                "ping" => new { status = "success", message = "pong" },
                 
-                if (string.IsNullOrWhiteSpace(input)) continue;
-                if (input == "EXIT") break;
+                "validate" => ValidateGamePath(request.Payload.ToString()),
+                
+                // --- ВИКЛИК НОВОГО СЕРВІСУ ---
+                "extract" => provider.GetRequiredService<ArchiveService>().Extract(request.Payload.ToString()),
 
-                try
-                {
-                    var request = JsonSerializer.Deserialize<CommandRequest>(input, options);
-                    if (request == null) continue;
-
-                    ICommand command = CreateCommand(request.Command, gamePath);
-
-                    if (command != null)
-                    {
-                        await command.ExecuteAsync(request.Args);
-                    }
-                    else 
-                    {
-                        PrintJson(new { error = $"Unknown command: {request.Command}" });
-                    }
-                }
-                catch (Exception ex)
-                {
-                    PrintJson(new { status = "error", error = ex.Message, trace = ex.StackTrace });
-                }
-            }
-        }
-
-        static ICommand CreateCommand(string commandName, string gamePath)
-        {
-            return commandName switch
-            {
-                "validate-path" => new ValidateGamePathCommand(),
-                "install-mod" => new InstallModCommand(),
-                "uninstall-mod" => new UninstallModCommand(),
-                "install-batch" => new BatchInstallCommand(),
-                "batch-edit" => new BatchEditCommand(),
-                "get-active-mods" => new GetActiveModsCommand(),
-                "ping" => new PingCommand(),
-                "init-dlc" => new InitDlcCommand(),
-                _ => null
+                "install" => provider.GetRequiredService<ModInstallerService>().InstallMod(JsonSerializer.Deserialize<InstallModRequest>(request.Payload.ToString(), jsonOptions)),
+                
+                "setup" => provider.GetRequiredService<GameSetupService>().EnsurePatchdayReady(request.Payload.ToString()),
+                
+                _ => new { status = "error", message = $"Unknown command: {request.Command}" }
             };
-        }
 
-        static void PrintJson(object data)
+            Console.WriteLine(JsonSerializer.Serialize(response));
+        }
+        catch (Exception ex)
         {
-            string json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = false });
-            Console.WriteLine(json);
-            Console.Out.Flush();
+            Console.WriteLine(JsonSerializer.Serialize(new 
+            { 
+                status = "error", 
+                message = ex.Message, 
+                trace = ex.StackTrace 
+            }));
         }
     }
 
-    public static class CryptoIO
+    private static object ValidateGamePath(string path)
     {
-        public static byte[][] ReadNgKeys(string path)
+        if (string.IsNullOrWhiteSpace(path)) return new { status = "error", message = "Path is empty" };
+        var exePath = Path.Combine(path.Trim('"'), "GTA5.exe");
+        var exists = File.Exists(exePath);
+        return new { status = exists ? "success" : "error", isValid = exists };
+    }
+
+    private static void ConfigureServices(IServiceCollection services)
+    {
+        // Реєстрація сервісів
+        services.AddSingleton<RpfService>();
+        services.AddSingleton<RegistryService>();
+        services.AddSingleton<GameSetupService>();
+        services.AddSingleton<ModInstallerService>();
+        services.AddSingleton<ArchiveService>(); // <-- Додано новий сервіс
+        
+        services.AddSingleton<IInstructionHandler, ReplaceHandler>();
+    }
+
+    private static void InitializeGtaKeys()
+    {
+        var keysFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "keys");
+        if (Directory.Exists(keysFile))
         {
-            if (!File.Exists(path)) throw new FileNotFoundException("Key file not found", path);
-            
-            byte[] data = File.ReadAllBytes(path);
-            int keySize = 272;
-            int count = 101;
-            
-            byte[][] keys = new byte[count][];
-            using (var ms = new MemoryStream(data))
-            using (var br = new BinaryReader(ms))
-            {
-                for(int i=0; i<count; i++)
-                {
-                    keys[i] = br.ReadBytes(keySize);
-                }
-            }
-            return keys;
-        }
-
-        public static uint[][][] ReadNgTables(string path)
-        {
-            if (!File.Exists(path)) throw new FileNotFoundException("Table file not found", path);
-
-            byte[] data = File.ReadAllBytes(path);
-            uint[][][] tables = new uint[17][][];
-
-            using (var ms = new MemoryStream(data))
-            using (var br = new BinaryReader(ms))
-            {
-                for(int i=0; i<17; i++)
-                {
-                    tables[i] = new uint[16][];
-                    for(int j=0; j<16; j++)
-                    {
-                        tables[i][j] = new uint[256];
-                        for(int k=0; k<256; k++)
-                        {
-                            tables[i][j][k] = br.ReadUInt32();
-                        }
-                    }
-                }
-            }
-            return tables;
-        }
-
-        public static GTA5NGLUT[][] ReadNgLuts(string path)
-        {
-            if (!File.Exists(path)) throw new FileNotFoundException("LUT file not found", path);
-
-            byte[] data = File.ReadAllBytes(path);
-            GTA5NGLUT[][] luts = new GTA5NGLUT[17][];
-
-            using (var ms = new MemoryStream(data))
-            using (var br = new BinaryReader(ms))
-            {
-                for(int i=0; i<17; i++)
-                {
-                    luts[i] = new GTA5NGLUT[16];
-                    for(int j=0; j<16; j++)
-                    {
-                        luts[i][j] = new GTA5NGLUT();
-
-                        luts[i][j].LUT0 = new byte[256][];
-                        for (int k = 0; k < 256; k++)
-                        {
-                            luts[i][j].LUT0[k] = br.ReadBytes(256);
-                        }
-
-                        luts[i][j].LUT1 = new byte[256][];
-                        for (int k = 0; k < 256; k++)
-                        {
-                            luts[i][j].LUT1[k] = br.ReadBytes(256);
-                        }
-
-                        luts[i][j].Indices = br.ReadBytes(65536);
-                    }
-                }
-            }
-            return luts;
+            CodeWalker.GameFiles.GTA5Keys.LoadFromPath(keysFile);
         }
     }
+}
+
+public class CommandRequest
+{
+    public string Command { get; set; }
+    public object Payload { get; set; }
 }

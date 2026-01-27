@@ -169,16 +169,23 @@ namespace CodeWalker.GameFiles
         {
             try 
             {
-                PC_AES_KEY = File.ReadAllBytes(Path.Combine(path, "gtav_aes_key.dat"));
+                // Helper для безпечного читання
+                byte[] ReadSafe(string f) 
+                { 
+                    using (var fs = new FileStream(f, FileMode.Open, FileAccess.Read, FileShare.Read)) 
+                    using (var ms = new MemoryStream()) { fs.CopyTo(ms); return ms.ToArray(); } 
+                }
+        
+                PC_AES_KEY = ReadSafe(Path.Combine(path, "gtav_aes_key.dat"));
                 PC_NG_KEYS = CryptoIO.ReadNgKeys(Path.Combine(path, "gtav_ng_key.dat"));
                 PC_NG_DECRYPT_TABLES = CryptoIO.ReadNgTables(Path.Combine(path, "gtav_ng_decrypt_tables.dat"));
                 PC_NG_ENCRYPT_TABLES = CryptoIO.ReadNgTables(Path.Combine(path, "gtav_ng_encrypt_tables.dat"));
                 PC_NG_ENCRYPT_LUTs = CryptoIO.ReadNgLuts(Path.Combine(path, "gtav_ng_encrypt_luts.dat"));
-                PC_LUT = File.ReadAllBytes(Path.Combine(path, "gtav_hash_lut.dat"));
+                PC_LUT = ReadSafe(Path.Combine(path, "gtav_hash_lut.dat"));
             }
             catch (Exception ex)
             {
-                throw new FileNotFoundException($"Failed to load keys from {path}. Ensure .dat files exist. Error: {ex.Message}");
+                throw new FileNotFoundException($"Failed to load keys from {path}. Error: {ex.Message}", ex);
             }
         }
 
@@ -1157,7 +1164,7 @@ namespace CodeWalker.GameFiles
         {
             byte[][] result;
 
-            var fs = new FileStream(fileName, FileMode.Open);
+            var fs = new FileStream(fileName, FileMode.Open, FileAccess.Read, FileShare.Read);
             var rd = new DataReader(fs);
 
             result = new byte[101][];
@@ -1212,7 +1219,7 @@ namespace CodeWalker.GameFiles
         {
             uint[][][] result;
 
-            var fs = new FileStream(fileName, FileMode.Open);
+            var fs = new FileStream(fileName, FileMode.Open, FileAccess.Read, FileShare.Read);
             var rd = new DataReader(fs);
 
             // 17 rounds...
@@ -1298,7 +1305,7 @@ namespace CodeWalker.GameFiles
         {
             GTA5NGLUT[][] result;
 
-            var fs = new FileStream(fileName, FileMode.Open);
+            var fs = new FileStream(fileName, FileMode.Open, FileAccess.Read, FileShare.Read);
             var rd = new DataReader(fs);
 
             // 17 rounds...

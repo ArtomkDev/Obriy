@@ -2,7 +2,7 @@ import path from 'path'
 import fs from 'fs-extra'
 import { app, BrowserWindow } from 'electron'
 import * as CloudRepository from './CloudRepository'
-import * as CoreBridge from './CoreBridge'
+import { CoreBridge } from './CoreBridge'
 
 const getCacheRoot = () => path.join(app.getPath('userData'), 'ModsCache')
 
@@ -11,6 +11,8 @@ const APPLICATION_SESSION_ID = Date.now()
 
 let activeRegistryWatcher = null
 let registryWatcherDebounceTimer = null
+
+const core = new CoreBridge()
 
 // --- Helpers ---
 
@@ -24,27 +26,39 @@ async function updateRegistry(gamePath, modId, installedFiles) {
   } catch (e) { console.error('Error reading registry', e) }
 
   if (!registry.dlc_mods) registry.dlc_mods = {}
-  
-  // Зберігаємо ID мода. Список файлів тепер складніше отримати до інсталяції, 
-  // але для деінсталяції ми можемо просто видаляти весь запис або вдосконалити C# для повернення списку.
-  // Поки що зберігаємо пустий масив або заглушку, якщо C# не повертає список.
-  // В ідеалі C# має повертати список встановлених файлів у JSON відповіді.
   registry.dlc_mods[modId] = installedFiles || [] 
   
   await fs.writeJson(registryPath, registry, { spaces: 2 })
 }
 
+// --- Helper for File Scanning (FIXED) ---
+async function getAllFiles(dir) {
+    let results = []
+    const list = await fs.readdir(dir)
+    for (const file of list) {
+        const filePath = path.join(dir, file)
+        const stat = await fs.stat(filePath)
+        if (stat && stat.isDirectory()) {
+            results = results.concat(await getAllFiles(filePath))
+        } else {
+            results.push(filePath)
+        }
+    }
+    return results
+}
+
 // --- Main Exports ---
 
 export async function ensureBackendReady() {
-  return await CoreBridge.executeCoreCommand('ping', [])
+  return await core.executeCommand('ping', {})
 }
 
 export async function validateGamePath(gameDirectoryPath) {
-  const validationResult = await CoreBridge.executeCoreCommand('validate-path', [gameDirectoryPath])
+  const validationResult = await core.executeCommand('validate', gameDirectoryPath)
+  
   if (validationResult.status === 'success') {
-    console.log('[ModManager] Valid game path detected. Initializing DLC container...')
-    await CoreBridge.executeCoreCommand('init-dlc', [gameDirectoryPath])
+    console.log('[ModManager] Valid game path. Initializing Setup...')
+    await core.executeCommand('setup', gameDirectoryPath)
   }
   return validationResult
 }
@@ -119,9 +133,11 @@ export async function getModDetails(modificationId) {
 export async function installMod(modificationId, gameDirectoryPath) {
   const userInterfaceFeedbackChannel = BrowserWindow.getAllWindows()[0]?.webContents
   const modificationSessionDirectory = path.join(getCacheRoot(), modificationId.toString())
+  const extractedPath = path.join(modificationSessionDirectory, 'extracted')
   
   await fs.ensureDir(modificationSessionDirectory)
   await fs.emptyDir(modificationSessionDirectory)
+  await fs.ensureDir(extractedPath)
   
   const payloadArchiveLocalPath = path.join(modificationSessionDirectory, 'payload.zip')
   const timestamp = Date.now()
@@ -136,33 +152,49 @@ export async function installMod(modificationId, gameDirectoryPath) {
       (progress) => userInterfaceFeedbackChannel?.send('installation-progress', { type: 'download', value: progress })
     )
 
-    userInterfaceFeedbackChannel?.send('installation-progress', { type: 'install', value: 20 })
+    userInterfaceFeedbackChannel?.send('installation-progress', { type: 'install', value: 30 })
 
-    // 2. Формуємо просту "Auto" інструкцію
-    // Ми не аналізуємо архів тут. C# зробить це сам.
-    const instructions = [{
-        type: 'replace',
-        target: 'AUTO', // Ключове слово для C#
-        Path: '' // Брати все з кореня
-    }]
+    // 2. Розпакування (через C#)
+    // Архів вже є, бо ArchiveService відпрацював успішно
+    const extractResult = await core.executeCommand('extract', {
+        Source: payloadArchiveLocalPath,
+        Destination: extractedPath
+    })
 
-    const installRequest = {
-        archivePath: payloadArchiveLocalPath,
-        gamePath: gameDirectoryPath,
-        instructions: instructions
+    if (extractResult.status !== 'success') {
+        throw new Error(`Extraction failed: ${extractResult.message}`)
     }
 
-    // 3. Виклик Backend
-    const backendExecutionResult = await CoreBridge.executeCoreCommand(
-      'install-mod', 
-      [JSON.stringify(installRequest)], 
-      userInterfaceFeedbackChannel, 
-      modificationId
-    )
+    // 3. Сканування та формування інструкцій
+    // ТЕПЕР getAllFiles ДОСТУПНА
+    const files = await getAllFiles(extractedPath)
+    const instructions = []
+
+    for (const filePath of files) {
+        const ext = path.extname(filePath).toLowerCase()
+        if (['.ydr', '.ytd', '.yft', '.ydd'].includes(ext)) {
+            instructions.push({
+                type: 'replace',
+                target: 'WEAPONS', 
+                path: filePath // Важливо: path з маленької літери
+            })
+        }
+    }
+
+    if (instructions.length === 0) {
+        throw new Error("No valid game files found in the mod archive.")
+    }
+
+    const installRequest = {
+        GamePath: gameDirectoryPath,
+        ModName: modificationId.toString(),
+        Instructions: instructions
+    }
+
+    // 4. Інсталяція
+    const backendExecutionResult = await core.executeCommand('install', installRequest)
 
     if (backendExecutionResult.status === 'success') {
-      // Тут можна було б отримати список файлів від C#, якби ми це реалізували
-      // Поки що просто реєструємо факт установки
       await updateRegistry(gameDirectoryPath, modificationId, ["installed_auto"])
       const updatedMods = await getActiveMods(gameDirectoryPath)
       userInterfaceFeedbackChannel?.send('mods-updated', updatedMods)
@@ -181,6 +213,5 @@ export async function installMod(modificationId, gameDirectoryPath) {
 }
 
 export async function uninstallMod(modificationId, gameDirectoryPath) {
-    // Старий код uninstall, поки що без змін
     return { status: 'success' }
 }

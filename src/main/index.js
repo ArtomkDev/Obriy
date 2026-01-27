@@ -3,15 +3,16 @@ import { join, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import * as ModManager from './services/ModManagerService'
+import * as CloudRepository from './services/CloudRepository'
 import updaterPkg from 'electron-updater'
 import log from 'electron-log'
 import Store from 'electron-store'
 import fs from 'fs'
 import crypto from 'crypto'
-import * as CloudRepository from './services/CloudRepository'
 
 const { autoUpdater } = updaterPkg
 
+// --- SECURITY & CONFIGURATION ---
 const INTEGRITY_SALT = 'Obriy_System_Secure_v1_DoNotEdit_8822'
 
 function signAuthData(data) {
@@ -29,24 +30,28 @@ function validateAuthData(data) {
   return _integrity === expectedData._integrity
 }
 
+// --- STORE INITIALIZATION ---
 let store
 try {
   store = new Store({ clearInvalidConfig: true })
 } catch (error) {
+  console.error('Store corrupted, resetting:', error)
   try {
     const configPath = join(app.getPath('userData'), 'config.json')
     if (fs.existsSync(configPath)) {
       fs.unlinkSync(configPath)
     }
   } catch (e) {
-    console.error(e)
+    console.error('Failed to unlink config:', e)
   }
   store = new Store()
 }
 
+// --- WINDOW MANAGEMENT ---
 let loaderWindow = null
 let mainWindow = null
 
+// Setup AutoUpdater
 autoUpdater.logger = log
 autoUpdater.logger.transports.file.level = 'info'
 autoUpdater.autoInstallOnAppQuit = true
@@ -66,7 +71,10 @@ function getRenderUrl(route = '') {
 }
 
 function createLoaderWindow() {
-  if (loaderWindow) return loaderWindow
+  if (loaderWindow && !loaderWindow.isDestroyed()) {
+    loaderWindow.focus()
+    return loaderWindow
+  }
 
   loaderWindow = new BrowserWindow({
     width: 400,
@@ -82,7 +90,8 @@ function createLoaderWindow() {
     webPreferences: {
       preload: getPreloadPath(),
       sandbox: false,
-      contextIsolation: true
+      contextIsolation: true,
+      nodeIntegration: false
     }
   })
 
@@ -93,6 +102,7 @@ function createLoaderWindow() {
     if (!is.dev) {
       autoUpdater.checkForUpdates()
     } else {
+      // Simulate update check in dev
       setTimeout(() => {
         if (loaderWindow && !loaderWindow.isDestroyed()) {
           loaderWindow.webContents.send('update-status', { status: 'not-available' })
@@ -114,7 +124,10 @@ function createLoaderWindow() {
 }
 
 function createMainWindow() {
-  if (mainWindow) return mainWindow
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.focus()
+    return mainWindow
+  }
 
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -129,7 +142,8 @@ function createMainWindow() {
     webPreferences: {
       preload: getPreloadPath(),
       sandbox: false,
-      contextIsolation: true
+      contextIsolation: true,
+      nodeIntegration: false
     }
   })
 
@@ -137,10 +151,13 @@ function createMainWindow() {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+    
+    // Close loader if exists
     if (loaderWindow && !loaderWindow.isDestroyed()) {
       loaderWindow.close()
     }
 
+    // Start watching registry if path exists
     const savedPath = store.get('gta_path')
     if (savedPath) {
       ModManager.startRegistryWatcher(mainWindow, savedPath)
@@ -159,6 +176,7 @@ function createMainWindow() {
   return mainWindow
 }
 
+// --- APP LIFECYCLE ---
 app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.obriy.launcher')
 
@@ -177,6 +195,8 @@ app.whenReady().then(async () => {
 
   createLoaderWindow()
 
+  // --- IPC HANDLERS: WINDOW CONTROL ---
+  
   ipcMain.on('app:launch-main', () => {
     createMainWindow()
   })
@@ -203,10 +223,10 @@ app.whenReady().then(async () => {
     if (activeWindow) activeWindow.close()
   })
 
+  // Hacky resizing for seamless transition feel
   ipcMain.handle('window:resize-to-loader', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMaximized()) mainWindow.unmaximize()
-
       mainWindow.setMinimumSize(400, 450)
       mainWindow.setResizable(true)
       mainWindow.setSize(400, 450)
@@ -226,17 +246,18 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('revert-to-loader', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setSize(900, 670)
+      mainWindow.setSize(900, 670) // Registration screen size
       mainWindow.setResizable(false)
       mainWindow.center()
     }
   })
 
+  // --- IPC HANDLERS: DATA & STORE ---
+
   ipcMain.handle('get-app-version', () => app.getVersion())
 
   ipcMain.handle('store:get', (_, key) => {
     const value = store.get(key)
-
     if (key === 'auth_user' && value) {
       if (!validateAuthData(value)) {
         store.delete('auth_user')
@@ -265,13 +286,14 @@ app.whenReady().then(async () => {
     return true
   })
 
+  // --- IPC HANDLERS: AUTH ---
+
   ipcMain.handle('auth:verify-subscription', async () => {
     const localUser = store.get('auth_user')
     if (!localUser || !localUser.id) return null
 
     try {
       const freshProfile = await CloudRepository.getUserProfile(localUser.id)
-
       if (freshProfile) {
         const signedProfile = signAuthData(freshProfile)
         store.set('auth_user', signedProfile)
@@ -279,9 +301,11 @@ app.whenReady().then(async () => {
       }
       return null
     } catch (networkError) {
-      return localUser
+      return localUser // Fallback to offline cache
     }
   })
+
+  // --- IPC HANDLERS: GAME & MODS ---
 
   ipcMain.handle('dialog:selectGameDirectory', async () => {
     const activeWindow = BrowserWindow.getFocusedWindow()
@@ -298,9 +322,11 @@ app.whenReady().then(async () => {
       const validationResult = await ModManager.validateGamePath(selectedPath)
 
       if (validationResult.isValid) {
+        // Use the directory containing the exe
         const directoryPath = validationResult.exePath
           ? dirname(validationResult.exePath)
           : selectedPath
+        
         if (mainWindow) ModManager.startRegistryWatcher(mainWindow, directoryPath)
         return { success: true, path: directoryPath }
       }
@@ -316,7 +342,8 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('start-backend', async () => {
     try {
-      await ModManager.ensureBackendReady()
+      // Just check if the engine executable exists
+      await ModManager.ensureBackendReady() 
       return true
     } catch (backendError) {
       throw new Error(backendError.message)
@@ -327,6 +354,7 @@ app.whenReady().then(async () => {
     try {
       return await ModManager.getMarketplaceCatalog()
     } catch (networkError) {
+      console.error('Catalog fetch failed:', networkError)
       return []
     }
   })
@@ -334,7 +362,12 @@ app.whenReady().then(async () => {
   ipcMain.handle('get-active-mods', async () => {
     const gameDirectory = store.get('gta_path')
     if (!gameDirectory) return []
-    return await ModManager.getActiveMods(gameDirectory)
+    try {
+        return await ModManager.getActiveMods(gameDirectory)
+    } catch (e) {
+        console.error('Failed to get active mods:', e)
+        return []
+    }
   })
 
   ipcMain.handle('get-mod-stats', async (_, modId) => {
@@ -345,6 +378,7 @@ app.whenReady().then(async () => {
     try {
       return await ModManager.getModDetails(modId)
     } catch (detailError) {
+      console.error('Failed to get mod details:', detailError)
       return null
     }
   })
@@ -353,12 +387,14 @@ app.whenReady().then(async () => {
     try {
       const gameDirectory = store.get('gta_path')
 
+      // 1. Check Directory Existence
       if (!gameDirectory || !fs.existsSync(gameDirectory)) {
         store.delete('gta_path')
         event.sender.send('path:sync-directory', null)
         throw new Error('Папка з грою не знайдена. Оберіть шлях заново.')
       }
 
+      // 2. Validate Game Executable
       const directoryValidation = await ModManager.validateGamePath(gameDirectory)
       if (!directoryValidation.isValid) {
         store.delete('gta_path')
@@ -366,8 +402,8 @@ app.whenReady().then(async () => {
         throw new Error('У цій папці немає файлу GTA5.exe. Оберіть шлях заново.')
       }
 
+      // 3. Check Auth Integrity
       const authUser = store.get('auth_user')
-
       if (authUser && !validateAuthData(authUser)) {
         store.delete('auth_user')
         event.sender.send('auth:sync-profile', null)
@@ -378,27 +414,37 @@ app.whenReady().then(async () => {
         throw new Error('Для встановлення модифікацій необхідно увійти в акаунт.')
       }
 
+      // 4. Check Premium Status
       const modDetails = await ModManager.getModDetails(modId)
-
       if (modDetails.is_premium && !authUser.isPremium) {
         throw new Error('Ця модифікація доступна лише для Premium підписників.')
       }
 
+      // 5. Execute Installation
       const result = await ModManager.installMod(modId, gameDirectory)
       return { success: true, data: result }
+
     } catch (err) {
+      console.error('Install error:', err)
       return { success: false, error: err.message }
     }
   })
 
   ipcMain.handle('uninstall-mod', async (_, gamePath, instructions, modId) => {
-    return await ModManager.uninstallMod(modId, gamePath)
+    try {
+        return await ModManager.uninstallMod(modId, gamePath)
+    } catch (err) {
+        console.error('Uninstall error:', err)
+        return { success: false, error: err.message }
+    }
   })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createLoaderWindow()
   })
 })
+
+// --- AUTO UPDATER EVENTS ---
 
 autoUpdater.on('checking-for-update', () => {
   if (loaderWindow && !loaderWindow.isDestroyed()) {
