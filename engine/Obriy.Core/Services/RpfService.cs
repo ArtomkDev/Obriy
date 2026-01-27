@@ -20,7 +20,6 @@ public class RpfService
         return new RpfSessionWrapper(rpf, fullPath);
     }
 
-    // Екстракт внутрішнього файлу (наприклад, weapons.rpf) у тимчасову папку
     public string ExtractInnerRpf(RpfFile rootRpf, string internalPath)
     {
         var entry = FindEntry(rootRpf, internalPath);
@@ -34,32 +33,51 @@ public class RpfService
         return null;
     }
 
-    // Заміна файлу всередині RPF
     public void ReplaceInnerFile(RpfFile rootRpf, string internalPath, byte[] newData)
     {
         var entry = FindEntry(rootRpf, internalPath);
         if (entry != null)
         {
-            // Видаляємо старий запис
             RpfFile.DeleteEntry(entry);
         }
 
-        // Додаємо новий (CodeWalker вимагає знати батьківську директорію)
-        // internalPath має вигляд x64\models\cdimages\weapons.rpf
         var dirPath = Path.GetDirectoryName(internalPath);
         var fileName = Path.GetFileName(internalPath);
         
-        var parentDir = FindDirectory(rootRpf, dirPath);
+        // ЗМІНА: Використовуємо EnsureDirectory замість FindDirectory
+        var parentDir = EnsureDirectory(rootRpf, dirPath); 
         if (parentDir != null)
         {
-            // true в кінці означає overwrite, але ми вже видалили старий вище для надійності
             RpfFile.CreateFile(parentDir, fileName, newData, true);
         }
     }
 
+    // НОВИЙ МЕТОД: Створює структуру папок, якщо її немає
+    public RpfDirectoryEntry EnsureDirectory(RpfFile rpf, string path)
+    {
+        if (string.IsNullOrEmpty(path)) return rpf.Root;
+
+        var parts = path.Replace('\\', '/').Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+        RpfDirectoryEntry currentDir = rpf.Root;
+
+        foreach (var part in parts)
+        {
+            var existingDir = currentDir.Directories.FirstOrDefault(d => d.Name.Equals(part, StringComparison.OrdinalIgnoreCase));
+            if (existingDir != null)
+            {
+                currentDir = existingDir;
+            }
+            else
+            {
+                // Створюємо нову папку
+                currentDir = RpfFile.CreateDirectory(currentDir, part);
+            }
+        }
+        return currentDir;
+    }
+
     private RpfEntry FindEntry(RpfFile rpf, string path)
     {
-        // Нормалізуємо шлях для пошуку
         var parts = path.Replace('\\', '/').Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
         RpfDirectoryEntry currentDir = rpf.Root;
         
@@ -68,7 +86,6 @@ public class RpfService
             var isLast = i == parts.Length - 1;
             var part = parts[i];
             
-            // В CodeWalker файли і папки лежать окремо
             RpfEntry entry = currentDir.Directories.FirstOrDefault(d => d.Name.Equals(part, StringComparison.OrdinalIgnoreCase));
             
             if (entry == null)
@@ -84,16 +101,9 @@ public class RpfService
             {
                 currentDir = dir;
             }
-            else return null; // Якщо ми не в кінці шляху, але натрапили на файл замість папки
+            else return null;
         }
         return null;
-    }
-    
-    private RpfDirectoryEntry FindDirectory(RpfFile rpf, string path)
-    {
-         if (string.IsNullOrEmpty(path)) return rpf.Root;
-         var entry = FindEntry(rpf, path);
-         return entry as RpfDirectoryEntry;
     }
 }
 
@@ -110,7 +120,6 @@ public class RpfSessionWrapper : IDisposable
 
     public void Dispose()
     {
-        // Тут можна додати логіку звільнення ресурсів, якщо потрібно
         GC.SuppressFinalize(this);
     }
 }

@@ -14,6 +14,15 @@ public class ModInstallerService
     private readonly RegistryService _registryService;
     private readonly Dictionary<string, IInstructionHandler> _handlers;
 
+    // Словник відомих шляхів. Тут можна додавати нові типи модів.
+    private readonly Dictionary<string, string> _knownTargets = new(StringComparer.OrdinalIgnoreCase)
+    {
+        { "WEAPONS", @"x64\models\cdimages\weapons.rpf" },
+        { "VEHICLES", @"x64\levels\gta5\vehicles.rpf" }, // Для машин (якщо знадобиться)
+        // Можна додавати свої шляхи, наприклад для маппінгу, якщо він має лежати в специфічному rpf
+        // { "MAPS", @"x64\levels\gta5\props\..." } 
+    };
+
     public ModInstallerService(RpfService rpfService, RegistryService registryService, IEnumerable<IInstructionHandler> handlers)
     {
         _rpfService = rpfService;
@@ -23,83 +32,78 @@ public class ModInstallerService
 
     public object InstallMod(InstallModRequest request)
     {
-        // 1. Групуємо інструкції за ціллю (WEAPONS, AUTO, або корінь)
         var groupedInstructions = request.Instructions.GroupBy(i => i.Target?.ToUpper() ?? "ROOT");
 
-        // Відкриваємо головний архів (patchday18ng)
         using var mainSession = _rpfService.OpenPatchday(request.GamePath);
         
         foreach (var group in groupedInstructions)
         {
-            var targetName = group.Key;
+            var targetKey = group.Key;
             RpfFile targetRpf = mainSession.RpfFile;
             RpfFile innerRpf = null;
             string tempInnerPath = null;
-            
-            // 2. Логіка вкладених архівів
-            if (targetName == "WEAPONS")
+            string innerPathInsideDlc = null;
+
+            // 1. Визначаємо, куди встановлювати
+            if (_knownTargets.TryGetValue(targetKey, out var knownPath))
             {
-                // Шлях до weapons.rpf всередині patchday18ng
-                // dlc.rpf/x64/models/cdimages/weapons.rpf
-                var innerPath = @"x64\models\cdimages\weapons.rpf";
-                
-                // Екстрактимо внутрішній архів у тимчасовий файл
-                tempInnerPath = _rpfService.ExtractInnerRpf(mainSession.RpfFile, innerPath);
+                innerPathInsideDlc = knownPath;
+            }
+            else if (targetKey.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase))
+            {
+                // Дозволяємо передавати прямий шлях в Target (наприклад "x64/textures.rpf")
+                innerPathInsideDlc = targetKey;
+            }
+
+            // 2. Якщо це вкладений архів, дістаємо його
+            if (!string.IsNullOrEmpty(innerPathInsideDlc))
+            {
+                tempInnerPath = _rpfService.ExtractInnerRpf(mainSession.RpfFile, innerPathInsideDlc);
                 
                 if (tempInnerPath != null)
                 {
-                    // Відкриваємо тимчасовий файл як RpfFile
                     innerRpf = new RpfFile(tempInnerPath, Path.GetFileName(tempInnerPath));
                     innerRpf.ScanStructure(null, null);
-                    targetRpf = innerRpf; // Перемикаємо контекст виконання на внутрішній архів
+                    targetRpf = innerRpf;
                 }
                 else
                 {
-                    Console.Error.WriteLine($"[Error] Could not find nested RPF: {innerPath}");
-                    continue;
+                    // Якщо архів не знайдено, пробуємо створити новий? 
+                    // Поки що просто логуємо помилку, бо створення RPF з нуля - складніша операція
+                    Console.Error.WriteLine($"[Error] Target RPF not found inside patchday18ng: {innerPathInsideDlc}");
+                    continue; 
                 }
             }
 
-            // 3. Виконання інструкцій
+            // 3. Виконуємо інструкції
             foreach (var instruction in group)
             {
                 if (_handlers.TryGetValue(instruction.Type, out var handler))
                 {
                     try 
                     {
-                        // Виконуємо дію (ReplaceHandler)
-                        // Якщо targetRpf це weapons.rpf, файл запишеться у tempInnerPath
                         handler.Execute(instruction, targetRpf, request.GamePath);
-                        Console.Error.WriteLine($"[Success] {instruction.Type} -> {Path.GetFileName(instruction.Path)} in {targetName}");
+                        Console.Error.WriteLine($"[Success] {instruction.Type} -> {Path.GetFileName(instruction.Path)} into {targetKey}");
                     }
                     catch (Exception ex)
                     {
-                        Console.Error.WriteLine($"[Error] Failed to install {instruction.Path}: {ex.Message}");
+                        Console.Error.WriteLine($"[Error] Failed to process {Path.GetFileName(instruction.Path)}: {ex.Message}");
                     }
-                }
-                else
-                {
-                     Console.Error.WriteLine($"[Warning] No handler found for instruction type '{instruction.Type}'");
                 }
             }
 
-            // 4. Збереження вкладеного архіву назад у головний
-            if (innerRpf != null && tempInnerPath != null)
+            // 4. Зберігаємо зміни назад у головний архів
+            if (innerRpf != null && tempInnerPath != null && innerPathInsideDlc != null)
             {
-                // Читаємо змінений weapons.rpf з диска (тимчасовий файл)
+                // innerRpf.Flush() не потрібен, бо CreateFile пише одразу на диск (в temp файл)
                 var newData = File.ReadAllBytes(tempInnerPath);
+                _rpfService.ReplaceInnerFile(mainSession.RpfFile, innerPathInsideDlc, newData);
                 
-                // Замінюємо оригінальний weapons.rpf у пам'яті головного архіву
-                _rpfService.ReplaceInnerFile(mainSession.RpfFile, @"x64\models\cdimages\weapons.rpf", newData);
-                
-                // Видаляємо тимчасовий файл
-                try { File.Delete(tempInnerPath); } catch { /* ignore cleanup errors */ }
+                try { File.Delete(tempInnerPath); } catch { }
             }
         }
 
-        // Реєструємо зміни
         _registryService.RegisterMod(request);
-        
         return new { status = "success", message = "Mod installed successfully" };
     }
 }

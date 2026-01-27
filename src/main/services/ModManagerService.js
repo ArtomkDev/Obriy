@@ -31,9 +31,12 @@ async function updateRegistry(gamePath, modId, installedFiles) {
   await fs.writeJson(registryPath, registry, { spaces: 2 })
 }
 
-// --- Helper for File Scanning (FIXED) ---
+// --- Helper for File Scanning ---
 async function getAllFiles(dir) {
     let results = []
+    // Перевірка на існування, щоб не падав
+    if (!await fs.pathExists(dir)) return []
+    
     const list = await fs.readdir(dir)
     for (const file of list) {
         const filePath = path.join(dir, file)
@@ -154,8 +157,7 @@ export async function installMod(modificationId, gameDirectoryPath) {
 
     userInterfaceFeedbackChannel?.send('installation-progress', { type: 'install', value: 30 })
 
-    // 2. Розпакування (через C#)
-    // Архів вже є, бо ArchiveService відпрацював успішно
+    // 2. Розпакування
     const extractResult = await core.executeCommand('extract', {
         Source: payloadArchiveLocalPath,
         Destination: extractedPath
@@ -165,19 +167,76 @@ export async function installMod(modificationId, gameDirectoryPath) {
         throw new Error(`Extraction failed: ${extractResult.message}`)
     }
 
-    // 3. Сканування та формування інструкцій
-    // ТЕПЕР getAllFiles ДОСТУПНА
-    const files = await getAllFiles(extractedPath)
-    const instructions = []
+    // 3. Формування інструкцій
+    let instructions = []
+    
+    const instructionFile = path.join(extractedPath, 'instruction.json')
+    if (await fs.pathExists(instructionFile)) {
+        try {
+            const rawInstructions = await fs.readJson(instructionFile)
+            
+            for (const instr of rawInstructions) {
+                // Нормалізація шляху (path: "" означає корінь extractedPath)
+                let relativePath = (instr.path || instr.Path || '').trim()
+                const absoluteSourcePath = path.join(extractedPath, relativePath)
+                
+                // Перевіряємо, чи це папка, чи файл, чи порожній шлях
+                let isDirectory = relativePath === '' || relativePath.endsWith('/') || relativePath.endsWith('\\')
+                
+                // Якщо шлях не закінчується слешем, але на диску це папка - вважаємо папкою
+                if (!isDirectory && await fs.pathExists(absoluteSourcePath)) {
+                    const stat = await fs.stat(absoluteSourcePath)
+                    if (stat.isDirectory()) isDirectory = true
+                }
 
-    for (const filePath of files) {
-        const ext = path.extname(filePath).toLowerCase()
-        if (['.ydr', '.ytd', '.yft', '.ydd'].includes(ext)) {
-            instructions.push({
-                type: 'replace',
-                target: 'WEAPONS', 
-                path: filePath // Важливо: path з маленької літери
-            })
+                if (isDirectory) {
+                    // Якщо це папка або корінь - беремо ВСІ файли рекурсивно
+                    const files = await getAllFiles(absoluteSourcePath)
+                    for (const file of files) {
+                        // Ігноруємо сам файл instruction.json, щоб не копіювати сміття
+                        if (path.basename(file).toLowerCase() === 'instruction.json') continue;
+
+                        instructions.push({
+                            type: instr.type,
+                            target: instr.target,
+                            path: file // Absolute path to the extracted file
+                        })
+                    }
+                } else {
+                    // Це конкретний файл
+                    instructions.push({
+                        type: instr.type,
+                        target: instr.target,
+                        path: absoluteSourcePath
+                    })
+                }
+            }
+            console.log('[ModManager] Instructions generated from instruction.json')
+        } catch (e) {
+            console.error('[ModManager] Failed to parse instruction.json', e)
+        }
+    }
+
+    // Fallback: Якщо інструкцій немає, використовуємо стару логіку авто-сканування
+    if (instructions.length === 0) {
+        const files = await getAllFiles(extractedPath)
+        for (const filePath of files) {
+            const ext = path.extname(filePath).toLowerCase()
+            const fileName = path.basename(filePath).toLowerCase()
+
+            // Авто-визначення для стандартних файлів
+            if (['.ydr', '.ytd', '.yft', '.ydd'].includes(ext)) {
+                let target = 'ROOT'
+                if (fileName.startsWith('w_') || fileName.includes('weapon')) {
+                    target = 'WEAPONS'
+                }
+                
+                instructions.push({
+                    type: 'replace',
+                    target: target, 
+                    path: filePath
+                })
+            }
         }
     }
 
