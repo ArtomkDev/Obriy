@@ -2,8 +2,7 @@ namespace Obriy.Core.Helpers
 {
     public static class DlcTemplates
     {
-        // Setup2Xml: Тут ми залишаємо стандартні групи patchday18ng, 
-        // але додаємо нашу логіку завантаження (OBRIY_LOAD_ALL) в ті ж моменти.
+        // Setup2Xml: Залишаємо стандартні групи, додаємо OBRIY_CUSTOM_LOAD
         public static string Setup2Xml => @"<?xml version=""1.0"" encoding=""UTF-8""?>
 <SSetupData>
     <deviceName>dlc_patchDay18NG</deviceName>
@@ -15,7 +14,8 @@ namespace Obriy.Core.Helpers
         <Item>
             <NameHash>GROUP_EARLY_ON</NameHash>
             <ContentChangeSets>
-                <Item>CCS_PATCHDAY18_NG_INIT</Item> </ContentChangeSets>
+                <Item>CCS_PATCHDAY18_NG_INIT</Item>
+            </ContentChangeSets>
         </Item>
         <Item>
             <NameHash>GROUP_STARTUP</NameHash>
@@ -26,7 +26,9 @@ namespace Obriy.Core.Helpers
         <Item>
             <NameHash>GROUP_UPDATE_STREAMING</NameHash>
             <ContentChangeSets>
-                <Item>CCS_PATCHDAY18_NG_STREAMING</Item> <Item>OBRIY_CUSTOM_LOAD</Item>           </ContentChangeSets>
+                <Item>CCS_PATCHDAY18_NG_STREAMING</Item>
+                <Item>OBRIY_CUSTOM_LOAD</Item> 
+            </ContentChangeSets>
         </Item>
         <Item>
             <NameHash>GROUP_UPDATE_WEAPON_PATCH</NameHash>
@@ -52,8 +54,7 @@ namespace Obriy.Core.Helpers
     <subPackCount value=""0"" />
 </SSetupData>";
 
-        // ContentXml: ГІБРИДНА ВЕРСІЯ
-        // Містить 5 оригінальних файлів patchday18ng + 5 твоїх слотів.
+        // ContentXml: ДОДАНО ВСІ ВІДСУТНІ АРХІВИ
         public static string ContentXml => @"<?xml version=""1.0"" encoding=""UTF-8""?>
 <CDataFileMgr__ContentsOfDataFileXml>
     <disabledFiles />
@@ -97,19 +98,50 @@ namespace Obriy.Core.Helpers
         </Item>
 
         <Item>
-            <filename>dlc_patchDay18NG:/x64/models/cdimages/weapons.rpf</filename> <fileType>RPF_FILE</fileType>
+            <filename>dlc_patchDay18NG:/x64/models/cdimages/weapons.rpf</filename>
+            <fileType>RPF_FILE</fileType>
             <overlay value=""true"" /> <disabled value=""true"" /> <persistent value=""true"" />
         </Item>
+        
         <Item>
-            <filename>dlc_patchDay18NG:/x64/levels/gta5/maps.rpf</filename> <fileType>RPF_FILE</fileType>
+            <filename>dlc_patchDay18NG:/x64/levels/gta5/maps.rpf</filename>
+            <fileType>RPF_FILE</fileType>
             <overlay value=""true"" /> <disabled value=""true"" /> <persistent value=""true"" />
         </Item>
+        
         <Item>
-            <filename>dlc_patchDay18NG:/x64/levels/gta5/props.rpf</filename> <fileType>RPF_FILE</fileType>
+            <filename>dlc_patchDay18NG:/x64/levels/gta5/props.rpf</filename>
+            <fileType>RPF_FILE</fileType>
             <overlay value=""true"" /> <disabled value=""true"" /> <persistent value=""true"" />
         </Item>
+
         <Item>
-            <filename>dlc_patchDay18NG:/common/data/metadata.rpf</filename> <fileType>RPF_FILE</fileType>
+            <filename>dlc_patchDay18NG:/x64/levels/gta5/minimap.rpf</filename>
+            <fileType>RPF_FILE</fileType>
+            <overlay value=""true"" /> <disabled value=""true"" /> <persistent value=""true"" />
+        </Item>
+
+        <Item>
+            <filename>dlc_patchDay18NG:/x64/levels/gta5/textures.rpf</filename>
+            <fileType>RPF_FILE</fileType>
+            <overlay value=""true"" /> <disabled value=""true"" /> <persistent value=""true"" />
+        </Item>
+
+        <Item>
+            <filename>dlc_patchDay18NG:/x64/levels/gta5/effects.rpf</filename>
+            <fileType>RPF_FILE</fileType>
+            <overlay value=""true"" /> <disabled value=""true"" /> <persistent value=""true"" />
+        </Item>
+
+        <Item>
+            <filename>dlc_patchDay18NG:/x64/data/cdimages/scaleform_generic.rpf</filename>
+            <fileType>RPF_FILE</fileType>
+            <overlay value=""true"" /> <disabled value=""true"" /> <persistent value=""true"" />
+        </Item>
+
+        <Item>
+            <filename>dlc_patchDay18NG:/common/data/metadata.rpf</filename>
+            <fileType>RPF_FILE</fileType>
             <overlay value=""true"" /> <disabled value=""true"" /> <persistent value=""true"" />
         </Item>
     </dataFiles>
@@ -137,6 +169,9 @@ namespace Obriy.Core.Helpers
                 <Item>dlc_patchDay18NG:/x64/models/cdimages/weapons.rpf</Item>
                 <Item>dlc_patchDay18NG:/x64/levels/gta5/maps.rpf</Item>
                 <Item>dlc_patchDay18NG:/x64/levels/gta5/props.rpf</Item>
+                <Item>dlc_patchDay18NG:/x64/levels/gta5/minimap.rpf</Item> <Item>dlc_patchDay18NG:/x64/levels/gta5/textures.rpf</Item>
+                <Item>dlc_patchDay18NG:/x64/levels/gta5/effects.rpf</Item>
+                <Item>dlc_patchDay18NG:/x64/data/cdimages/scaleform_generic.rpf</Item>
                 <Item>dlc_patchDay18NG:/common/data/metadata.rpf</Item>
             </filesToEnable>
         </Item>

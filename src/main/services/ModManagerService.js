@@ -34,7 +34,6 @@ async function updateRegistry(gamePath, modId, installedFiles) {
 // --- Helper for File Scanning ---
 async function getAllFiles(dir) {
     let results = []
-    // Перевірка на існування, щоб не падав
     if (!await fs.pathExists(dir)) return []
     
     const list = await fs.readdir(dir)
@@ -48,6 +47,29 @@ async function getAllFiles(dir) {
         }
     }
     return results
+}
+
+// --- Helper: Find Path Recursively (File or Dir) ---
+async function findPathRecursive(dir, targetName, targetType = 'any') {
+    if (!await fs.pathExists(dir)) return null
+    
+    const list = await fs.readdir(dir)
+    for (const file of list) {
+        const filePath = path.join(dir, file)
+        const stat = await fs.stat(filePath)
+        
+        if (file.toLowerCase() === targetName.toLowerCase()) {
+             if (targetType === 'any') return filePath
+             if (targetType === 'dir' && stat.isDirectory()) return filePath
+             if (targetType === 'file' && !stat.isDirectory()) return filePath
+        }
+
+        if (stat.isDirectory()) {
+            const found = await findPathRecursive(filePath, targetName, targetType)
+            if (found) return found
+        }
+    }
+    return null
 }
 
 // --- Main Exports ---
@@ -137,27 +159,41 @@ export async function installMod(modificationId, gameDirectoryPath) {
   const userInterfaceFeedbackChannel = BrowserWindow.getAllWindows()[0]?.webContents
   const modificationSessionDirectory = path.join(getCacheRoot(), modificationId.toString())
   const extractedPath = path.join(modificationSessionDirectory, 'extracted')
+  const payloadArchiveLocalPath = path.join(modificationSessionDirectory, 'payload.zip')
+  const instructionLocalPath = path.join(modificationSessionDirectory, 'instruction.json') // Шлях для збереження інструкції
   
   await fs.ensureDir(modificationSessionDirectory)
   await fs.emptyDir(modificationSessionDirectory)
   await fs.ensureDir(extractedPath)
   
-  const payloadArchiveLocalPath = path.join(modificationSessionDirectory, 'payload.zip')
   const timestamp = Date.now()
 
   try {
-    userInterfaceFeedbackChannel?.send('installation-progress', { type: 'download', value: 10 })
+    userInterfaceFeedbackChannel?.send('installation-progress', { type: 'download', value: 5 })
+
+    // 1. ЗАВАНТАЖЕННЯ: Качаємо instruction.json (окремо, бо він лежить "біля" архіву)
+    try {
+        await CloudRepository.downloadFile(
+            `/mods/${modificationId}/instruction.json?t=${timestamp}`,
+            instructionLocalPath
+        )
+        console.log('[ModManager] Downloaded external instruction.json')
+    } catch (e) {
+        console.warn('[ModManager] External instruction.json not found, skipping download.')
+    }
     
-    // 1. Завантаження
+    userInterfaceFeedbackChannel?.send('installation-progress', { type: 'download', value: 15 })
+
+    // 2. ЗАВАНТАЖЕННЯ: Качаємо payload.zip
     await CloudRepository.downloadFile(
       `/mods/${modificationId}/payload.zip?t=${timestamp}`, 
       payloadArchiveLocalPath, 
-      (progress) => userInterfaceFeedbackChannel?.send('installation-progress', { type: 'download', value: progress })
+      (progress) => userInterfaceFeedbackChannel?.send('installation-progress', { type: 'download', value: 15 + (progress * 0.5) })
     )
 
-    userInterfaceFeedbackChannel?.send('installation-progress', { type: 'install', value: 30 })
+    userInterfaceFeedbackChannel?.send('installation-progress', { type: 'install', value: 70 })
 
-    // 2. Розпакування
+    // 3. РОЗПАКУВАННЯ
     const extractResult = await core.executeCommand('extract', {
         Source: payloadArchiveLocalPath,
         Destination: extractedPath
@@ -167,81 +203,93 @@ export async function installMod(modificationId, gameDirectoryPath) {
         throw new Error(`Extraction failed: ${extractResult.message}`)
     }
 
-    // 3. Формування інструкцій
+    // 4. ФОРМУВАННЯ ІНСТРУКЦІЙ
     let instructions = []
     
-    const instructionFile = path.join(extractedPath, 'instruction.json')
-    if (await fs.pathExists(instructionFile)) {
+    // Перевіряємо, чи є завантажений зовнішній instruction.json
+    let loadedInstructions = null
+    if (await fs.pathExists(instructionLocalPath)) {
         try {
-            const rawInstructions = await fs.readJson(instructionFile)
-            
-            for (const instr of rawInstructions) {
-                // Нормалізація шляху (path: "" означає корінь extractedPath)
-                let relativePath = (instr.path || instr.Path || '').trim()
-                const absoluteSourcePath = path.join(extractedPath, relativePath)
-                
-                // Перевіряємо, чи це папка, чи файл, чи порожній шлях
-                let isDirectory = relativePath === '' || relativePath.endsWith('/') || relativePath.endsWith('\\')
-                
-                // Якщо шлях не закінчується слешем, але на диску це папка - вважаємо папкою
-                if (!isDirectory && await fs.pathExists(absoluteSourcePath)) {
-                    const stat = await fs.stat(absoluteSourcePath)
-                    if (stat.isDirectory()) isDirectory = true
-                }
-
-                if (isDirectory) {
-                    // Якщо це папка або корінь - беремо ВСІ файли рекурсивно
-                    const files = await getAllFiles(absoluteSourcePath)
-                    for (const file of files) {
-                        // Ігноруємо сам файл instruction.json, щоб не копіювати сміття
-                        if (path.basename(file).toLowerCase() === 'instruction.json') continue;
-
-                        instructions.push({
-                            type: instr.type,
-                            target: instr.target,
-                            path: file // Absolute path to the extracted file
-                        })
-                    }
-                } else {
-                    // Це конкретний файл
-                    instructions.push({
-                        type: instr.type,
-                        target: instr.target,
-                        path: absoluteSourcePath
-                    })
-                }
-            }
-            console.log('[ModManager] Instructions generated from instruction.json')
-        } catch (e) {
-            console.error('[ModManager] Failed to parse instruction.json', e)
+            loadedInstructions = await fs.readJson(instructionLocalPath)
+        } catch(e) { console.error('Failed to read external instruction.json', e) }
+    } 
+    
+    // Якщо зовнішнього немає, шукаємо всередині архіву (для сумісності)
+    if (!loadedInstructions) {
+        const internalInstrPath = await findPathRecursive(extractedPath, 'instruction.json', 'file')
+        if (internalInstrPath) {
+             try { loadedInstructions = await fs.readJson(internalInstrPath) } catch(e) {}
         }
     }
 
-    // Fallback: Якщо інструкцій немає, використовуємо стару логіку авто-сканування
+    if (loadedInstructions) {
+        // ОБРОБКА ІНСТРУКЦІЙ (БЕЗ ВИГАДУВАННЯ, СУВОРО ПО JSON)
+        for (const instr of loadedInstructions) {
+            let rawPath = (instr.path || instr.Path || '').trim()
+            
+            // a) Якщо шлях пустий -> беремо ВСІ файли з архіву
+            if (rawPath === '') {
+                const files = await getAllFiles(extractedPath)
+                for (const file of files) {
+                    if (path.basename(file).toLowerCase() === 'instruction.json') continue;
+                    instructions.push({ type: instr.type, target: instr.target, path: file })
+                }
+                continue;
+            }
+
+            // b) Якщо шлях вказано -> шукаємо файл в розпакованому архіві
+            // Спочатку перевіряємо прямий шлях
+            let sourceAbsPath = path.join(extractedPath, rawPath)
+            
+            // Якщо не знайшли прямо, шукаємо рекурсивно (на випадок вкладених папок в zip)
+            if (!await fs.pathExists(sourceAbsPath)) {
+                const targetName = path.basename(rawPath)
+                const found = await findPathRecursive(extractedPath, targetName)
+                if (found) sourceAbsPath = found
+            }
+
+            if (sourceAbsPath && await fs.pathExists(sourceAbsPath)) {
+                const stat = await fs.stat(sourceAbsPath)
+                if (stat.isDirectory()) {
+                     // Якщо це папка -> беремо весь вміст
+                     const files = await getAllFiles(sourceAbsPath)
+                     for (const file of files) {
+                        instructions.push({ type: instr.type, target: instr.target, path: file })
+                     }
+                } else {
+                     // Це файл
+                     instructions.push({ type: instr.type, target: instr.target, path: sourceAbsPath })
+                }
+            } else {
+                console.warn(`[ModManager] File from instruction not found in archive: ${rawPath}`)
+            }
+        }
+        console.log(`[ModManager] Generated ${instructions.length} instructions from JSON`)
+    }
+
+    // Fallback: АВТО-СКАН (Лише якщо інструкції взагалі відсутні)
     if (instructions.length === 0) {
+        console.log('[ModManager] No instructions found. Using fallback auto-scan.')
         const files = await getAllFiles(extractedPath)
         for (const filePath of files) {
             const ext = path.extname(filePath).toLowerCase()
             const fileName = path.basename(filePath).toLowerCase()
 
-            // Авто-визначення для стандартних файлів
+            // Підтримка зброї/машин
             if (['.ydr', '.ytd', '.yft', '.ydd'].includes(ext)) {
                 let target = 'ROOT'
-                if (fileName.startsWith('w_') || fileName.includes('weapon')) {
-                    target = 'WEAPONS'
-                }
-                
-                instructions.push({
-                    type: 'replace',
-                    target: target, 
-                    path: filePath
-                })
+                if (fileName.startsWith('w_') || fileName.includes('weapon')) target = 'WEAPONS'
+                instructions.push({ type: 'replace', target: target, path: filePath })
+            }
+            // Підтримка міні-мапи без інструкції (якщо раптом)
+            else if (fileName === 'minimap.rpf') {
+                instructions.push({ type: 'replace', target: 'GTA5_LEVELS', path: filePath })
             }
         }
     }
 
     if (instructions.length === 0) {
-        throw new Error("No valid game files found in the mod archive.")
+        throw new Error("No valid game files found (Instruction file missing or paths incorrect).")
     }
 
     const installRequest = {
@@ -250,7 +298,7 @@ export async function installMod(modificationId, gameDirectoryPath) {
         Instructions: instructions
     }
 
-    // 4. Інсталяція
+    // 5. Виконання (C#)
     const backendExecutionResult = await core.executeCommand('install', installRequest)
 
     if (backendExecutionResult.status === 'success') {

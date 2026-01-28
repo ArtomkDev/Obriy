@@ -27,16 +27,26 @@ public class GameSetupService
         changed |= EnsureFileContent(rpf, "content.xml", DlcTemplates.ContentXml);
         changed |= EnsureFileContent(rpf, "setup2.xml", DlcTemplates.Setup2Xml);
 
+        // Створюємо стандартні архіви для модів
         changed |= EnsureArchiveExists(rpf, @"x64\models\cdimages\weapons.rpf");
         changed |= EnsureArchiveExists(rpf, @"x64\levels\gta5\maps.rpf");
         changed |= EnsureArchiveExists(rpf, @"x64\levels\gta5\props.rpf");
+        changed |= EnsureArchiveExists(rpf, @"x64\levels\gta5\textures.rpf");
+        changed |= EnsureArchiveExists(rpf, @"x64\levels\gta5\effects.rpf");
         changed |= EnsureArchiveExists(rpf, @"common\data\metadata.rpf");
+
+        // НОВЕ: Архіви для міні-карти та інтерфейсу (Scaleform)
+        // Шлях: update/update.rpf/x64/levels/gta5/minimap.rpf
+        changed |= EnsureArchiveExists(rpf, @"x64\levels\gta5\minimap.rpf");
+        
+        // Шлях: update/update.rpf/x64/data/cdimages/scaleform_generic.rpf
+        changed |= EnsureArchiveExists(rpf, @"x64\data\cdimages\scaleform_generic.rpf");
 
         if (changed)
         {
             Console.Error.WriteLine("[Setup] Applying structure changes to dlc.rpf...");
             _rpfService.Defragment(rpf);
-            return new { status = "success", message = "Patchday18ng fully adapted for mods" };
+            return new { status = "success", message = "Patchday18ng fully adapted for mods (Minimap & Scaleform included)" };
         }
 
         return new { status = "success", message = "Patchday18ng already ready" };
@@ -54,7 +64,7 @@ public class GameSetupService
         {
             File.Delete(tempRpfPath); 
             
-            // RpfFile.CreateNew автоматично створює та записує файл на диск
+            // Створюємо та зберігаємо новий RPF на диску
             RpfFile.CreateNew(Path.GetDirectoryName(tempRpfPath), Path.GetFileName(tempRpfPath), RpfEncryption.OPEN);
 
             var bytes = File.ReadAllBytes(tempRpfPath);
