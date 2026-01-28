@@ -14,13 +14,12 @@ public class ModInstallerService
     private readonly RegistryService _registryService;
     private readonly Dictionary<string, IInstructionHandler> _handlers;
 
-    // Словник відомих шляхів. Тут можна додавати нові типи модів.
     private readonly Dictionary<string, string> _knownTargets = new(StringComparer.OrdinalIgnoreCase)
     {
         { "WEAPONS", @"x64\models\cdimages\weapons.rpf" },
-        { "VEHICLES", @"x64\levels\gta5\vehicles.rpf" }, // Для машин (якщо знадобиться)
-        // Можна додавати свої шляхи, наприклад для маппінгу, якщо він має лежати в специфічному rpf
-        // { "MAPS", @"x64\levels\gta5\props\..." } 
+        { "VEHICLES", @"x64\levels\gta5\vehicles.rpf" },
+        { "MAPS", @"x64\levels\gta5\maps.rpf" },
+        { "PROPS", @"x64\levels\gta5\props.rpf" }
     };
 
     public ModInstallerService(RpfService rpfService, RegistryService registryService, IEnumerable<IInstructionHandler> handlers)
@@ -32,10 +31,20 @@ public class ModInstallerService
 
     public object InstallMod(InstallModRequest request)
     {
-        var groupedInstructions = request.Instructions.GroupBy(i => i.Target?.ToUpper() ?? "ROOT");
+        // 1. ЗАХИСТ ВІД CRASH (NullReferenceException)
+        if (request == null) return new { status = "error", message = "Request is null" };
+        if (request.Instructions == null || !request.Instructions.Any())
+        {
+            return new { status = "success", message = "No instructions provided, nothing to install." };
+        }
 
+        Console.Error.WriteLine($"[Installer] Processing {request.Instructions.Count} instructions for mod {request.ModName}...");
+
+        bool globalChanges = false;
         using var mainSession = _rpfService.OpenPatchday(request.GamePath);
         
+        var groupedInstructions = request.Instructions.GroupBy(i => i.Target?.ToUpper() ?? "ROOT");
+
         foreach (var group in groupedInstructions)
         {
             var targetKey = group.Key;
@@ -44,21 +53,27 @@ public class ModInstallerService
             string tempInnerPath = null;
             string innerPathInsideDlc = null;
 
-            // 1. Визначаємо, куди встановлювати
+            // Визначаємо шлях до вкладеного RPF
             if (_knownTargets.TryGetValue(targetKey, out var knownPath))
             {
                 innerPathInsideDlc = knownPath;
             }
             else if (targetKey.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase))
             {
-                // Дозволяємо передавати прямий шлях в Target (наприклад "x64/textures.rpf")
                 innerPathInsideDlc = targetKey;
             }
 
-            // 2. Якщо це вкладений архів, дістаємо його
+            // Якщо потрібно відкрити вкладений архів (наприклад, weapons.rpf)
             if (!string.IsNullOrEmpty(innerPathInsideDlc))
             {
-                tempInnerPath = _rpfService.ExtractInnerRpf(mainSession.RpfFile, innerPathInsideDlc);
+                try 
+                {
+                    tempInnerPath = _rpfService.ExtractInnerRpf(mainSession.RpfFile, innerPathInsideDlc);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[Warning] Failed to extract inner RPF {innerPathInsideDlc}: {ex.Message}");
+                }
                 
                 if (tempInnerPath != null)
                 {
@@ -68,14 +83,13 @@ public class ModInstallerService
                 }
                 else
                 {
-                    // Якщо архів не знайдено, пробуємо створити новий? 
-                    // Поки що просто логуємо помилку, бо створення RPF з нуля - складніша операція
-                    Console.Error.WriteLine($"[Error] Target RPF not found inside patchday18ng: {innerPathInsideDlc}");
-                    continue; 
+                    Console.Error.WriteLine($"[Error] Target archive '{innerPathInsideDlc}' NOT FOUND in patchday18ng. Please run Setup first.");
+                    continue; // Пропускаємо цю групу, бо нема куди класти файли
                 }
             }
 
-            // 3. Виконуємо інструкції
+            // Виконуємо інструкції
+            bool groupChanges = false;
             foreach (var instruction in group)
             {
                 if (_handlers.TryGetValue(instruction.Type, out var handler))
@@ -83,24 +97,39 @@ public class ModInstallerService
                     try 
                     {
                         handler.Execute(instruction, targetRpf, request.GamePath);
-                        Console.Error.WriteLine($"[Success] {instruction.Type} -> {Path.GetFileName(instruction.Path)} into {targetKey}");
+                        groupChanges = true;
+                        Console.Error.WriteLine($"[Success] Installed: {Path.GetFileName(instruction.Path)} -> {targetKey}");
                     }
                     catch (Exception ex)
                     {
-                        Console.Error.WriteLine($"[Error] Failed to process {Path.GetFileName(instruction.Path)}: {ex.Message}");
+                        Console.Error.WriteLine($"[Error] Failed to install {instruction.Path}: {ex.Message}");
                     }
                 }
             }
 
-            // 4. Зберігаємо зміни назад у головний архів
-            if (innerRpf != null && tempInnerPath != null && innerPathInsideDlc != null)
+            // Якщо були зміни у вкладеному архіві -> зберігаємо його назад у головний
+            if (groupChanges && innerRpf != null && tempInnerPath != null)
             {
-                // innerRpf.Flush() не потрібен, бо CreateFile пише одразу на диск (в temp файл)
+                _rpfService.Defragment(innerRpf); // Зберігаємо структуру innerRpf у temp файл
+                
                 var newData = File.ReadAllBytes(tempInnerPath);
                 _rpfService.ReplaceInnerFile(mainSession.RpfFile, innerPathInsideDlc, newData);
-                
-                try { File.Delete(tempInnerPath); } catch { }
+                globalChanges = true;
+
+                // Cleanup
+                try { innerRpf = null; File.Delete(tempInnerPath); } catch { }
             }
+            else if (groupChanges && innerRpf == null)
+            {
+                // Зміни були в корені dlc.rpf
+                globalChanges = true;
+            }
+        }
+
+        if (globalChanges)
+        {
+            Console.Error.WriteLine("[Installer] Saving changes to dlc.rpf...");
+            _rpfService.Defragment(mainSession.RpfFile);
         }
 
         _registryService.RegisterMod(request);

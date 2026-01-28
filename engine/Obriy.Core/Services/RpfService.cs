@@ -35,24 +35,25 @@ public class RpfService
 
     public void ReplaceInnerFile(RpfFile rootRpf, string internalPath, byte[] newData)
     {
+        // Якщо файл вже є - видаляємо старий запис
         var entry = FindEntry(rootRpf, internalPath);
         if (entry != null)
         {
             RpfFile.DeleteEntry(entry);
         }
 
+        // Переконуємось, що папки існують
         var dirPath = Path.GetDirectoryName(internalPath);
         var fileName = Path.GetFileName(internalPath);
         
-        // ЗМІНА: Використовуємо EnsureDirectory замість FindDirectory
         var parentDir = EnsureDirectory(rootRpf, dirPath); 
         if (parentDir != null)
         {
+            // CreateFile додає файл у структуру (в пам'яті)
             RpfFile.CreateFile(parentDir, fileName, newData, true);
         }
     }
 
-    // НОВИЙ МЕТОД: Створює структуру папок, якщо її немає
     public RpfDirectoryEntry EnsureDirectory(RpfFile rpf, string path)
     {
         if (string.IsNullOrEmpty(path)) return rpf.Root;
@@ -62,6 +63,7 @@ public class RpfService
 
         foreach (var part in parts)
         {
+            // Шукаємо існуючу папку
             var existingDir = currentDir.Directories.FirstOrDefault(d => d.Name.Equals(part, StringComparison.OrdinalIgnoreCase));
             if (existingDir != null)
             {
@@ -69,15 +71,17 @@ public class RpfService
             }
             else
             {
-                // Створюємо нову папку
+                // Створюємо нову, якщо немає
                 currentDir = RpfFile.CreateDirectory(currentDir, part);
             }
         }
         return currentDir;
     }
 
-    private RpfEntry FindEntry(RpfFile rpf, string path)
+    public RpfEntry FindEntry(RpfFile rpf, string path)
     {
+        if (string.IsNullOrEmpty(path)) return null;
+
         var parts = path.Replace('\\', '/').Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
         RpfDirectoryEntry currentDir = rpf.Root;
         
@@ -86,24 +90,26 @@ public class RpfService
             var isLast = i == parts.Length - 1;
             var part = parts[i];
             
-            RpfEntry entry = currentDir.Directories.FirstOrDefault(d => d.Name.Equals(part, StringComparison.OrdinalIgnoreCase));
-            
-            if (entry == null)
+            if (!isLast)
             {
-                entry = currentDir.Files.FirstOrDefault(f => f.Name.Equals(part, StringComparison.OrdinalIgnoreCase));
+                var dir = currentDir.Directories.FirstOrDefault(d => d.Name.Equals(part, StringComparison.OrdinalIgnoreCase));
+                if (dir != null) { currentDir = dir; continue; }
+                return null;
             }
             
-            if (entry == null) return null;
+            // Останній елемент: може бути файл або папка
+            var entry = currentDir.Directories.FirstOrDefault(d => d.Name.Equals(part, StringComparison.OrdinalIgnoreCase)) as RpfEntry 
+                     ?? currentDir.Files.FirstOrDefault(f => f.Name.Equals(part, StringComparison.OrdinalIgnoreCase));
             
-            if (isLast) return entry;
-            
-            if (entry is RpfDirectoryEntry dir)
-            {
-                currentDir = dir;
-            }
-            else return null;
+            return entry;
         }
         return null;
+    }
+
+    // ЗБЕРЕЖЕННЯ ЗМІН НА ДИСК
+    public void Defragment(RpfFile rpf)
+    {
+        RpfFile.Defragment(rpf);
     }
 }
 
