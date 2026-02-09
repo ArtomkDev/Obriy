@@ -60,11 +60,28 @@ module.exports = async function updateCatalog(newModManifest) {
     await fs.ensureDir(catalogDir);
     await fs.ensureDir(categoriesDir);
 
-    let coverImage = null;
-    if (newModManifest.media && newModManifest.media.length > 0) {
-        coverImage = newModManifest.media.find(file => 
-            file.endsWith('.webp') || file.endsWith('.jpg') || file.endsWith('.png')
-        );
+    let allImages = [];
+    if (newModManifest.media) {
+        if (Array.isArray(newModManifest.media.images)) {
+            allImages = [...newModManifest.media.images];
+        } else if (Array.isArray(newModManifest.media)) {
+            allImages = newModManifest.media.filter(file => 
+                file.endsWith('.webp') || file.endsWith('.jpg') || file.endsWith('.png')
+            );
+        }
+    }
+
+    allImages.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+
+    let firstGroupImages = [];
+    if (allImages.length > 0) {
+        const firstImageName = path.parse(allImages[0]).name;
+        const groupId = firstImageName.split('_')[0];
+
+        firstGroupImages = allImages.filter(file => {
+            const currentName = path.parse(file).name;
+            return currentName === groupId || currentName.startsWith(`${groupId}_`);
+        });
     }
 
     const catalogItem = {
@@ -75,7 +92,7 @@ module.exports = async function updateCatalog(newModManifest) {
         t: newModManifest.tags,
         v: newModManifest.version,
         p: newModManifest.is_premium || false,
-        img: coverImage || null,
+        images: firstGroupImages,
         d: Date.now()
     };
 
@@ -96,5 +113,6 @@ module.exports = async function updateCatalog(newModManifest) {
     await fs.writeJson(localCategoryPath, categoryCatalog);
 
     console.log(`   -> Catalog updated locally. Total mods in index: ${mainCatalog.length}`.green);
-    console.log(`   -> Cover image set to: ${catalogItem.img || 'NONE'}`);
+    console.log(`   -> Processed Images: ${allImages.length}`.gray);
+    console.log(`   -> Selected Group (Array Only): ${firstGroupImages.join(', ')}`.cyan);
 };

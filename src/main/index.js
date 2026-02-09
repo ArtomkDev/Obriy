@@ -2,7 +2,8 @@ import { app, shell, BrowserWindow, ipcMain, dialog, session } from 'electron'
 import { join, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import * as ModManager from './services/ModManagerService'
+import ModManagerService from './services/ModManagerService'
+import { CoreBridge } from './services/CoreBridge' 
 import * as CloudRepository from './services/CloudRepository'
 import updaterPkg from 'electron-updater'
 import log from 'electron-log'
@@ -14,6 +15,10 @@ const { autoUpdater } = updaterPkg
 
 // --- SECURITY & CONFIGURATION ---
 const INTEGRITY_SALT = 'Obriy_System_Secure_v1_DoNotEdit_8822'
+
+// Ініціалізація сервісів (Створення екземплярів)
+const coreBridge = new CoreBridge()
+const modManager = new ModManagerService(coreBridge, CloudRepository)
 
 function signAuthData(data) {
   if (!data || typeof data !== 'object') return data
@@ -102,7 +107,6 @@ function createLoaderWindow() {
     if (!is.dev) {
       autoUpdater.checkForUpdates()
     } else {
-      // Simulate update check in dev
       setTimeout(() => {
         if (loaderWindow && !loaderWindow.isDestroyed()) {
           loaderWindow.webContents.send('update-status', { status: 'not-available' })
@@ -152,15 +156,13 @@ function createMainWindow() {
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
     
-    // Close loader if exists
     if (loaderWindow && !loaderWindow.isDestroyed()) {
       loaderWindow.close()
     }
 
-    // Start watching registry if path exists
     const savedPath = store.get('gta_path')
     if (savedPath) {
-      ModManager.startRegistryWatcher(mainWindow, savedPath)
+      modManager.startRegistryWatcher(mainWindow, savedPath)
     }
   })
 
@@ -223,7 +225,6 @@ app.whenReady().then(async () => {
     if (activeWindow) activeWindow.close()
   })
 
-  // Hacky resizing for seamless transition feel
   ipcMain.handle('window:resize-to-loader', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMaximized()) mainWindow.unmaximize()
@@ -246,7 +247,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('revert-to-loader', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setSize(900, 670) // Registration screen size
+      mainWindow.setSize(900, 670) 
       mainWindow.setResizable(false)
       mainWindow.center()
     }
@@ -276,7 +277,7 @@ app.whenReady().then(async () => {
 
     store.set(key, value)
     if (key === 'gta_path' && mainWindow) {
-      ModManager.startRegistryWatcher(mainWindow, value)
+      modManager.startRegistryWatcher(mainWindow, value)
     }
     return true
   })
@@ -301,7 +302,7 @@ app.whenReady().then(async () => {
       }
       return null
     } catch (networkError) {
-      return localUser // Fallback to offline cache
+      return localUser 
     }
   })
 
@@ -319,54 +320,62 @@ app.whenReady().then(async () => {
 
     const selectedPath = filePaths[0]
     try {
-      const validationResult = await ModManager.validateGamePath(selectedPath)
+      const validationResult = await modManager.validateGamePath(selectedPath)
 
-      if (validationResult.isValid) {
-        // Use the directory containing the exe
-        const directoryPath = validationResult.exePath
-          ? dirname(validationResult.exePath)
-          : selectedPath
-        
-        if (mainWindow) ModManager.startRegistryWatcher(mainWindow, directoryPath)
+      if (validationResult.status === 'success') {
+        const directoryPath = selectedPath
+        if (mainWindow) modManager.startRegistryWatcher(mainWindow, directoryPath)
         return { success: true, path: directoryPath }
       }
-      return { success: false, error: 'GTA5.exe not found in this directory' }
+      return { success: false, error: 'GTA5.exe not found or invalid directory' }
     } catch (processError) {
       return { success: false, error: processError.message }
     }
   })
 
   ipcMain.handle('validate-game-path', async (_, path) => {
-    return await ModManager.validateGamePath(path)
+    return await modManager.validateGamePath(path)
   })
 
   ipcMain.handle('start-backend', async () => {
     try {
-      // Just check if the engine executable exists
-      await ModManager.ensureBackendReady() 
-      return true
-    } catch (backendError) {
-      throw new Error(backendError.message)
+      const result = await modManager.ensureBackendReady()
+      
+      if (result.status === 'success') {
+         const gamePath = store.get('gta_path') 
+         if(gamePath) {
+             modManager.startRegistryWatcher(mainWindow, gamePath)
+         }
+      }
+      return result
+    } catch (error) {
+      console.error('Error starting backend:', error)
+      return { status: 'error', message: error.message }
     }
   })
 
+  // --- ВИПРАВЛЕНО ТУТ ---
+  // Ми використовуємо modManager (екземпляр), а не ModManager (статика)
+  // І викликаємо getRemoteCatalog(), а не getMarketplaceCatalog()
   ipcMain.handle('get-mod-catalog', async () => {
     try {
-      return await ModManager.getMarketplaceCatalog()
+      return await modManager.getRemoteCatalog()
     } catch (networkError) {
       console.error('Catalog fetch failed:', networkError)
       return []
     }
   })
+  // ---------------------
 
   ipcMain.handle('get-active-mods', async () => {
-    const gameDirectory = store.get('gta_path')
-    if (!gameDirectory) return []
     try {
-        return await ModManager.getActiveMods(gameDirectory)
-    } catch (e) {
-        console.error('Failed to get active mods:', e)
-        return []
+      const gamePath = store.get('gta_path')
+      if (!gamePath) return []
+      
+      return await modManager.getActiveMods(gamePath)
+    } catch (error) {
+      console.error('Failed to get active mods:', error)
+      return []
     }
   })
 
@@ -376,7 +385,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('get-mod-details', async (_, modId) => {
     try {
-      return await ModManager.getModDetails(modId)
+      return await modManager.getModDetails(modId)
     } catch (detailError) {
       console.error('Failed to get mod details:', detailError)
       return null
@@ -395,11 +404,12 @@ app.whenReady().then(async () => {
       }
 
       // 2. Validate Game Executable
-      const directoryValidation = await ModManager.validateGamePath(gameDirectory)
-      if (!directoryValidation.isValid) {
+      const directoryValidation = await modManager.validateGamePath(gameDirectory)
+      
+      if (directoryValidation.status !== 'success') {
         store.delete('gta_path')
         event.sender.send('path:sync-directory', null)
-        throw new Error('У цій папці немає файлу GTA5.exe. Оберіть шлях заново.')
+        throw new Error('У цій папці немає файлу GTA5.exe або вона пошкоджена. Оберіть шлях заново.')
       }
 
       // 3. Check Auth Integrity
@@ -415,13 +425,18 @@ app.whenReady().then(async () => {
       }
 
       // 4. Check Premium Status
-      const modDetails = await ModManager.getModDetails(modId)
+      const modDetails = await modManager.getModDetails(modId)
       if (modDetails.is_premium && !authUser.isPremium) {
         throw new Error('Ця модифікація доступна лише для Premium підписників.')
       }
 
       // 5. Execute Installation
-      const result = await ModManager.installMod(modId, gameDirectory)
+      const result = await modManager.installMod(modId, gameDirectory)
+      
+      if (result.status === 'error') {
+         throw new Error(result.message || 'Unknown installation error')
+      }
+
       return { success: true, data: result }
 
     } catch (err) {
@@ -432,7 +447,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('uninstall-mod', async (_, gamePath, instructions, modId) => {
     try {
-        return await ModManager.uninstallMod(modId, gamePath)
+        return await modManager.uninstallMod(modId, gamePath)
     } catch (err) {
         console.error('Uninstall error:', err)
         return { success: false, error: err.message }

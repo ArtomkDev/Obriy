@@ -21,9 +21,7 @@ export default function ModDetailsPage() {
     let isRequestValid = true
     
     const fetchInformation = async () => {
-      console.log(`[ModDetails][Diagnostic] Attempting to load mod: ${id}`)
       setIsPageLoading(true)
-      
       try {
         const response = await window.api.getModDetails(id)
         if (isRequestValid) {
@@ -34,7 +32,6 @@ export default function ModDetailsPage() {
           }
         }
       } catch (err) {
-        console.error('[ModDetails] Error:', err)
         if (isRequestValid) navigate('/mods')
       } finally {
         if (isRequestValid) setIsPageLoading(false)
@@ -47,53 +44,95 @@ export default function ModDetailsPage() {
 
   const mediaList = useMemo(() => {
     if (!modData) return []
+    
+    // 1. УНІВЕРСАЛЬНИЙ ПОШУК ЗОБРАЖЕНЬ
+    let rawImages = []
+    let videos = []
 
-    if (!modData.media || modData.media.length === 0) {
-       return [{
-           type: 'image',
-           source: `${GATEWAY_BASE}/mods/${modData.id}/assets/1.webp`,
-           thumbnail: null
-       }]
+    // Варіант А: media це просто масив посилань (Твій випадок з логів)
+    if (Array.isArray(modData.media)) {
+        rawImages = modData.media
     }
-
-    let normalized = modData.media.map(item => {
-        if (typeof item === 'string') {
-            const fileName = item
-            const ext = fileName.split('.').pop().toLowerCase()
-            const isVideo = ['mp4', 'webm', 'mov'].includes(ext)
-            return {
-                type: isVideo ? 'video' : 'image',
-                source: `${GATEWAY_BASE}/mods/${modData.id}/assets/${fileName}`,
-                thumbnail: isVideo ? `${GATEWAY_BASE}/mods/${modData.id}/assets/1.webp` : null,
-                _debugName: fileName
-            }
+    // Варіант Б: media це об'єкт з images (Маніфест)
+    else if (modData.media && typeof modData.media === 'object') {
+        if (Array.isArray(modData.media.images)) {
+            rawImages = modData.media.images
         }
-        if (typeof item === 'object' && item !== null) return { ...item }
-        return null
-    }).filter(Boolean)
-
-    const getFileName = (m) => {
-        if (m._debugName) return m._debugName;
-        if (m.source) return m.source.split('/').pop();
-        return '';
+        if (Array.isArray(modData.media.videos)) {
+            videos = modData.media.videos
+        }
+    }
+    // Варіант В: images в корені (Каталог)
+    else if (Array.isArray(modData.images)) {
+        rawImages = modData.images
+    }
+    // Варіант Г: Одинарна картинка
+    else if (modData.image) {
+        rawImages = [modData.image]
     }
 
-    const bgItem = normalized.find(m => {
-        const name = getFileName(m).toLowerCase();
-        return name.startsWith('0.') || name.startsWith('img0.') || name === '0.webp';
+    if (rawImages.length === 0 && videos.length === 0) return []
+
+    const imageGroups = new Map()
+    const standaloneImages = []
+
+    // 2. ОБРОБКА ТА ГРУПУВАННЯ
+    rawImages.forEach(item => {
+       if (!item || typeof item !== 'string') return
+
+       const isFullUrl = item.startsWith('http')
+       const fullUrl = isFullUrl ? item : `${GATEWAY_BASE}/mods/${modData.id}/assets/${item}`
+       
+       // Витягуємо чисту назву файлу для аналізу шарів (1.webp, 1_1.webp)
+       // Якщо це URL: https://.../1.webp -> 1.webp
+       const filename = isFullUrl ? item.split('/').pop() : item
+       
+       const match = filename.match(/^(\d+)(?:_(\d+))?\.(\w+)$/)
+
+       if (match) {
+           const baseId = parseInt(match[1], 10)
+           const layerDepth = match[2] ? parseInt(match[2], 10) : 0 
+           
+           if (!imageGroups.has(baseId)) {
+               imageGroups.set(baseId, [])
+           }
+
+           imageGroups.get(baseId).push({
+               filename: filename,
+               src: fullUrl,
+               depth: layerDepth
+           })
+       } else {
+           standaloneImages.push({
+               type: 'image',
+               id: `std_${Math.random().toString(36).substr(2, 9)}`,
+               thumbnail: fullUrl,
+               layers: [{ filename: filename, src: fullUrl, depth: 0 }]
+           })
+       }
     })
 
-    const fgItem = normalized.find(m => {
-        const name = getFileName(m).toLowerCase();
-        return name.startsWith('1.') || name.startsWith('img1.') || name === '1.webp';
-    })
+    const processedGroups = Array.from(imageGroups.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([id, layers]) => {
+            layers.sort((a, b) => a.depth - b.depth)
+            return {
+                type: 'image',
+                id: id,
+                thumbnail: layers[0]?.src, 
+                layers: layers 
+            }
+        })
 
-    if (bgItem && fgItem) {
-        fgItem.backgroundSource = bgItem.source
-        normalized = normalized.filter(item => item !== bgItem)
-    }
+    const processedVideos = videos.map((filename, index) => ({
+        type: 'video',
+        id: `v_${index}`,
+        src: filename.startsWith('http') ? filename : `${GATEWAY_BASE}/mods/${modData.id}/assets/${filename}`,
+        thumbnail: processedGroups[0]?.thumbnail || standaloneImages[0]?.thumbnail, 
+        layers: []
+    }))
 
-    return normalized
+    return [...processedGroups, ...standaloneImages, ...processedVideos]
   }, [modData])
 
   const modStatus = getModStatus(id?.toString())
@@ -101,9 +140,9 @@ export default function ModDetailsPage() {
 
   if (isPageLoading) return (
     <div className="w-full h-full bg-[#09090b] flex items-center justify-center">
-      <div className="text-white/50 animate-pulse font-bold tracking-widest uppercase">
-        Verifying Mod Integrity...
-      </div>
+        <div className="flex flex-col items-center gap-4">
+             <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+        </div>
     </div>
   )
   
@@ -113,10 +152,11 @@ export default function ModDetailsPage() {
 
   return (
     <div className="w-full h-full bg-[#09090b] flex overflow-hidden animate-fade-in relative rounded-tl-3xl">
-      <div className="flex-1 flex flex-col h-full relative">
-        <ModMediaDisplay currentMedia={currentMedia} modThumbnail={modData.thumbnail} />
+      <div className="flex-1 flex flex-col h-full relative group/canvas bg-black">
+        <ModMediaDisplay currentMedia={currentMedia} />
+        
         {mediaList.length > 1 && (
-          <div className="absolute bottom-0 w-full">
+          <div className="absolute bottom-0 w-full z-50 bg-gradient-to-t from-black/90 to-transparent pt-10">
             <ModGalleryStrip 
               mediaItems={mediaList} 
               currentIndex={activeMediaIndex} 
@@ -126,7 +166,7 @@ export default function ModDetailsPage() {
         )}
       </div>
 
-      <div className="w-[400px] h-full bg-[#121214] border-l border-white/5 flex flex-col relative z-30 shrink-0">
+      <div className="w-[400px] h-full bg-[#121214] border-l border-white/5 flex flex-col relative z-30 shrink-0 shadow-2xl">
         <ModInfoPanel mod={modData} />
         <ModActionPanel 
           status={modStatus} 
