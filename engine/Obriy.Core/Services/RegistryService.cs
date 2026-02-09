@@ -3,76 +3,89 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
-using Obriy.Core.Models;
+using System.Threading.Tasks;
 
-namespace Obriy.Core.Services;
-
-public class RegistryService
+namespace Obriy.Core.Services
 {
-    private const string RegistryFileName = "installed_mods.json";
-    private readonly string _registryPath;
-    private List<InstalledMod> _installedMods;
-
-    public RegistryService()
+    public class RegistryService
     {
-        _registryPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, RegistryFileName);
-        LoadRegistry();
-    }
+        private const string RegistryFileName = "obriy_registry.json";
 
-    public void RegisterMod(InstallModRequest request)
-    {
-        var existingMod = _installedMods.FirstOrDefault(m => m.Name == request.ModName);
-        if (existingMod != null)
+        public async Task RegisterModAsync(string gameRootDirectory, string modId, List<string> installedFilePaths)
         {
-            _installedMods.Remove(existingMod);
+            var registry = await LoadRegistryAsync(gameRootDirectory);
+
+            // 1. Створюємо набір нових файлів для швидкого пошуку
+            var newFilesSet = new HashSet<string>(installedFilePaths, StringComparer.OrdinalIgnoreCase);
+
+            // 2. Вирішення конфліктів: проходимо по всіх інших модах
+            // Якщо інший мод володів файлом, який ми зараз ставимо -> забираємо файл у нього.
+            foreach (var mod in registry.Mods)
+            {
+                // Пропускаємо поточний мод (його ми перезапишемо повністю нижче)
+                if (mod.Id.Equals(modId, StringComparison.OrdinalIgnoreCase)) continue;
+
+                if (mod.Files != null && mod.Files.Count > 0)
+                {
+                    mod.Files.RemoveAll(file => newFilesSet.Contains(file));
+                }
+            }
+
+            // 3. Прибираємо моди, які стали "пустими" (не мають файлів) після конфлікту
+            // Але не чіпаємо поточний мод (modId), бо ми його зараз наповнимо
+            registry.Mods.RemoveAll(m => !m.Id.Equals(modId, StringComparison.OrdinalIgnoreCase) && (m.Files == null || m.Files.Count == 0));
+
+            // 4. Видаляємо старий запис про поточний мод (щоб оновити його)
+            var existingMod = registry.Mods.FirstOrDefault(m => m.Id.Equals(modId, StringComparison.OrdinalIgnoreCase));
+            if (existingMod != null)
+            {
+                registry.Mods.Remove(existingMod);
+            }
+
+            // 5. Додаємо новий запис (тільки якщо є файли)
+            if (installedFilePaths.Count > 0)
+            {
+                var newMod = new InstalledMod
+                {
+                    Id = modId,
+                    InstalledAt = DateTime.UtcNow,
+                    Files = installedFilePaths
+                };
+                registry.Mods.Add(newMod);
+            }
+
+            // 6. Зберігаємо (це перезапише файл без dlc_mods)
+            await SaveRegistryAsync(gameRootDirectory, registry);
         }
 
-        var newMod = new InstalledMod
+        public async Task<RegistryData> LoadRegistryAsync(string gameRootDirectory)
         {
-            Name = request.ModName,
-            InstalledAt = DateTime.UtcNow,
-            // Тепер поле Path доступне в ModOperation
-            Files = request.Instructions.Select(i => i.Path).Where(p => p != null).ToList()
-        };
+            var registryPath = Path.Combine(gameRootDirectory, RegistryFileName);
 
-        _installedMods.Add(newMod);
-        SaveRegistry();
-    }
+            if (!File.Exists(registryPath))
+            {
+                return new RegistryData();
+            }
 
-    public List<InstalledMod> GetInstalledMods()
-    {
-        return _installedMods;
-    }
-
-    private void LoadRegistry()
-    {
-        if (!File.Exists(_registryPath))
-        {
-            _installedMods = new List<InstalledMod>();
-            return;
+            try
+            {
+                var jsonContent = await File.ReadAllTextAsync(registryPath);
+                var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                // Навіть якщо у файлі є "dlc_mods", тут вони ігноруються і зникають з пам'яті
+                return JsonSerializer.Deserialize<RegistryData>(jsonContent, options) ?? new RegistryData();
+            }
+            catch
+            {
+                return new RegistryData();
+            }
         }
 
-        try
+        private async Task SaveRegistryAsync(string gameRootDirectory, RegistryData data)
         {
-            var json = File.ReadAllText(_registryPath);
-            _installedMods = JsonSerializer.Deserialize<List<InstalledMod>>(json) ?? new List<InstalledMod>();
-        }
-        catch
-        {
-            _installedMods = new List<InstalledMod>();
+            var registryPath = Path.Combine(gameRootDirectory, RegistryFileName);
+            // Записуємо тільки те, що є в класі RegistryData (тобто тільки Mods)
+            var jsonContent = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
+            await File.WriteAllTextAsync(registryPath, jsonContent);
         }
     }
-
-    private void SaveRegistry()
-    {
-        var json = JsonSerializer.Serialize(_installedMods, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(_registryPath, json);
-    }
-}
-
-public class InstalledMod
-{
-    public string Name { get; set; }
-    public DateTime InstalledAt { get; set; }
-    public List<string> Files { get; set; }
 }

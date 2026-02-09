@@ -48,17 +48,6 @@ export default class ModManagerService {
     return null
   }
 
-  async updateRegistry(gamePath, modId, installedFiles) {
-    const registryPath = path.join(gamePath, 'obriy_registry.json')
-    let registry = {};
-    try {
-      if (await fs.pathExists(registryPath)) registry = await fs.readJson(registryPath)
-    } catch (e) { console.error('Error reading registry', e) }
-    if (!registry.dlc_mods) registry.dlc_mods = {}
-    registry.dlc_mods[modId] = installedFiles || []
-    await fs.writeJson(registryPath, registry, { spaces: 2 })
-  }
-
   async ensureBackendReady() {
     return await this.core.executeCommand('ping', {})
   }
@@ -77,11 +66,18 @@ export default class ModManagerService {
     const registryPath = path.join(gameDirectoryPath, 'obriy_registry.json')
     try {
       if (!await fs.pathExists(registryPath)) return []
+      
       const registry = await fs.readJson(registryPath)
       const activeMods = new Set()
-      if (registry.dlc_mods) {
-        Object.keys(registry.dlc_mods).forEach(modId => activeMods.add(String(modId)))
+
+      if (registry.Mods && Array.isArray(registry.Mods)) {
+        registry.Mods.forEach(mod => {
+          if (mod.Id) {
+            activeMods.add(String(mod.Id))
+          }
+        })
       }
+
       return Array.from(activeMods)
     } catch (error) {
       return []
@@ -289,6 +285,7 @@ export default class ModManagerService {
 
       const installRequest = {
         GamePath: gameDirectoryPath,
+        Id: modificationId.toString(),
         ModName: modificationId.toString(),
         Instructions: instructions
       }
@@ -296,7 +293,6 @@ export default class ModManagerService {
       const backendExecutionResult = await this.core.executeCommand('install', installRequest)
 
       if (backendExecutionResult.status === 'success') {
-        await this.updateRegistry(gameDirectoryPath, modificationId, ["installed_auto"])
         const updatedMods = await this.getActiveMods(gameDirectoryPath)
         userInterfaceFeedbackChannel?.send('mods-updated', updatedMods)
       }

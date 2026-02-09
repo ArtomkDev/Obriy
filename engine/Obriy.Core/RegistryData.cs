@@ -1,12 +1,17 @@
-using System.Text.Json.Serialization;
+using System;
+using System.Collections.Generic;
 
-namespace Obriy.Core.Models;
-
-public class RegistryData
+namespace Obriy.Core
 {
-    [JsonPropertyName("file_replacements")]
-    public Dictionary<string, string> FileReplacements { get; set; } = new();
+    public class RegistryData
+    {
+        public List<InstalledMod> Mods { get; set; } = new List<InstalledMod>();
+    }
 
-    [JsonPropertyName("file_edits")]
-    public Dictionary<string, Dictionary<string, string>> FileEdits { get; set; } = new();
+    public class InstalledMod
+    {
+        public string Id { get; set; }
+        public DateTime InstalledAt { get; set; }
+        public List<string> Files { get; set; } = new List<string>();
+    }
 }
