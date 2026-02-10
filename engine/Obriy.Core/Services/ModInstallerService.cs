@@ -14,7 +14,6 @@ namespace Obriy.Core.Services
         private readonly RpfService _rpfService;
         private readonly RegistryService _registryService;
         private readonly Dictionary<string, IInstructionHandler> _handlers;
-        private readonly Dictionary<string, string> _knownTargets;
 
         private const string RegistryBasePath = @"update\x64\dlcpacks\patchday18ng\dlc.rpf";
 
@@ -23,21 +22,6 @@ namespace Obriy.Core.Services
             _rpfService = rpfService;
             _registryService = registryService;
             _handlers = handlers.ToDictionary(h => h.InstructionType);
-
-            _knownTargets = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                { "WEAPONS", @"x64\models\cdimages\weapons.rpf" },
-                { "MAPS", @"x64\levels\gta5\maps.rpf" },
-                { "PROPS", @"x64\levels\gta5\props.rpf" },
-                { "TEXTURES", @"x64\levels\gta5\textures.rpf" },
-                { "EFFECTS", @"x64\levels\gta5\effects.rpf" },
-                { "TRACERS", @"x64\levels\gta5\effects.rpf" },
-                { "MINIMAP", @"x64\levels\gta5\minimap.rpf" },
-                { "SCALEFORM_GENERIC", @"x64\data\cdimages\scaleform_generic.rpf" },
-                { "UI", @"x64\data\cdimages\scaleform_generic.rpf" },
-                { "GTA5_LEVELS", @"x64\levels\gta5" },
-                { "TUNE", @"x64\data\tune" }
-            };
         }
 
         public async Task<object> InstallModPackageAsync(InstallModRequest request)
@@ -63,49 +47,54 @@ namespace Obriy.Core.Services
             
             using var mainSession = _rpfService.OpenPatchday(request.GamePath);
 
-            var groupedInstructions = request.Instructions.GroupBy(i => i.Target?.ToUpper() ?? "ROOT");
+            var groupedInstructions = request.Instructions.GroupBy(i => ExtractInternalPath(i.Target));
 
             foreach (var group in groupedInstructions)
             {
-                var targetKey = group.Key;
+                var internalPathInsideDlc = group.Key;
                 RpfFile targetRpf = mainSession.RpfFile;
                 RpfFile innerRpf = null;
                 string tempInnerPath = null;
-                string innerPathInsideDlc = null;
                 bool isDirectoryTarget = false;
 
-                if (_knownTargets.TryGetValue(targetKey, out var knownPath))
+                if (string.IsNullOrEmpty(internalPathInsideDlc))
                 {
-                    innerPathInsideDlc = knownPath;
-                }
-                else if (targetKey.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase))
-                {
-                    innerPathInsideDlc = targetKey;
+                    internalPathInsideDlc = "ROOT";
                 }
 
-                if (!string.IsNullOrEmpty(innerPathInsideDlc))
+                if (internalPathInsideDlc != "ROOT")
                 {
-                    if (innerPathInsideDlc.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase))
+                    if (internalPathInsideDlc.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase))
                     {
                         try
                         {
-                            tempInnerPath = _rpfService.ExtractInnerRpf(mainSession.RpfFile, innerPathInsideDlc);
+                            // Спробуємо знайти існуючий архів
+                            tempInnerPath = _rpfService.ExtractInnerRpf(mainSession.RpfFile, internalPathInsideDlc);
                         }
                         catch (Exception ex)
                         {
-                            Console.Error.WriteLine($"[Warning] Failed to extract inner RPF {innerPathInsideDlc}: {ex.Message}");
+                            Console.Error.WriteLine($"[Warning] Failed to extract inner RPF {internalPathInsideDlc}: {ex.Message}");
                         }
 
                         if (tempInnerPath != null)
                         {
+                            // Існуючий архів
                             innerRpf = new RpfFile(tempInnerPath, Path.GetFileName(tempInnerPath));
                             innerRpf.ScanStructure(null, null);
                             targetRpf = innerRpf;
                         }
                         else
                         {
-                            Console.Error.WriteLine($"[Error] Target archive '{innerPathInsideDlc}' NOT FOUND. Skipping.");
-                            continue;
+                            // Архіву немає, створюємо новий через RpfService
+                            Console.Error.WriteLine($"[Installer] Target archive '{internalPathInsideDlc}' missing. Creating new RPF structure...");
+                            
+                            tempInnerPath = Path.GetTempFileName();
+                            // Видаляємо пустий файл, бо CreateNew створить його правильно
+                            try { File.Delete(tempInnerPath); } catch {} 
+                            
+                            // Створюємо валідний RPF файл на диску
+                            innerRpf = _rpfService.CreateNew(tempInnerPath);
+                            targetRpf = innerRpf;
                         }
                     }
                     else
@@ -115,6 +104,7 @@ namespace Obriy.Core.Services
                 }
 
                 bool groupChanges = false;
+
                 foreach (var instruction in group)
                 {
                     try
@@ -124,7 +114,7 @@ namespace Obriy.Core.Services
 
                         if (isDirectoryTarget)
                         {
-                            var fullInternalPath = Path.Combine(innerPathInsideDlc, fileName);
+                            var fullInternalPath = Path.Combine(internalPathInsideDlc, fileName);
                             var fileData = await File.ReadAllBytesAsync(instruction.Path);
                             
                             _rpfService.ReplaceInnerFile(mainSession.RpfFile, fullInternalPath, fileData);
@@ -139,12 +129,11 @@ namespace Obriy.Core.Services
                             {
                                 handler.Execute(instruction, targetRpf, request.GamePath);
                                 
-                                string containerPath = innerPathInsideDlc ?? "";
-                                
+                                string containerPath = internalPathInsideDlc == "ROOT" ? "" : internalPathInsideDlc;
                                 finalInternalPath = Path.Combine(RegistryBasePath, containerPath, fileName);
                                 
                                 groupChanges = true;
-                                Console.Error.WriteLine($"[Success] Installed: {fileName} -> {targetKey}");
+                                Console.Error.WriteLine($"[Success] Installed: {fileName} -> {internalPathInsideDlc}");
                             }
                             else
                             {
@@ -160,13 +149,29 @@ namespace Obriy.Core.Services
                     }
                 }
 
+                // Логіка збереження:
+                // Якщо це архів (innerRpf), і були зміни, ми маємо tempInnerPath (створений або витягнутий).
+                // Ми зберігаємо зміни (Defragment), читаємо файл і записуємо в батьківський dlc.rpf
                 if (!isDirectoryTarget && groupChanges && innerRpf != null && tempInnerPath != null)
                 {
+                    // Зберігаємо зміни у тимчасовий файл
                     _rpfService.Defragment(innerRpf);
+                    
+                    // Читаємо оновлений архів як байти
                     var newData = await File.ReadAllBytesAsync(tempInnerPath);
-                    _rpfService.ReplaceInnerFile(mainSession.RpfFile, innerPathInsideDlc, newData);
+                    
+                    // Записуємо в батьківський
+                    _rpfService.ReplaceInnerFile(mainSession.RpfFile, internalPathInsideDlc, newData);
+                    
                     globalChanges = true;
-                    try { innerRpf = null; File.Delete(tempInnerPath); } catch { }
+                    
+                    // Чистимо ресурси
+                    try 
+                    { 
+                        innerRpf = null; 
+                        File.Delete(tempInnerPath); 
+                    } 
+                    catch { }
                 }
                 else if (groupChanges)
                 {
@@ -185,9 +190,49 @@ namespace Obriy.Core.Services
             return new { status = "success", message = "Mod installed successfully", installedFiles = installedFilePaths };
         }
 
+        private string ExtractInternalPath(string rawTarget)
+        {
+            if (string.IsNullOrWhiteSpace(rawTarget)) return "ROOT";
+
+            var normalized = rawTarget.Replace("/", "\\").TrimEnd('\\');
+
+            int dlcIndex = normalized.IndexOf("dlc.rpf", StringComparison.OrdinalIgnoreCase);
+            if (dlcIndex >= 0)
+            {
+                var pathAfterDlc = normalized.Substring(dlcIndex + 7); 
+                return pathAfterDlc.TrimStart('\\');
+            }
+
+            int rpfIndex = normalized.IndexOf(".rpf", StringComparison.OrdinalIgnoreCase);
+            if (rpfIndex >= 0 && !normalized.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase))
+            {
+                 var pathAfterRpf = normalized.Substring(rpfIndex + 4);
+                 return pathAfterRpf.TrimStart('\\');
+            }
+            
+            string[] anchors = { @"x64\", @"common\", @"data\", @"levels\", @"update\" };
+            foreach (var anchor in anchors)
+            {
+                int index = normalized.IndexOf(anchor, StringComparison.OrdinalIgnoreCase);
+                if (index >= 0)
+                {
+                    return normalized.Substring(index);
+                }
+            }
+            
+            if (normalized.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase) && !normalized.Contains("\\"))
+            {
+                return normalized; 
+            }
+
+            return normalized;
+        }
+
         public async Task<object> UninstallModPackageAsync(InstallModRequest request)
         {
-            if (request == null || string.IsNullOrEmpty(request.GamePath) || string.IsNullOrEmpty(request.Id))
+            // (Цей метод залишається без змін, як в попередній версії)
+            // ...
+             if (request == null || string.IsNullOrEmpty(request.GamePath) || string.IsNullOrEmpty(request.Id))
             {
                 return new { status = "error", message = "Invalid uninstall request" };
             }
@@ -207,37 +252,25 @@ namespace Obriy.Core.Services
             bool globalChanges = false;
             using var mainSession = _rpfService.OpenPatchday(request.GamePath);
 
-            // Групуємо файли за папками всередині dlc.rpf, щоб не відкривати архіви по 100 разів
-            // Шляхи в реєстрі: update\x64\dlcpacks\patchday18ng\dlc.rpf\x64\models\cdimages\weapons.rpf\file.ytd
-            // RegistryBasePath: update\x64\dlcpacks\patchday18ng\dlc.rpf
-            
-            // Нам треба відрізати BasePath, щоб отримати шлях всередині dlc.rpf
-            // Наприклад: x64\models\cdimages\weapons.rpf\file.ytd
-
             var filesToDelete = new List<string>();
 
             foreach(var fullPath in mod.Files)
             {
                 if (fullPath.StartsWith(RegistryBasePath, StringComparison.OrdinalIgnoreCase))
                 {
-                    // Отримуємо відносний шлях: x64\models\cdimages\weapons.rpf\file.ytd
                     var relativePath = fullPath.Substring(RegistryBasePath.Length).TrimStart(Path.DirectorySeparatorChar);
                     filesToDelete.Add(relativePath);
                 }
             }
 
-            // Групуємо по контейнерам (архівам)
-            // Ключ: x64\models\cdimages\weapons.rpf, Значення: [file.ytd, file2.ytd]
-            
             var groups = filesToDelete.GroupBy(path => 
             {
                 if (path.Contains(".rpf", StringComparison.OrdinalIgnoreCase))
                 {
-                     // Знаходимо індекс .rpf
                      var index = path.IndexOf(".rpf", StringComparison.OrdinalIgnoreCase);
-                     return path.Substring(0, index + 4); // Повертаємо шлях до архіву
+                     return path.Substring(0, index + 4); 
                 }
-                return "ROOT"; // Файл лежить прямо в dlc.rpf (або в папці, але не в архіві)
+                return "ROOT"; 
             });
 
             foreach (var group in groups)
@@ -257,7 +290,6 @@ namespace Obriy.Core.Services
                 }
                 else
                 {
-                    // Це внутрішній архів (weapons.rpf)
                     string tempInnerPath = null;
                     try 
                     {
@@ -273,10 +305,6 @@ namespace Obriy.Core.Services
 
                         foreach (var file in group)
                         {
-                            // file = x64\models\cdimages\weapons.rpf\subfolder\item.ytd
-                            // containerPath = x64\models\cdimages\weapons.rpf
-                            // innerRelative = subfolder\item.ytd
-                            
                             var innerRelative = file.Substring(containerPath.Length).TrimStart(Path.DirectorySeparatorChar);
                             
                             if (_rpfService.DeleteInnerFile(innerRpf, innerRelative))
@@ -304,13 +332,11 @@ namespace Obriy.Core.Services
                 Console.Error.WriteLine("[Uninstall] Saving changes to dlc.rpf...");
                 _rpfService.Defragment(mainSession.RpfFile);
                 
-                // КРИТИЧНО: Видаляємо з реєстру ТІЛЬКИ після успішного збереження файлів
                 await _registryService.UnregisterModAsync(request.GamePath, request.Id);
                 return new { status = "success", message = "Mod uninstalled and registry updated" };
             }
             else
             {
-                // Якщо файлів не знайшли (можливо вже видалені), все одно чистимо реєстр
                 await _registryService.UnregisterModAsync(request.GamePath, request.Id);
                 return new { status = "success", message = "Mod cleaned from registry (files not found)" };
             }

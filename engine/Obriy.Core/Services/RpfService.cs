@@ -10,6 +10,10 @@ namespace Obriy.Core.Services
     {
         private const string TargetRpfPath = @"update\x64\dlcpacks\patchday18ng\dlc.rpf";
 
+        public RpfService()
+        {
+        }
+
         public void InitializeGameKeys()
         {
             var keysPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "keys");
@@ -30,12 +34,31 @@ namespace Obriy.Core.Services
             return new RpfSessionWrapper(rpf, fullPath);
         }
 
+        public RpfFile CreateNew(string fullPath)
+        {
+            var dir = Path.GetDirectoryName(fullPath);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+
+            // Використовуємо статичний метод RpfFile.CreateNew
+            // Він створює файл на диску, записує заголовок і повертає екземпляр RpfFile
+            return RpfFile.CreateNew(dir, Path.GetFileName(fullPath), RpfEncryption.OPEN);
+        }
+
         public string ExtractInnerRpf(RpfFile rootRpf, string internalPath)
         {
             var entry = FindEntry(rootRpf, internalPath);
-            if (entry is RpfFileEntry fileEntry)
+            var fileEntry = entry as RpfFileEntry;
+
+            if (fileEntry != null)
             {
+                // ВИПРАВЛЕННЯ: Використовуємо ExtractFile замість GetFileEntryBytes
                 var data = rootRpf.ExtractFile(fileEntry);
+                
+                if (data == null) return null;
+
                 var tempFile = Path.GetTempFileName();
                 File.WriteAllBytes(tempFile, data);
                 return tempFile;
@@ -45,16 +68,11 @@ namespace Obriy.Core.Services
 
         public void ReplaceInnerFile(RpfFile rootRpf, string internalPath, byte[] newData)
         {
-            var entry = FindEntry(rootRpf, internalPath);
-            if (entry != null)
-            {
-                RpfFile.DeleteEntry(entry);
-            }
-
             var dirPath = Path.GetDirectoryName(internalPath);
             var fileName = Path.GetFileName(internalPath);
             
             var parentDir = EnsureDirectory(rootRpf, dirPath); 
+            
             if (parentDir != null)
             {
                 RpfFile.CreateFile(parentDir, fileName, newData, true);
@@ -114,7 +132,7 @@ namespace Obriy.Core.Services
                 }
                 
                 var entry = currentDir.Directories.FirstOrDefault(d => d.Name.Equals(part, StringComparison.OrdinalIgnoreCase)) as RpfEntry 
-                         ?? currentDir.Files.FirstOrDefault(f => f.Name.Equals(part, StringComparison.OrdinalIgnoreCase));
+                          ?? currentDir.Files.FirstOrDefault(f => f.Name.Equals(part, StringComparison.OrdinalIgnoreCase));
                 
                 return entry;
             }
