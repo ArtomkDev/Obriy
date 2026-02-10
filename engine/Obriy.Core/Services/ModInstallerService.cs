@@ -16,7 +16,6 @@ namespace Obriy.Core.Services
         private readonly Dictionary<string, IInstructionHandler> _handlers;
         private readonly Dictionary<string, string> _knownTargets;
 
-        // ОНОВЛЕНО: Фіксований базовий шлях для запису в реєстр
         private const string RegistryBasePath = @"update\x64\dlcpacks\patchday18ng\dlc.rpf";
 
         public ModInstallerService(RpfService rpfService, RegistryService registryService, IEnumerable<IInstructionHandler> handlers)
@@ -63,8 +62,6 @@ namespace Obriy.Core.Services
             bool globalChanges = false;
             
             using var mainSession = _rpfService.OpenPatchday(request.GamePath);
-            // ВИДАЛЕНО: Path.GetRelativePath, який давав "..\.."
-            // Тепер ми використовуємо RegistryBasePath
 
             var groupedInstructions = request.Instructions.GroupBy(i => i.Target?.ToUpper() ?? "ROOT");
 
@@ -132,7 +129,6 @@ namespace Obriy.Core.Services
                             
                             _rpfService.ReplaceInnerFile(mainSession.RpfFile, fullInternalPath, fileData);
                             
-                            // ФОРМУВАННЯ ПРАВИЛЬНОГО ШЛЯХУ ДЛЯ РЕЄСТРУ
                             finalInternalPath = Path.Combine(RegistryBasePath, fullInternalPath);
                             groupChanges = true;
                             Console.Error.WriteLine($"[Success] Installed (Direct): {fileName} -> {fullInternalPath}");
@@ -145,7 +141,6 @@ namespace Obriy.Core.Services
                                 
                                 string containerPath = innerPathInsideDlc ?? "";
                                 
-                                // ФОРМУВАННЯ ПРАВИЛЬНОГО ШЛЯХУ ДЛЯ РЕЄСТРУ
                                 finalInternalPath = Path.Combine(RegistryBasePath, containerPath, fileName);
                                 
                                 groupChanges = true;
@@ -188,6 +183,137 @@ namespace Obriy.Core.Services
             await _registryService.RegisterModAsync(request.GamePath, targetModId, installedFilePaths);
 
             return new { status = "success", message = "Mod installed successfully", installedFiles = installedFilePaths };
+        }
+
+        public async Task<object> UninstallModPackageAsync(InstallModRequest request)
+        {
+            if (request == null || string.IsNullOrEmpty(request.GamePath) || string.IsNullOrEmpty(request.Id))
+            {
+                return new { status = "error", message = "Invalid uninstall request" };
+            }
+
+            var registry = await _registryService.LoadRegistryAsync(request.GamePath);
+            var mod = registry.Mods.FirstOrDefault(m => m.Id.Equals(request.Id, StringComparison.OrdinalIgnoreCase));
+
+            if (mod == null || mod.Files.Count == 0)
+            {
+                 Console.Error.WriteLine($"[Uninstall] Mod {request.Id} not found in registry or has no files.");
+                 await _registryService.UnregisterModAsync(request.GamePath, request.Id);
+                 return new { status = "success", message = "Mod removed from registry (no files were active)" };
+            }
+
+            Console.Error.WriteLine($"[Uninstall] Removing {mod.Files.Count} files for mod {request.Id}...");
+
+            bool globalChanges = false;
+            using var mainSession = _rpfService.OpenPatchday(request.GamePath);
+
+            // Групуємо файли за папками всередині dlc.rpf, щоб не відкривати архіви по 100 разів
+            // Шляхи в реєстрі: update\x64\dlcpacks\patchday18ng\dlc.rpf\x64\models\cdimages\weapons.rpf\file.ytd
+            // RegistryBasePath: update\x64\dlcpacks\patchday18ng\dlc.rpf
+            
+            // Нам треба відрізати BasePath, щоб отримати шлях всередині dlc.rpf
+            // Наприклад: x64\models\cdimages\weapons.rpf\file.ytd
+
+            var filesToDelete = new List<string>();
+
+            foreach(var fullPath in mod.Files)
+            {
+                if (fullPath.StartsWith(RegistryBasePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Отримуємо відносний шлях: x64\models\cdimages\weapons.rpf\file.ytd
+                    var relativePath = fullPath.Substring(RegistryBasePath.Length).TrimStart(Path.DirectorySeparatorChar);
+                    filesToDelete.Add(relativePath);
+                }
+            }
+
+            // Групуємо по контейнерам (архівам)
+            // Ключ: x64\models\cdimages\weapons.rpf, Значення: [file.ytd, file2.ytd]
+            
+            var groups = filesToDelete.GroupBy(path => 
+            {
+                if (path.Contains(".rpf", StringComparison.OrdinalIgnoreCase))
+                {
+                     // Знаходимо індекс .rpf
+                     var index = path.IndexOf(".rpf", StringComparison.OrdinalIgnoreCase);
+                     return path.Substring(0, index + 4); // Повертаємо шлях до архіву
+                }
+                return "ROOT"; // Файл лежить прямо в dlc.rpf (або в папці, але не в архіві)
+            });
+
+            foreach (var group in groups)
+            {
+                var containerPath = group.Key;
+                
+                if (containerPath == "ROOT")
+                {
+                    foreach (var file in group)
+                    {
+                        if (_rpfService.DeleteInnerFile(mainSession.RpfFile, file))
+                        {
+                            Console.Error.WriteLine($"[Uninstall] Deleted: {file}");
+                            globalChanges = true;
+                        }
+                    }
+                }
+                else
+                {
+                    // Це внутрішній архів (weapons.rpf)
+                    string tempInnerPath = null;
+                    try 
+                    {
+                        tempInnerPath = _rpfService.ExtractInnerRpf(mainSession.RpfFile, containerPath);
+                    } 
+                    catch { continue; }
+
+                    if (tempInnerPath != null)
+                    {
+                        var innerRpf = new RpfFile(tempInnerPath, Path.GetFileName(tempInnerPath));
+                        innerRpf.ScanStructure(null, null);
+                        bool innerChanges = false;
+
+                        foreach (var file in group)
+                        {
+                            // file = x64\models\cdimages\weapons.rpf\subfolder\item.ytd
+                            // containerPath = x64\models\cdimages\weapons.rpf
+                            // innerRelative = subfolder\item.ytd
+                            
+                            var innerRelative = file.Substring(containerPath.Length).TrimStart(Path.DirectorySeparatorChar);
+                            
+                            if (_rpfService.DeleteInnerFile(innerRpf, innerRelative))
+                            {
+                                 Console.Error.WriteLine($"[Uninstall] Deleted from {Path.GetFileName(containerPath)}: {innerRelative}");
+                                 innerChanges = true;
+                            }
+                        }
+
+                        if (innerChanges)
+                        {
+                            _rpfService.Defragment(innerRpf);
+                            var newData = await File.ReadAllBytesAsync(tempInnerPath);
+                            _rpfService.ReplaceInnerFile(mainSession.RpfFile, containerPath, newData);
+                            globalChanges = true;
+                        }
+                        
+                        try { innerRpf = null; File.Delete(tempInnerPath); } catch {}
+                    }
+                }
+            }
+
+            if (globalChanges)
+            {
+                Console.Error.WriteLine("[Uninstall] Saving changes to dlc.rpf...");
+                _rpfService.Defragment(mainSession.RpfFile);
+                
+                // КРИТИЧНО: Видаляємо з реєстру ТІЛЬКИ після успішного збереження файлів
+                await _registryService.UnregisterModAsync(request.GamePath, request.Id);
+                return new { status = "success", message = "Mod uninstalled and registry updated" };
+            }
+            else
+            {
+                // Якщо файлів не знайшли (можливо вже видалені), все одно чистимо реєстр
+                await _registryService.UnregisterModAsync(request.GamePath, request.Id);
+                return new { status = "success", message = "Mod cleaned from registry (files not found)" };
+            }
         }
     }
 }

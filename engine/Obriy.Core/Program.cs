@@ -18,7 +18,6 @@ namespace Obriy.Core
             ConfigureServices(services);
             var provider = services.BuildServiceProvider();
 
-            // Глобальна ініціалізація ключів перед виконанням будь-яких команд
             provider.GetRequiredService<RpfService>().InitializeGameKeys();
 
             var jsonOptions = new JsonSerializerOptions 
@@ -53,6 +52,11 @@ namespace Obriy.Core
                     case "install":
                         var installRequest = JsonSerializer.Deserialize<InstallModRequest>(request.Payload.ToString(), jsonOptions);
                         response = await provider.GetRequiredService<ModInstallerService>().InstallModPackageAsync(installRequest);
+                        break;
+
+                    case "uninstall":
+                        var uninstallRequest = JsonSerializer.Deserialize<InstallModRequest>(request.Payload.ToString(), jsonOptions);
+                        response = await provider.GetRequiredService<ModInstallerService>().UninstallModPackageAsync(uninstallRequest);
                         break;
 
                     case "setup":

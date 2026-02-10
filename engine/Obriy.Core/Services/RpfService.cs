@@ -61,6 +61,17 @@ namespace Obriy.Core.Services
             }
         }
 
+        public bool DeleteInnerFile(RpfFile rootRpf, string internalPath)
+        {
+            var entry = FindEntry(rootRpf, internalPath);
+            if (entry != null)
+            {
+                RpfFile.DeleteEntry(entry);
+                return true;
+            }
+            return false;
+        }
+
         public RpfDirectoryEntry EnsureDirectory(RpfFile rpf, string path)
         {
             if (string.IsNullOrEmpty(path)) return rpf.Root;

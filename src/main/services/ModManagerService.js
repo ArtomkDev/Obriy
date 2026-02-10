@@ -310,6 +310,31 @@ export default class ModManagerService {
   }
 
   async uninstallMod(modificationId, gameDirectoryPath) {
-    return { status: 'success' }
+    const userInterfaceFeedbackChannel = BrowserWindow.getAllWindows()[0]?.webContents
+
+    try {
+        userInterfaceFeedbackChannel?.send('installation-progress', { type: 'install', value: 10 }) // reusing install progress for simplicity
+
+        const uninstallRequest = {
+            GamePath: gameDirectoryPath,
+            Id: modificationId.toString()
+        }
+
+        const backendExecutionResult = await this.core.executeCommand('uninstall', uninstallRequest)
+
+        if (backendExecutionResult.status === 'success') {
+            const updatedMods = await this.getActiveMods(gameDirectoryPath)
+            userInterfaceFeedbackChannel?.send('mods-updated', updatedMods)
+        } else {
+             console.error('[ModManager] Uninstall failed:', backendExecutionResult.message)
+        }
+        
+        userInterfaceFeedbackChannel?.send('installation-progress', { type: 'install', value: 100 })
+        return backendExecutionResult
+
+    } catch (error) {
+        console.error(error)
+        return { status: 'error', message: error.message }
+    }
   }
 }
