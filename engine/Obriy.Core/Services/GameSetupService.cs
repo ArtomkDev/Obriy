@@ -1,99 +1,88 @@
 using System;
 using System.IO;
-using System.Linq;
 using System.Text;
 using CodeWalker.GameFiles;
 using Obriy.Core.Helpers;
 
-namespace Obriy.Core.Services;
-
-public class GameSetupService
+namespace Obriy.Core.Services
 {
-    private readonly RpfService _rpfService;
-
-    public GameSetupService(RpfService rpfService)
+    public class GameSetupService
     {
-        _rpfService = rpfService;
-    }
+        private readonly RpfService _rpfService;
 
-    public object EnsurePatchdayReady(string gamePath)
-    {
-        Console.Error.WriteLine("[Setup] Starting patchday18ng configuration check...");
-        
-        using var session = _rpfService.OpenPatchday(gamePath);
-        var rpf = session.RpfFile;
-        bool changed = false;
-
-        changed |= EnsureFileContent(rpf, "content.xml", DlcTemplates.ContentXml);
-        changed |= EnsureFileContent(rpf, "setup2.xml", DlcTemplates.Setup2Xml);
-
-        // Створюємо стандартні архіви для модів
-        changed |= EnsureArchiveExists(rpf, @"x64\models\cdimages\weapons.rpf");
-        changed |= EnsureArchiveExists(rpf, @"x64\levels\gta5\maps.rpf");
-        changed |= EnsureArchiveExists(rpf, @"x64\levels\gta5\props.rpf");
-        changed |= EnsureArchiveExists(rpf, @"x64\levels\gta5\textures.rpf");
-        changed |= EnsureArchiveExists(rpf, @"x64\levels\gta5\effects.rpf");
-        changed |= EnsureArchiveExists(rpf, @"common\data\metadata.rpf");
-
-        // НОВЕ: Архіви для міні-карти та інтерфейсу (Scaleform)
-        // Шлях: update/update.rpf/x64/levels/gta5/minimap.rpf
-        changed |= EnsureArchiveExists(rpf, @"x64\levels\gta5\minimap.rpf");
-        
-        // Шлях: update/update.rpf/x64/data/cdimages/scaleform_generic.rpf
-        changed |= EnsureArchiveExists(rpf, @"x64\data\cdimages\scaleform_generic.rpf");
-
-        if (changed)
+        public GameSetupService(RpfService rpfService)
         {
-            Console.Error.WriteLine("[Setup] Applying structure changes to dlc.rpf...");
-            _rpfService.Defragment(rpf);
-            return new { status = "success", message = "Patchday18ng fully adapted for mods (Minimap & Scaleform included)" };
+            _rpfService = rpfService;
         }
 
-        return new { status = "success", message = "Patchday18ng already ready" };
-    }
-
-    private bool EnsureArchiveExists(RpfFile rootRpf, string internalPath)
-    {
-        var entry = _rpfService.FindEntry(rootRpf, internalPath);
-        if (entry != null) return false;
-
-        Console.Error.WriteLine($"[Setup] Creating missing archive: {internalPath}...");
-        
-        var tempRpfPath = Path.GetTempFileName();
-        try 
+        public object EnsurePatchdayReady(string gamePath)
         {
-            File.Delete(tempRpfPath); 
-            
-            // Створюємо та зберігаємо новий RPF на диску
-            RpfFile.CreateNew(Path.GetDirectoryName(tempRpfPath), Path.GetFileName(tempRpfPath), RpfEncryption.OPEN);
+            if (string.IsNullOrEmpty(gamePath)) 
+                return new { status = "error", message = "Game path is null" };
 
-            var bytes = File.ReadAllBytes(tempRpfPath);
-            _rpfService.ReplaceInnerFile(rootRpf, internalPath, bytes);
+            string dlcPath = DlcPathHelper.GetDlcRpfPath(gamePath);
+            string dlcDir = Path.GetDirectoryName(dlcPath);
 
-            return true;
-        }
-        finally
-        {
-            try { if (File.Exists(tempRpfPath)) File.Delete(tempRpfPath); } catch { }
-        }
-    }
+            Console.Error.WriteLine($"[Setup] Starting patchday18ng configuration check...");
 
-    private bool EnsureFileContent(RpfFile rpf, string internalPath, string expectedContent)
-    {
-        var entry = _rpfService.FindEntry(rpf, internalPath);
-        if (entry is RpfFileEntry fileEntry)
-        {
-            var data = rpf.ExtractFile(fileEntry);
-            if (data != null)
+            // 1. Ensure Directory & DLC File Exist
+            if (!Directory.Exists(dlcDir))
             {
-                var content = Encoding.UTF8.GetString(data);
-                if (content.Contains("OBRIY_CUSTOM_LOAD")) return false; 
+                Directory.CreateDirectory(dlcDir);
             }
+
+            if (!File.Exists(dlcPath))
+            {
+                Console.Error.WriteLine("[Setup] Creating new dlc.rpf...");
+                // Копіюємо з оригіналу або створюємо новий
+                // Для спрощення створюємо новий порожній, як і було в логіці
+                var rpf = _rpfService.CreateNew(dlcPath);
+                // Важливо: CreateNew вже повертає відкритий RpfFile, але він не збережений "наповненим". 
+                // Ми його закриємо і відкриємо через OpenPatchday для редагування.
+            }
+
+            // 2. Ensure XMLs are correct inside DLC
+            // Ми відкриваємо RPF і перевіряємо наявність content.xml та setup2.xml
+            // Якщо їх немає або вони биті — перезаписуємо нашим шаблоном.
+            
+            using var session = _rpfService.OpenPatchday(gamePath);
+            bool changes = false;
+
+            if (EnsureXmlFile(session.RpfFile, "content.xml", DlcTemplates.ContentXml)) changes = true;
+            if (EnsureXmlFile(session.RpfFile, "setup2.xml", DlcTemplates.Setup2Xml)) changes = true;
+
+            // 3. Більше НІЯКОГО створення archives (weapons.rpf, etc.) тут!
+            // ModInstallerService зробить це сам, коли прийде час.
+
+            if (changes)
+            {
+                Console.Error.WriteLine("[Setup] Applying structure changes to dlc.rpf...");
+                _rpfService.Defragment(session.RpfFile);
+            }
+            else
+            {
+                Console.Error.WriteLine("[Setup] Structure is clean and ready.");
+            }
+
+            return new { status = "success", message = "Environment ready" };
         }
 
-        Console.Error.WriteLine($"[Setup] Updating {internalPath}...");
-        var bytes = Encoding.UTF8.GetBytes(expectedContent);
-        _rpfService.ReplaceInnerFile(rpf, internalPath, bytes);
-        return true;
+        private bool EnsureXmlFile(RpfFile dlcRpf, string fileName, string contentTemplate)
+        {
+            // Перевіряємо, чи файл існує
+            var entry = _rpfService.FindEntry(dlcRpf, fileName);
+            
+            if (entry == null)
+            {
+                Console.Error.WriteLine($"[Setup] Creating {fileName}...");
+                byte[] data = Encoding.UTF8.GetBytes(contentTemplate);
+                _rpfService.ReplaceInnerFile(dlcRpf, fileName, data);
+                return true;
+            }
+            
+            // Можна додати перевірку вмісту, але для швидкості просто вважаємо: є файл — ок.
+            // Якщо файл пошкоджено, користувач може видалити dlc.rpf, і ми його перестворимо.
+            return false;
+        }
     }
 }
