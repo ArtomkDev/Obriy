@@ -36,7 +36,7 @@ module.exports = async function packageMod(modId) {
 
     return new Promise((resolve, reject) => {
         const output = fs.createWriteStream(outputPath);
-        const archive = archiver('zip', { zlib: { level: 9 } });
+        const archive = archiver('zip', { zlib: { level: 1 } });
 
         output.on('close', () => {
             const size = archive.pointer();

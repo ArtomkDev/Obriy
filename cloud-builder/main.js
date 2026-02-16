@@ -10,9 +10,8 @@ const processAssets = require('./modules/3-assets');
 const updateCatalog = require('./modules/4-catalog');
 const uploadToCloud = require('./modules/5-upload');
 
-// Аргументи: node main.js 21 --upload АБО node main.js all --upload
 const args = process.argv.slice(2);
-const commandInput = args[0]; // '21' або 'all'
+const commandInput = args[0];
 const shouldUpload = args.includes('--upload');
 
 if (!commandInput || commandInput.startsWith('--')) {
@@ -20,13 +19,11 @@ if (!commandInput || commandInput.startsWith('--')) {
     process.exit(1);
 }
 
-// --- ФУНКЦІЯ БІЛДУ ОДНОГО МОДА ---
 async function buildSingleMod(modId) {
     console.log(`\n🚀 STARTING BUILD FOR MOD ID: ${modId}`.bgBlue.white);
     const startTime = Date.now();
 
     try {
-        // Шляхи до конкретного мода
         const modSourcePath = path.join(config.paths.modsSource, modId);
         const modDistPath = path.join(config.paths.modsDist, modId);
         const manifestPath = path.join(modSourcePath, 'manifest.json');
@@ -35,26 +32,17 @@ async function buildSingleMod(modId) {
             throw new Error(`Mod manifest not found at: ${manifestPath}`);
         }
 
-        // --- PIPELINE (ВИПРАВЛЕНО ПОРЯДОК) ---
-
-        // 1. Ассети (Спочатку обробляємо медіа, щоб отримати список файлів)
-        // Повертає масив, наприклад: ['1.mp4', '2.mp4', '3.webp']
         const mediaList = await processAssets({
             inputDir: modSourcePath,
             outputDir: modDistPath
         });
 
-        // 2. Маніфест (Передаємо отриманий mediaList, щоб записати його в JSON)
-        const cloudManifest = await buildManifest(modId, config, mediaList);
+        const zipSize = await packageMod(modId, config);
 
-        // 3. Упаковка (ZIP)
-        await packageMod(modId, config);
+        const cloudManifest = await buildManifest(modId, config, mediaList, zipSize);
 
-        // 4. Каталог (Індекс)
-        // Використовує cloudManifest, в якому вже є правильний 'img' (обкладинка) з mediaList
         await updateCatalog(cloudManifest, config);
 
-        // 5. Завантаження (Тільки якщо є прапорець --upload)
         if (shouldUpload) {
             console.log('📦 Deployment requested...'.magenta);
             await uploadToCloud(modId, config);
@@ -64,21 +52,18 @@ async function buildSingleMod(modId) {
 
         const duration = ((Date.now() - startTime) / 1000).toFixed(2);
         console.log(`✅ SUCCESS! Mod ${modId} finished in ${duration}s`.green.bold);
-        return true; // Успіх
+        return true;
 
     } catch (error) {
         console.error(`❌ FAILED Mod ${modId}:`.red.bold);
         console.error(error.message);
-        return false; // Помилка
+        return false;
     }
 }
 
-// --- ГОЛОВНА ЛОГІКА ---
 (async () => {
-    // ВАРІАНТ 1: БІЛД ВСІХ МОДІВ
     if (commandInput === 'all') {
         try {
-            // 1. Скануємо папку mods, шукаємо підпапки
             const allItems = await fs.readdir(config.paths.modsSource);
             const modIds = [];
 
@@ -86,7 +71,6 @@ async function buildSingleMod(modId) {
                 const fullPath = path.join(config.paths.modsSource, item);
                 const stat = await fs.stat(fullPath);
                 
-                // Перевіряємо, чи це папка і чи є там manifest.json
                 if (stat.isDirectory() && fs.existsSync(path.join(fullPath, 'manifest.json'))) {
                     modIds.push(item);
                 }
@@ -101,7 +85,6 @@ async function buildSingleMod(modId) {
             console.log(modIds.join(', ').gray);
             if (shouldUpload) console.log('☁️  UPLOAD ENABLED for all mods!'.yellow.bold);
 
-            // 2. Питаємо підтвердження
             const rl = readline.createInterface({
                 input: process.stdin,
                 output: process.stdout
@@ -117,7 +100,6 @@ async function buildSingleMod(modId) {
                 process.exit(0);
             }
 
-            // 3. Запускаємо білд по черзі
             console.log('\n🏁 Starting Batch Build...'.green);
             let successCount = 0;
             let failCount = 0;
@@ -133,10 +115,7 @@ async function buildSingleMod(modId) {
         } catch (err) {
             console.error('Global Error:'.red, err);
         }
-    } 
-    
-    // ВАРІАНТ 2: БІЛД ОДНОГО МОДА
-    else {
+    } else {
         await buildSingleMod(commandInput);
     }
 })();

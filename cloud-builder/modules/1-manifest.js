@@ -161,7 +161,7 @@ async function generateBlockEdits(vContent, mContent) {
     return edits;
 }
 
-module.exports = async function buildManifest(modId, config, mediaList = []) {
+module.exports = async function buildManifest(modId, config, mediaList = [], downloadSize = 0) {
     console.log(`[Manifest] Building separated manifest for ${modId}...`.cyan);
 
     const modSourceDir = path.join(config.paths.modsSource, modId);
@@ -217,12 +217,31 @@ module.exports = async function buildManifest(modId, config, mediaList = []) {
         }
     }
 
+    async function getDirectorySize(dirPath) {
+        let totalSize = 0;
+        const items = await fs.readdir(dirPath);
+        for (const item of items) {
+            const fullPath = path.join(dirPath, item);
+            const stat = await fs.stat(fullPath);
+            if (stat.isDirectory()) {
+                // Якщо це папка, рекурсивно заходимо в неї
+                totalSize += await getDirectorySize(fullPath);
+            } else {
+                // Якщо це файл, додаємо його розмір
+                totalSize += stat.size;
+            }
+        }
+        return totalSize;
+    }
+
     let totalInstallSize = 0;
     let hasPayloadFiles = false;
     if (await fs.pathExists(modFilesDir)) {
         const files = await fs.readdir(modFilesDir);
-        if (files.length > 0) hasPayloadFiles = true;
-        for (const f of files) totalInstallSize += (await fs.stat(path.join(modFilesDir, f))).size;
+        if (files.length > 0) {
+            hasPayloadFiles = true;
+            totalInstallSize = await getDirectorySize(modFilesDir);
+        }
     }
 
     const outputDir = path.join(config.paths.modsDist, modId);
@@ -244,6 +263,7 @@ module.exports = async function buildManifest(modId, config, mediaList = []) {
         is_premium: sourceManifest.is_premium || false,
         releaseDate: new Date().toISOString(),
         installSize: totalInstallSize,
+        downloadSize: downloadSize,
         media: mediaList,
         hasPayload: hasPayloadFiles,
         author: sourceManifest.author || "Obriy"

@@ -160,52 +160,59 @@ namespace Obriy.Core.Services
         {
             if (string.IsNullOrWhiteSpace(rawTarget)) return "ROOT";
             var normalized = rawTarget.Replace("/", "\\").TrimEnd('\\');
-
-            // 1. Спеціальні архіви - повертаємо як є, але з правильним шляхом
-            if (normalized.Equals("weapons.rpf", StringComparison.OrdinalIgnoreCase)) return @"x64\models\cdimages\weapons.rpf";
-
-            // 2. ВАЖЛИВО: Перехоплення глибоких шляхів мапи (Deep Map Override)
-            if (IsDeepMapArchive(normalized))
+        
+            // 1. Спеціальний хардкод для зброї (залишаємо, бо це стандартна структура)
+            if (normalized.Equals("weapons.rpf", StringComparison.OrdinalIgnoreCase) || 
+                normalized.EndsWith("\\weapons.rpf", StringComparison.OrdinalIgnoreCase)) 
             {
-                Console.Error.WriteLine($"[Info] Redirecting assets from '{Path.GetFileName(normalized)}' to 'x64\\levels\\gta5\\maps.rpf'");
-                return @"x64\levels\gta5\maps.rpf";
+                return @"x64\models\cdimages\weapons.rpf";
             }
-
-            string cleanPath = normalized;
+        
+            // 2. Витягуємо ім'я ЦІЛЬОВОГО архіву (наприклад: dt1_09.rpf або bh1_01.rpf)
+            string targetRpfName = "";
+            int rpfIndex = normalized.IndexOf(".rpf", StringComparison.OrdinalIgnoreCase);
             
+            if (rpfIndex >= 0)
+            {
+                // Шукаємо останній .rpf у шляху (бо може бути "x64i.rpf\...\dt1_09.rpf")
+                int lastRpfIndex = normalized.LastIndexOf(".rpf", StringComparison.OrdinalIgnoreCase);
+                int slashBeforeRpf = normalized.LastIndexOf('\\', lastRpfIndex);
+                
+                if (slashBeforeRpf >= 0)
+                {
+                    // Витягуємо від останнього слеша до .rpf
+                    targetRpfName = normalized.Substring(slashBeforeRpf + 1, (lastRpfIndex + 4) - (slashBeforeRpf + 1));
+                }
+                else
+                {
+                    // Якщо слешів немає, беремо з початку
+                    targetRpfName = normalized.Substring(0, lastRpfIndex + 4);
+                }
+            }
+        
+            // 3. Формуємо правильний шлях всередині нашого dlc.rpf
+            // Якщо це карта або транспорт (шлях містить levels\gta5)
+            if (normalized.IndexOf("levels\\gta5", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                if (!string.IsNullOrEmpty(targetRpfName))
+                {
+                    // Повертаємо ідеальну структуру: x64\levels\gta5\ім'я_архіву.rpf
+                    Console.Error.WriteLine($"[Info] Routing map/level asset to: x64\\levels\\gta5\\{targetRpfName}");
+                    return Path.Combine(@"x64\levels\gta5", targetRpfName);
+                }
+            }
+        
+            // 4. Фолбек (для інших файлів, намагаємось відрізати зайве, як було раніше)
+            string cleanPath = normalized;
             int dlcIndex = cleanPath.IndexOf("dlc.rpf", StringComparison.OrdinalIgnoreCase);
             if (dlcIndex >= 0) cleanPath = cleanPath.Substring(dlcIndex + 7).TrimStart('\\');
-
-            int rpfIndex = cleanPath.IndexOf(".rpf", StringComparison.OrdinalIgnoreCase);
-            if (rpfIndex >= 0 && !cleanPath.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase))
-            {
-                 cleanPath = cleanPath.Substring(rpfIndex + 4).TrimStart('\\');
-            }
-
+        
             if (NeedsX64Prefix(cleanPath))
             {
                 return Path.Combine("x64", cleanPath);
             }
-
+        
             return cleanPath;
-        }
-
-        private bool IsDeepMapArchive(string path)
-        {
-            if (!path.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase)) return false;
-            
-            string[] whitelist = { "weapons.rpf", "minimap.rpf", "vehicles.rpf", "props.rpf", "maps.rpf", "tracks.rpf" };
-            string fileName = Path.GetFileName(path);
-            if (whitelist.Contains(fileName.ToLower())) return false;
-
-            if (path.IndexOf("levels", StringComparison.OrdinalIgnoreCase) >= 0 || 
-                path.IndexOf("_city", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                path.IndexOf("country", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                return true; 
-            }
-
-            return false;
         }
 
         private bool NeedsX64Prefix(string path)
