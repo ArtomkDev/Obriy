@@ -120,7 +120,8 @@ export async function checkResourceExists(subPath) {
   return requestPromise
 }
 
-export async function downloadFile(remotePath, localDestPath, onProgress) {
+// ДОДАЄМО параметр expectedSize = 0
+export async function downloadFile(remotePath, localDestPath, onProgress, expectedSize = 0) {
   console.log(`[CloudRepository] ⬇️ Starting download: ${remotePath}`)
   const downloadUrl = `${GATEWAY_URL}${remotePath}`
   const fetchResponse = await fetch(downloadUrl, { headers: getAuthHeaders() })
@@ -132,7 +133,9 @@ export async function downloadFile(remotePath, localDestPath, onProgress) {
     throw new Error(`Download Failed: ${fetchResponse.status}`)
   }
 
-  const totalBytesCount = Number(fetchResponse.headers.get('content-length') || 0)
+  let totalBytesCount = expectedSize > 0 
+    ? expectedSize 
+    : Number(fetchResponse.headers.get('content-length') || 0);
   
   let receivedBytesCount = 0
   let lastProgressUpdateTime = 0
@@ -142,8 +145,13 @@ export async function downloadFile(remotePath, localDestPath, onProgress) {
       receivedBytesCount += chunk.length
       
       const currentTime = Date.now()
-      if (onProgress && totalBytesCount > 0 && (currentTime - lastProgressUpdateTime > 100 || receivedBytesCount === totalBytesCount)) {
-        onProgress(Math.round((receivedBytesCount / totalBytesCount) * 100))
+      // Зробив оновлення кожні 50мс для більшої плавності
+      if (onProgress && totalBytesCount > 0 && (currentTime - lastProgressUpdateTime > 50 || receivedBytesCount === totalBytesCount)) {
+        
+        let percentage = Math.round((receivedBytesCount / totalBytesCount) * 100)
+        if (percentage > 100) percentage = 100 // Захист від переповнення
+        
+        onProgress(percentage)
         lastProgressUpdateTime = currentTime
       }
       
@@ -153,7 +161,6 @@ export async function downloadFile(remotePath, localDestPath, onProgress) {
 
   const destinationStream = fs.createWriteStream(localDestPath)
   
-  // ВИПРАВЛЕННЯ: Конвертуємо Web Stream у Node Stream для коректної роботи pipeline
   const nodeReadableStream = Readable.fromWeb 
       ? Readable.fromWeb(fetchResponse.body) 
       : Readable.from(fetchResponse.body);

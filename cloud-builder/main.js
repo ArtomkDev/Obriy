@@ -15,107 +15,114 @@ const commandInput = args[0];
 const shouldUpload = args.includes('--upload');
 
 if (!commandInput || commandInput.startsWith('--')) {
-    console.error('❌ Error: Please provide a Mod ID or "all" (e.g., node main.js 21)'.red);
+    process.stdout.write('❌ Error: Please provide a Mod ID or "all" (e.g., node main.js 21)\n'.red);
     process.exit(1);
 }
 
-async function buildSingleMod(modId) {
-    console.log(`\n🚀 STARTING BUILD FOR MOD ID: ${modId}`.bgBlue.white);
-    const startTime = Date.now();
+function renderProgress(stepName, detail) {
+    readline.clearLine(process.stdout, 0);
+    readline.cursorTo(process.stdout, 0);
+    process.stdout.write(`⏳ ${stepName.yellow} | ${detail.cyan}`);
+}
 
+function renderSuccess(stepName, detail) {
+    readline.clearLine(process.stdout, 0);
+    readline.cursorTo(process.stdout, 0);
+    process.stdout.write(`✅ ${stepName.green} | ${detail.gray}\n`);
+}
+
+async function buildSingleMod(modId) {
+    process.stdout.write(`\n🚀 STARTING BUILD FOR MOD ID: ${modId}\n`.bgBlue.white);
+    
     try {
         const modSourcePath = path.join(config.paths.modsSource, modId);
-        const modDistPath = path.join(config.paths.modsDist, modId);
         const manifestPath = path.join(modSourcePath, 'manifest.json');
 
         if (!fs.existsSync(manifestPath)) {
             throw new Error(`Mod manifest not found at: ${manifestPath}`);
         }
 
-        const mediaList = await processAssets({
-            inputDir: modSourcePath,
-            outputDir: modDistPath
-        });
+        renderProgress('Assets', 'Processing media...');
+        const mediaResult = await processAssets(modId, config, (msg) => renderProgress('Assets', msg));
+        renderSuccess('Assets', 'Media processing completed');
 
-        const zipSize = await packageMod(modId, config);
+        renderProgress('Manifest', 'Building structure...');
+        let manifestData = await buildManifest(modId, config, mediaResult, 0, (msg) => renderProgress('Manifest', msg));
+        renderSuccess('Manifest', 'Manifest and instructions generated');
 
-        const cloudManifest = await buildManifest(modId, config, mediaList, zipSize);
+        renderProgress('Packager', 'Compressing payload...');
+        const payloadSize = await packageMod(modId, (msg) => renderProgress('Packager', msg));
+        renderSuccess('Packager', `Payload created and cleaned (${(payloadSize / 1024).toFixed(2)} KB)`);
 
-        await updateCatalog(cloudManifest, config);
+        const distManifestPath = path.join(config.paths.modsDist, modId, 'manifest.json');
+        manifestData.downloadSize = payloadSize;
+        await fs.writeJson(distManifestPath, manifestData, { spaces: 2 });
+
+        renderProgress('Catalog', 'Syncing with remote...');
+        await updateCatalog(modId, manifestData, (msg) => renderProgress('Catalog', msg));
+        renderSuccess('Catalog', 'Index fully updated');
 
         if (shouldUpload) {
-            console.log('📦 Deployment requested...'.magenta);
-            await uploadToCloud(modId, config);
-        } else {
-            console.log('⚠️  Skipping Cloud Upload. Use --upload to deploy.'.gray);
+            renderProgress('Upload', 'Starting transfer...');
+            await uploadToCloud(modId, (msg) => renderProgress('Upload', msg));
+            renderSuccess('Upload', 'All files transferred successfully');
         }
 
-        const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-        console.log(`✅ SUCCESS! Mod ${modId} finished in ${duration}s`.green.bold);
         return true;
-
     } catch (error) {
-        console.error(`❌ FAILED Mod ${modId}:`.red.bold);
-        console.error(error.message);
+        readline.clearLine(process.stdout, 0);
+        readline.cursorTo(process.stdout, 0);
+        process.stdout.write(`❌ Error processing ${modId}: ${error.message}\n`.red);
         return false;
     }
 }
 
-(async () => {
+async function startBatch() {
     if (commandInput === 'all') {
-        try {
-            const allItems = await fs.readdir(config.paths.modsSource);
-            const modIds = [];
-
-            for (const item of allItems) {
-                const fullPath = path.join(config.paths.modsSource, item);
-                const stat = await fs.stat(fullPath);
-                
-                if (stat.isDirectory() && fs.existsSync(path.join(fullPath, 'manifest.json'))) {
-                    modIds.push(item);
-                }
+        const sourceModsDir = config.paths.modsSource;
+        const items = await fs.readdir(sourceModsDir);
+        const modIds = [];
+        
+        for (const item of items) {
+            const stat = await fs.stat(path.join(sourceModsDir, item));
+            if (stat.isDirectory()) {
+                modIds.push(item);
             }
-
-            if (modIds.length === 0) {
-                console.log('❌ No mods found in store-data/mods'.red);
-                process.exit(0);
-            }
-
-            console.log(`\n🔎 Found ${modIds.length} mods to process:`.cyan);
-            console.log(modIds.join(', ').gray);
-            if (shouldUpload) console.log('☁️  UPLOAD ENABLED for all mods!'.yellow.bold);
-
-            const rl = readline.createInterface({
-                input: process.stdin,
-                output: process.stdout
-            });
-
-            const answer = await new Promise(resolve => {
-                rl.question(`\nAre you sure you want to build (and maybe upload) ${modIds.length} mods? (y/n): `.white.bold, resolve);
-            });
-            rl.close();
-
-            if (answer.toLowerCase() !== 'y') {
-                console.log('❌ Operation cancelled by user.'.yellow);
-                process.exit(0);
-            }
-
-            console.log('\n🏁 Starting Batch Build...'.green);
-            let successCount = 0;
-            let failCount = 0;
-
-            for (const id of modIds) {
-                const success = await buildSingleMod(id);
-                if (success) successCount++;
-                else failCount++;
-            }
-
-            console.log(`\n🎉 BATCH COMPLETE! Success: ${successCount}, Failed: ${failCount}`.bgGreen.black);
-
-        } catch (err) {
-            console.error('Global Error:'.red, err);
         }
+        
+        process.stdout.write(`\n🔎 Found ${modIds.length} mods to process:\n`.cyan);
+        process.stdout.write(modIds.join(', ').gray + '\n');
+        if (shouldUpload) process.stdout.write('☁️  UPLOAD ENABLED for all mods!\n'.yellow.bold);
+
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
+
+        const answer = await new Promise(resolve => {
+            rl.question(`\nAre you sure you want to build ${modIds.length} mods? (y/n): `.white.bold, resolve);
+        });
+        rl.close();
+
+        if (answer.toLowerCase() !== 'y') {
+            process.stdout.write('❌ Operation cancelled by user.\n'.yellow);
+            process.exit(0);
+        }
+
+        process.stdout.write('\n🏁 Starting Batch Build...\n'.green);
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const id of modIds) {
+            const success = await buildSingleMod(id);
+            if (success) successCount++;
+            else failCount++;
+        }
+
+        process.stdout.write(`\n🎉 BATCH COMPLETE! Success: ${successCount}, Failed: ${failCount}\n`.bgGreen.black);
     } else {
         await buildSingleMod(commandInput);
     }
-})();
+}
+
+startBatch();

@@ -6,10 +6,11 @@ const ffmpegPath = require('ffmpeg-static');
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
-module.exports = async (config) => {
-    const srcDir = path.join(config.inputDir, 'media');
-    const distDir = path.join(config.outputDir, 'assets');
+module.exports = async (modId, config, onProgress = () => {}) => {
+    const srcDir = path.join(config.paths.modsSource, modId, 'media');
+    const distDir = path.join(config.paths.modsDist, modId, 'assets');
 
+    await fs.ensureDir(distDir);
     await fs.emptyDir(distDir);
 
     if (!fs.existsSync(srcDir)) {
@@ -40,6 +41,8 @@ module.exports = async (config) => {
         const fileBaseName = path.parse(fileName).name;
         const inputPath = path.join(srcDir, fileName);
 
+        onProgress(`Processing ${fileName}...`);
+
         if (videoExtensions.includes(fileExt)) {
             const outName = `${fileBaseName}.mp4`;
             const outPath = path.join(distDir, outName);
@@ -57,7 +60,6 @@ module.exports = async (config) => {
                 });
                 processedVideos.push(outName);
             } catch (error) {
-                // Error handling logic implied by architecture constraints (no comments)
             }
         } else if (imageExtensions.includes(fileExt)) {
             const outName = `${fileBaseName}.webp`;
@@ -76,7 +78,6 @@ module.exports = async (config) => {
 
                 processedImages.push(outName);
             } catch (error) {
-                // Error handling logic implied by architecture constraints (no comments)
             }
         }
     }

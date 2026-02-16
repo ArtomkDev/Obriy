@@ -1,6 +1,5 @@
 const fs = require('fs-extra');
 const path = require('path');
-const colors = require('colors');
 
 function createUniversalXmlRegex(text) {
     const placeholders = [];
@@ -125,8 +124,6 @@ async function generateBlockEdits(vContent, mContent) {
         if (!isInside && !isDuplicate) uniqueRoots.push(cand);
     }
 
-    console.log(`      Found ${candidates.length} candidates, reduced to ${uniqueRoots.length} unique root blocks.`);
-
     for (const vRoot of uniqueRoots) {
         let mRootContent = null;
         const strat = vRoot.strat;
@@ -161,9 +158,9 @@ async function generateBlockEdits(vContent, mContent) {
     return edits;
 }
 
-module.exports = async function buildManifest(modId, config, mediaList = [], downloadSize = 0) {
-    console.log(`[Manifest] Building separated manifest for ${modId}...`.cyan);
-
+module.exports = async function buildManifest(modId, config, mediaList = [], downloadSize = 0, onProgress = () => {}) {
+    onProgress(`Reading configuration for ${modId}`);
+    
     const modSourceDir = path.join(config.paths.modsSource, modId);
     const manifestPath = path.join(modSourceDir, 'manifest.json');
     const modFilesDir = path.join(modSourceDir, 'mod');
@@ -185,6 +182,7 @@ module.exports = async function buildManifest(modId, config, mediaList = [], dow
         for (const step of template) {
             if (step.type === 'edit' && step.edits && (typeof step.edits === 'string' || typeof step.edits === 'number')) {
                 const patchId = String(step.edits);
+                onProgress(`Generating smart patch: ${patchId}`);
                 const vFileName = dirFiles.find(f => new RegExp(`^${patchId}v(\\..+)?$`).test(f));
 
                 if (vFileName) {
@@ -200,7 +198,6 @@ module.exports = async function buildManifest(modId, config, mediaList = [], dow
                         let generatedEdits = await generateBlockEdits(vContent, mContent);
 
                         if (generatedEdits.length === 0 && vContent.replace(/\s+/g, '') !== mContent.replace(/\s+/g, '')) {
-                            console.warn(`   -> ⚠️ No blocks found. Creating Full File Patch for '${patchId}'.`.yellow);
                             generatedEdits.push({
                                 searchPattern: `(?s)(${createUniversalXmlRegex(vContent)})`,
                                 template: generateValueTemplate(vContent, mContent)
@@ -208,9 +205,6 @@ module.exports = async function buildManifest(modId, config, mediaList = [], dow
                         }
 
                         step.edits = generatedEdits;
-                        console.log(`   -> 🧩 Smart Patch: Generated ${generatedEdits.length} robust block edits for '${patchId}'`.cyan);
-                    } else {
-                        console.warn(`   -> ⚠️ Missing mod file: ${mFileName}`.yellow);
                     }
                 }
             }
@@ -224,10 +218,8 @@ module.exports = async function buildManifest(modId, config, mediaList = [], dow
             const fullPath = path.join(dirPath, item);
             const stat = await fs.stat(fullPath);
             if (stat.isDirectory()) {
-                // Якщо це папка, рекурсивно заходимо в неї
                 totalSize += await getDirectorySize(fullPath);
             } else {
-                // Якщо це файл, додаємо його розмір
                 totalSize += stat.size;
             }
         }
@@ -235,11 +227,11 @@ module.exports = async function buildManifest(modId, config, mediaList = [], dow
     }
 
     let totalInstallSize = 0;
-    let hasPayloadFiles = false;
+
     if (await fs.pathExists(modFilesDir)) {
         const files = await fs.readdir(modFilesDir);
         if (files.length > 0) {
-            hasPayloadFiles = true;
+            onProgress(`Calculating installation size for ${modId}`);
             totalInstallSize = await getDirectorySize(modFilesDir);
         }
     }
@@ -265,10 +257,8 @@ module.exports = async function buildManifest(modId, config, mediaList = [], dow
         installSize: totalInstallSize,
         downloadSize: downloadSize,
         media: mediaList,
-        hasPayload: hasPayloadFiles,
         author: sourceManifest.author || "Obriy"
     };
 
-    await fs.writeJson(path.join(outputDir, 'manifest.json'), cleanCloudManifest, { spaces: 2 });
     return cleanCloudManifest;
 };

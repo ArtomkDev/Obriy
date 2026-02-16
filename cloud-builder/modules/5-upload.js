@@ -2,14 +2,12 @@ const fs = require('fs-extra');
 const path = require('path');
 const mime = require('mime-types');
 const dotenv = require('dotenv');
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client } = require('@aws-sdk/client-s3');
+const { Upload } = require('@aws-sdk/lib-storage');
 const config = require('../config');
-const colors = require('colors');
 
-// Завантажуємо змінні середовища
 dotenv.config();
 
-// Налаштування клієнта
 const s3Client = new S3Client({
     region: 'auto',
     endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
@@ -19,7 +17,6 @@ const s3Client = new S3Client({
     }
 });
 
-// Рекурсивна функція для отримання всіх файлів у папці
 async function getFiles(dir) {
     const subdirs = await fs.readdir(dir);
     const files = await Promise.all(subdirs.map(async (subdir) => {
@@ -29,71 +26,82 @@ async function getFiles(dir) {
     return files.reduce((a, f) => a.concat(f), []);
 }
 
-// ПРИЙМАЄМО currentModId ЯК АРГУМЕНТ
-module.exports = async function uploadToCloud(currentModId) {
-    console.log(`[Upload] ☁️  Starting upload to Cloudflare R2 for Mod ID: ${currentModId}...`.cyan);
-
-    if (!process.env.R2_ACCOUNT_ID || !process.env.R2_BUCKET_NAME) {
-        console.warn(`   ⚠️ SKIPPING UPLOAD: .env variables missing`.yellow);
-        return;
+module.exports = async function uploadToCloud(currentModId, onProgress = () => {}) {
+    const distDir = config.paths.modsDist;
+    const parentDir = path.join(distDir, '..');
+    
+    if (!fs.existsSync(distDir)) {
+        throw new Error('Dist folder not found');
     }
 
-    const distPath = config.paths.dist; // cloud_mock/v1
-    
-    // Отримуємо список всіх файлів
-    const allFiles = await getFiles(distPath);
-
-    console.log(`   -> Scanning build directory... Found ${allFiles.length} files total.`);
-
-    let uploadCount = 0;
+    const allFiles = await getFiles(distDir);
+    const filesToUpload = [];
+    let totalBytes = 0;
 
     for (const filePath of allFiles) {
-        // Отримуємо відносний шлях
-        let relativePath = path.relative(distPath, filePath);
-        
-        // Нормалізуємо слеші для URL та перевірок (Windows fix)
-        relativePath = relativePath.split(path.sep).join('/');
-        
-        // --- ФІЛЬТРАЦІЯ ---
-        // 1. Це файл каталогу? (завжди оновлюємо index.json та категорії)
+        const relativePath = path.relative(parentDir, filePath).replace(/\\/g, '/');
+
         const isCatalog = relativePath.startsWith('catalog/');
-        
-        // 2. Це файл ПОТОЧНОГО моду? (оновлюємо тільки папку mods/22, якщо збираємо 22)
         const isCurrentMod = relativePath.startsWith(`mods/${currentModId}/`);
+        const isInstructionFile = relativePath.endsWith('instruction.json');
 
-        // Якщо файл не належить ні до каталогу, ні до поточного моду — пропускаємо його
-        if (!isCatalog && !isCurrentMod) {
-            continue;
-        }
-
-        // Формуємо ключ для S3
-        const s3Key = `v1/${relativePath}`;
-
-        const fileContent = await fs.readFile(filePath);
-        const contentType = mime.lookup(filePath) || 'application/octet-stream';
-
-        // Логіка кешування
-        let cacheControl = 'public, max-age=31536000'; // Довгий кеш
-        if (s3Key.endsWith('.json')) {
-            cacheControl = 'no-cache, no-store, must-revalidate'; // Без кешу для JSON
-        }
-
-        try {
-            const command = new PutObjectCommand({
-                Bucket: process.env.R2_BUCKET_NAME,
-                Key: s3Key,
-                Body: fileContent,
-                ContentType: contentType,
-                CacheControl: cacheControl
-            });
-
-            await s3Client.send(command);
-            console.log(`   -> ✅ Uploaded: ${s3Key}`);
-            uploadCount++;
-        } catch (err) {
-            console.error(`   -> ❌ Error uploading ${s3Key}: ${err.message}`.red);
+        if ((isCatalog || isCurrentMod) && !isInstructionFile) {
+            const stat = await fs.stat(filePath);
+            totalBytes += stat.size;
+            filesToUpload.push({ filePath, relativePath, size: stat.size });
         }
     }
 
-    console.log(`   -> Upload complete. Transferred ${uploadCount} files.`.green);
+    let uploadedBytesFromPreviousFiles = 0;
+    const totalMB = (totalBytes / (1024 * 1024)).toFixed(2);
+
+    for (const fileData of filesToUpload) {
+        const s3Key = `v1/${fileData.relativePath}`;
+        const contentType = mime.lookup(fileData.filePath) || 'application/octet-stream';
+
+        let cacheControl = 'public, max-age=31536000';
+        if (s3Key.endsWith('.json')) {
+            cacheControl = 'no-cache, no-store, must-revalidate';
+        }
+
+        const fileStream = fs.createReadStream(fileData.filePath);
+        
+        const upload = new Upload({
+            client: s3Client,
+            params: {
+                Bucket: process.env.R2_BUCKET_NAME,
+                Key: s3Key,
+                Body: fileStream,
+                ContentType: contentType,
+                CacheControl: cacheControl
+            }
+        });
+
+        upload.on('httpUploadProgress', (progress) => {
+            const currentFileLoaded = progress.loaded || 0;
+            const currentTotalUploaded = uploadedBytesFromPreviousFiles + currentFileLoaded;
+            
+            let progressPercentage = 0;
+            if (totalBytes > 0) {
+                progressPercentage = currentTotalUploaded / totalBytes;
+            }
+
+            if (progressPercentage > 1) progressPercentage = 1;
+
+            const percentageText = (progressPercentage * 100).toFixed(2);
+            const uploadedMB = (currentTotalUploaded / (1024 * 1024)).toFixed(2);
+            
+            const barLength = 25;
+            const filledLength = Math.round(progressPercentage * barLength);
+            const filled = '█'.repeat(filledLength);
+            const empty = '░'.repeat(barLength - filledLength);
+
+            onProgress(`[${filled}${empty}] ${percentageText}% (${uploadedMB} MB / ${totalMB} MB)`);
+        });
+
+        await upload.done();
+        uploadedBytesFromPreviousFiles += fileData.size;
+    }
+
+    onProgress(`[${'█'.repeat(25)}] 100.00% (${totalMB} MB / ${totalMB} MB)`);
 };

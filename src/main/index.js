@@ -431,7 +431,9 @@ app.whenReady().then(async () => {
       }
 
       // 5. Execute Installation
-      const result = await modManager.installMod(modId, gameDirectory)
+      // БЕРЕМО РЕАЛЬНУ ВАГУ З МАНІФЕСТУ (якщо є)
+      const expectedDownloadSize = modDetails.downloadSize || 0;
+      const result = await modManager.installMod(modId, gameDirectory, expectedDownloadSize)
       
       if (result.status === 'error') {
          throw new Error(result.message || 'Unknown installation error')

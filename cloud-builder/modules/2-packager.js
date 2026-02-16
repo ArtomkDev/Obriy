@@ -3,61 +3,63 @@ const path = require('path');
 const archiver = require('archiver');
 const config = require('../config');
 
-module.exports = async function packageMod(modId) {
+module.exports = async function packageMod(modId, onProgress = () => {}) {
     const sourceDir = path.join(config.paths.modsSource, modId, 'mod');
     const outputDir = path.join(config.paths.modsDist, modId);
     const outputPath = path.join(outputDir, 'payload.zip');
-
-    console.log(`[Packager] Checking assets for ${modId}...`.cyan);
+    const instructionPath = path.join(outputDir, 'instruction.json');
 
     await fs.ensureDir(outputDir);
 
-    // Видаляємо старий zip, якщо він є, щоб не відправити застарілий файл
     if (await fs.pathExists(outputPath)) {
         await fs.remove(outputPath);
     }
 
-    // Перевірка 1: Чи існує папка mod
-    if (!await fs.pathExists(sourceDir)) {
-        console.log(`   -> No 'mod' folder found. Skipping ZIP creation.`.gray);
-        return 0;
+    const isModFolderExisting = await fs.pathExists(sourceDir);
+    const isInstructionExisting = await fs.pathExists(instructionPath);
+
+    let validFiles = [];
+    if (isModFolderExisting) {
+        const files = await fs.readdir(sourceDir);
+        validFiles = files.filter(file => file !== '.DS_Store' && file !== 'Thumbs.db');
     }
 
-    // Перевірка 2: Чи є в ній файли (ігноруючи системні)
-    const files = await fs.readdir(sourceDir);
-    const validFiles = files.filter(f => f !== '.DS_Store' && f !== 'Thumbs.db');
-
-    if (validFiles.length === 0) {
-        console.log(`   -> 'mod' folder is empty. Skipping ZIP creation.`.gray);
-        return 0;
-    }
-
-    console.log(`   -> Found ${validFiles.length} files. Compressing...`.yellow);
+    onProgress('Building zip archive...');
 
     return new Promise((resolve, reject) => {
-        const output = fs.createWriteStream(outputPath);
+        const outputStream = fs.createWriteStream(outputPath);
         const archive = archiver('zip', { zlib: { level: 1 } });
 
-        output.on('close', () => {
-            const size = archive.pointer();
-            console.log(`   -> 📦 Created payload.zip (${(size / 1024).toFixed(2)} KB)`.green);
-            resolve(size);
+        outputStream.on('close', async () => {
+            const archiveSize = archive.pointer();
+            
+            if (isInstructionExisting) {
+                await fs.remove(instructionPath);
+            }
+            
+            resolve(archiveSize);
         });
 
-        archive.on('warning', (err) => {
-            if (err.code === 'ENOENT') {
-                console.warn(err);
-            } else {
-                reject(err);
+        archive.on('warning', (warning) => {
+            if (warning.code !== 'ENOENT') {
+                reject(warning);
             }
         });
 
-        archive.on('error', (err) => {
-            reject(err);
+        archive.on('error', (error) => {
+            reject(error);
         });
 
-        archive.pipe(output);
-        archive.directory(sourceDir, false);
+        archive.pipe(outputStream);
+
+        if (isInstructionExisting) {
+            archive.file(instructionPath, { name: 'instruction.json' });
+        }
+
+        if (validFiles.length > 0) {
+            archive.directory(sourceDir, 'files');
+        }
+
         archive.finalize();
     });
 };

@@ -175,12 +175,11 @@ export default class ModManagerService {
     }
   }
 
-  async installMod(modificationId, gameDirectoryPath) {
+  async installMod(modificationId, gameDirectoryPath, expectedDownloadSize = 0) {
     const userInterfaceFeedbackChannel = BrowserWindow.getAllWindows()[0]?.webContents
     const modificationSessionDirectory = path.join(this.cachePath, modificationId.toString())
     const extractedPath = path.join(modificationSessionDirectory, 'extracted')
     const payloadArchiveLocalPath = path.join(modificationSessionDirectory, 'payload.zip')
-    const instructionLocalPath = path.join(modificationSessionDirectory, 'instruction.json')
 
     await fs.ensureDir(modificationSessionDirectory)
     await fs.emptyDir(modificationSessionDirectory)
@@ -189,26 +188,18 @@ export default class ModManagerService {
     const timestamp = Date.now()
 
     try {
-      userInterfaceFeedbackChannel?.send('installation-progress', { type: 'download', value: 5 })
-
-      try {
-        await this.cloud.downloadFile(
-          `/mods/${modificationId}/instruction.json?t=${timestamp}`,
-          instructionLocalPath
-        )
-      } catch (e) {
-        console.warn('[ModManager] No external instruction.json')
-      }
-
-      userInterfaceFeedbackChannel?.send('installation-progress', { type: 'download', value: 15 })
+      userInterfaceFeedbackChannel?.send('task-progress', { modId: modificationId, type: 'download', percentage: 0 })
 
       await this.cloud.downloadFile(
         `/mods/${modificationId}/payload.zip?t=${timestamp}`,
         payloadArchiveLocalPath,
-        (progress) => userInterfaceFeedbackChannel?.send('installation-progress', { type: 'download', value: 15 + (progress * 0.5) })
+        (progress) => {
+           userInterfaceFeedbackChannel?.send('task-progress', { modId: modificationId, type: 'download', percentage: progress })
+        },
+        expectedDownloadSize 
       )
 
-      userInterfaceFeedbackChannel?.send('installation-progress', { type: 'install', value: 70 })
+      userInterfaceFeedbackChannel?.send('task-progress', { modId: modificationId, type: 'install', percentage: 10 })
 
       const extractResult = await this.core.executeCommand('extract', {
         Source: payloadArchiveLocalPath,
@@ -216,40 +207,40 @@ export default class ModManagerService {
       })
 
       if (extractResult.status !== 'success') {
-        throw new Error(`Extraction failed: ${extractResult.message}`)
+        throw new Error(extractResult.message)
       }
+
+      userInterfaceFeedbackChannel?.send('task-progress', { modId: modificationId, type: 'install', percentage: 50 })
 
       let instructions = []
       let loadedInstructions = null
 
-      if (await fs.pathExists(instructionLocalPath)) {
-        try {
-          loadedInstructions = await fs.readJson(instructionLocalPath)
-        } catch (e) {}
+      const internalInstrPath = await this.findPathRecursive(extractedPath, 'instruction.json', 'file')
+      if (internalInstrPath) {
+        try { 
+            loadedInstructions = await fs.readJson(internalInstrPath) 
+        } catch (e) { }
       }
 
-      if (!loadedInstructions) {
-        const internalInstrPath = await this.findPathRecursive(extractedPath, 'instruction.json', 'file')
-        if (internalInstrPath) {
-          try { loadedInstructions = await fs.readJson(internalInstrPath) } catch (e) { }
-        }
-      }
+      const modFilesBaseDir = path.join(extractedPath, 'files')
+      const filesDirExists = await fs.pathExists(modFilesBaseDir)
+      const activeSearchDir = filesDirExists ? modFilesBaseDir : extractedPath
 
       if (loadedInstructions) {
         for (const instr of loadedInstructions) {
           let rawPath = (instr.path || instr.Path || '').trim()
           if (rawPath === '') {
-            const files = await this.getAllFiles(extractedPath)
+            const files = await this.getAllFiles(activeSearchDir)
             for (const file of files) {
               if (path.basename(file).toLowerCase() === 'instruction.json') continue
               instructions.push({ type: instr.type, target: instr.target, path: file })
             }
             continue
           }
-          let sourceAbsPath = path.join(extractedPath, rawPath)
+          let sourceAbsPath = path.join(activeSearchDir, rawPath)
           if (!await fs.pathExists(sourceAbsPath)) {
             const targetName = path.basename(rawPath)
-            const found = await this.findPathRecursive(extractedPath, targetName)
+            const found = await this.findPathRecursive(activeSearchDir, targetName)
             if (found) sourceAbsPath = found
           }
           if (sourceAbsPath && await fs.pathExists(sourceAbsPath)) {
@@ -265,7 +256,7 @@ export default class ModManagerService {
       }
 
       if (instructions.length === 0) {
-        const files = await this.getAllFiles(extractedPath)
+        const files = await this.getAllFiles(activeSearchDir)
         for (const filePath of files) {
           const ext = path.extname(filePath).toLowerCase()
           const fileName = path.basename(filePath).toLowerCase()
@@ -298,12 +289,11 @@ export default class ModManagerService {
       }
 
       await fs.remove(modificationSessionDirectory)
-      userInterfaceFeedbackChannel?.send('installation-progress', { type: 'install', value: 100 })
+      userInterfaceFeedbackChannel?.send('task-progress', { modId: modificationId, type: 'install', percentage: 100 })
 
       return backendExecutionResult
 
     } catch (error) {
-      console.error(error)
       userInterfaceFeedbackChannel?.send('installation-error', { message: error.message })
       return { status: 'error', message: error.message }
     }
@@ -313,7 +303,7 @@ export default class ModManagerService {
     const userInterfaceFeedbackChannel = BrowserWindow.getAllWindows()[0]?.webContents
 
     try {
-        userInterfaceFeedbackChannel?.send('installation-progress', { type: 'install', value: 10 }) // reusing install progress for simplicity
+        userInterfaceFeedbackChannel?.send('task-progress', { modId: modificationId, type: 'uninstall', percentage: 10 })
 
         const uninstallRequest = {
             GamePath: gameDirectoryPath,
@@ -329,7 +319,7 @@ export default class ModManagerService {
              console.error('[ModManager] Uninstall failed:', backendExecutionResult.message)
         }
         
-        userInterfaceFeedbackChannel?.send('installation-progress', { type: 'install', value: 100 })
+        userInterfaceFeedbackChannel?.send('task-progress', { modId: modificationId, type: 'uninstall', percentage: 100 })
         return backendExecutionResult
 
     } catch (error) {

@@ -7,6 +7,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.966.0",
+    "@aws-sdk/lib-storage": "^3.990.0",
     "archiver": "^5.3.1",
     "colors": "^1.4.0",
     "dotenv": "^17.2.3",

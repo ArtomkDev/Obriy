@@ -8,7 +8,6 @@ export function InstallerProvider({ children }) {
   const [updateStatus, setUpdateStatus] = useState('idle')
   const [installedModIds, setInstalledModIds] = useState([])
 
-  // --- НОВЕ: Стан користувача ---
   const [currentUser, setCurrentUser] = useState(null)
 
   const [tasks, setTasks] = useState({})
@@ -18,7 +17,6 @@ export function InstallerProvider({ children }) {
   const [isProcessing, setIsProcessing] = useState(false)
   const [isManagerOpen, setManagerOpen] = useState(false)
 
-  // Завантаження початкових налаштувань та даних користувача
   useEffect(() => {
     if (window.api) {
       const initializeInstallerSession = async () => {
@@ -35,7 +33,6 @@ export function InstallerProvider({ children }) {
             setCurrentUser(localUser || null);
           }
         } catch (sessionError) {
-          console.error(sessionError);
         } finally {
           setIsPathLoaded(true);
         }
@@ -43,35 +40,29 @@ export function InstallerProvider({ children }) {
 
       initializeInstallerSession();
 
-      // Слухач статусу оновлення додатку
       const removeUpdateStatusListener = window.api.onUpdateStatus((statusData) => {
         setUpdateStatus(statusData.status);
       });
 
-      // СИНХРОНІЗАЦІЯ ПРОФІЛЮ (викидає на логін, якщо дані підроблено)
       const removeAuthSyncListener = window.api.onAuthSync ? window.api.onAuthSync((syncedProfile) => {
         setCurrentUser(syncedProfile || null);
       }) : null;
 
-      // СИНХРОНІЗАЦІЯ ШЛЯХУ ГРИ (викидає на SetupScreen, якщо шлях став невалідним)
       const removePathSyncListener = window.api.onPathSync ? window.api.onPathSync((syncedPath) => {
         setGamePathState(syncedPath || '');
       }) : null;
 
       return () => {
-        // Правильна чистка всіх слухачів
         if (removeUpdateStatusListener) removeUpdateStatusListener();
         if (removeAuthSyncListener) removeAuthSyncListener();
         if (removePathSyncListener) removePathSyncListener();
       };
     } else {
-      // Якщо це не Electron (наприклад, браузер), просто позначаємо готовність
       setIsPathLoaded(true);
       setUpdateStatus('not-available');
     }
   }, []);
 
-  // Синхронізація встановлених модів
   useEffect(() => {
     if (!window.api || !gamePath) return
 
@@ -79,7 +70,7 @@ export function InstallerProvider({ children }) {
       .then(mods => {
         if (Array.isArray(mods)) setInstalledModIds(mods)
       })
-      .catch(console.error)
+      .catch()
 
     const removeModsListener = window.api.onModsUpdated 
       ? window.api.onModsUpdated((mods) => setInstalledModIds(mods))
@@ -101,7 +92,6 @@ export function InstallerProvider({ children }) {
     }
   }
 
-  // Обробка прогресу виконання завдань ядра
   useEffect(() => {
     if (!window.api) return
 
@@ -110,15 +100,18 @@ export function InstallerProvider({ children }) {
         const task = prev[data.modId]
         if (!task) return prev
         
-        const status = data.type === 'uninstall' ? 'uninstalling' : 'installing'
+        let newStatus = task.status;
+        if (data.type === 'download') newStatus = 'downloading';
+        else if (data.type === 'install') newStatus = 'installing';
+        else if (data.type === 'uninstall') newStatus = 'uninstalling';
         
         return {
           ...prev,
           [data.modId]: { 
             ...task, 
-            status: status, 
-            downloadProgress: data.type === 'download' ? data.percentage : 100,
-            installProgress: data.type === 'install' ? data.percentage : (data.type === 'download' ? 0 : task.installProgress)
+            status: newStatus, 
+            downloadProgress: data.type === 'download' ? data.percentage : (data.type === 'install' ? 100 : task.downloadProgress),
+            installProgress: data.type === 'install' ? data.percentage : task.installProgress
           }
         }
       })
@@ -129,7 +122,6 @@ export function InstallerProvider({ children }) {
     }
   }, [])
 
-  // Черги завантаження та обробки
   useEffect(() => {
     if (!isDownloading && downloadQueue.length > 0) {
       const nextMod = downloadQueue[0]
@@ -144,8 +136,6 @@ export function InstallerProvider({ children }) {
     }
   }, [isProcessing, processQueue])
 
-  
-
   const resolveInstructions = (mod) => {
     if (mod.instructionSet && mod.instructionSet.length > 0) {
       return mod.instructionSet
@@ -159,20 +149,12 @@ export function InstallerProvider({ children }) {
 
     setTasks(prev => ({
       ...prev,
-      [taskId]: { ...prev[taskId], status: 'downloading', downloadProgress: 0 }
+      [taskId]: { ...prev[taskId], status: 'queued', downloadProgress: 0 }
     }))
 
-    // Симуляція підготовки перед передачею в EngineService
-    setTimeout(() => {
-      setTasks(prev => ({
-        ...prev,
-        [taskId]: { ...prev[taskId], status: 'queued', downloadProgress: 100 }
-      }))
-      
-      setDownloadQueue(prev => prev.filter(m => m.id !== mod.id))
-      setProcessQueue(prev => [...prev, { ...mod, actionType: 'install' }])
-      setIsDownloading(false)
-    }, 500)
+    setDownloadQueue(prev => prev.filter(m => m.id !== mod.id))
+    setProcessQueue(prev => [...prev, { ...mod, actionType: 'install' }])
+    setIsDownloading(false)
   }
 
   const runEngineTask = async (taskToProcess) => {
@@ -198,7 +180,8 @@ export function InstallerProvider({ children }) {
       ...previousTasks,
       [currentTaskId]: {
         ...previousTasks[currentTaskId],
-        status: isUninstallOperation ? 'uninstalling' : 'installing',
+        status: isUninstallOperation ? 'uninstalling' : 'downloading',
+        downloadProgress: 0,
         installProgress: 0
       }
     }));
@@ -256,19 +239,14 @@ export function InstallerProvider({ children }) {
     }
   };
 
-  // --- ВИПРАВЛЕНО: Додана перевірка Premium ---
   const startInstall = useCallback((mod) => {
     const taskId = mod.id
     
-    // ПЕРЕВІРКА 1: Чи залогінений користувач (для всіх модів)
     if (!currentUser) {
-      console.warn("Authorization required for installation")
-      return // Можна додати виклик вікна логіну, якщо потрібно
+      return 
     }
 
-    // ПЕРЕВІРКА 2: Чи є Premium (тільки для преміум модів)
     if (mod.is_premium && !currentUser?.isPremium) {
-      console.warn("Access denied: Premium required for mod", taskId)
       return 
     }
 
@@ -334,7 +312,6 @@ export function InstallerProvider({ children }) {
   const retryTask = useCallback((mod) => startInstall(mod), [startInstall])
   const toggleManager = () => setManagerOpen(!isManagerOpen)
   
-// Знайти функцію getModStatus всередині useModInstaller.js і замінити на цю:
   const getModStatus = useCallback((modIdentifier) => {
     const stringId = modIdentifier?.toString()
     
@@ -367,7 +344,6 @@ export function InstallerProvider({ children }) {
         setInstalledModIds(activeMods)
       }
     } catch (refreshError) {
-      console.error(refreshError)
     }
   }, [gamePath])
 
@@ -384,8 +360,8 @@ export function InstallerProvider({ children }) {
       isSetupComplete,
       isCheckingUpdate,
       updateStatus,
-      currentUser,      // Експортуємо поточного користувача
-      setCurrentUser,   // Дозволяємо оновлювати користувача (наприклад, після логіну)
+      currentUser,     
+      setCurrentUser,   
       tasks, 
       startInstall, 
       startUninstall, 
