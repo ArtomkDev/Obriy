@@ -28,7 +28,6 @@ async function getFiles(dir) {
 
 module.exports = async function uploadToCloud(currentModId, onProgress = () => {}) {
     const distDir = config.paths.modsDist;
-    const parentDir = path.join(distDir, '..');
     
     if (!fs.existsSync(distDir)) {
         throw new Error('Dist folder not found');
@@ -39,16 +38,21 @@ module.exports = async function uploadToCloud(currentModId, onProgress = () => {
     let totalBytes = 0;
 
     for (const filePath of allFiles) {
-        const relativePath = path.relative(parentDir, filePath).replace(/\\/g, '/');
+        const relativePath = path.relative(distDir, filePath).replace(/\\/g, '/');
 
         const isCatalog = relativePath.startsWith('catalog/');
-        const isCurrentMod = relativePath.startsWith(`mods/${currentModId}/`);
+        const isCurrentMod = relativePath.startsWith(`${currentModId}/`);
         const isInstructionFile = relativePath.endsWith('instruction.json');
 
         if ((isCatalog || isCurrentMod) && !isInstructionFile) {
             const stat = await fs.stat(filePath);
             totalBytes += stat.size;
-            filesToUpload.push({ filePath, relativePath, size: stat.size });
+            
+            const s3Key = isCatalog 
+                ? `v1/${relativePath}` 
+                : `v1/mods/${relativePath}`;
+
+            filesToUpload.push({ filePath, s3Key, size: stat.size });
         }
     }
 
@@ -56,11 +60,10 @@ module.exports = async function uploadToCloud(currentModId, onProgress = () => {
     const totalMB = (totalBytes / (1024 * 1024)).toFixed(2);
 
     for (const fileData of filesToUpload) {
-        const s3Key = `v1/${fileData.relativePath}`;
         const contentType = mime.lookup(fileData.filePath) || 'application/octet-stream';
 
         let cacheControl = 'public, max-age=31536000';
-        if (s3Key.endsWith('.json')) {
+        if (fileData.s3Key.endsWith('.json')) {
             cacheControl = 'no-cache, no-store, must-revalidate';
         }
 
@@ -70,7 +73,7 @@ module.exports = async function uploadToCloud(currentModId, onProgress = () => {
             client: s3Client,
             params: {
                 Bucket: process.env.R2_BUCKET_NAME,
-                Key: s3Key,
+                Key: fileData.s3Key,
                 Body: fileStream,
                 ContentType: contentType,
                 CacheControl: cacheControl

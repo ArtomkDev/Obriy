@@ -155,54 +155,44 @@ namespace Obriy.Core.Services
             return new { status = "success", message = "Mod installed successfully", installedFiles = installedFilePaths };
         }
 
-        // --- ЛОГІКА ВИЗНАЧЕННЯ ШЛЯХУ ---
         private string ExtractInternalPath(string rawTarget)
         {
             if (string.IsNullOrWhiteSpace(rawTarget)) return "ROOT";
             var normalized = rawTarget.Replace("/", "\\").TrimEnd('\\');
         
-            // 1. Спеціальний хардкод для зброї (залишаємо, бо це стандартна структура)
             if (normalized.Equals("weapons.rpf", StringComparison.OrdinalIgnoreCase) || 
                 normalized.EndsWith("\\weapons.rpf", StringComparison.OrdinalIgnoreCase)) 
             {
                 return @"x64\models\cdimages\weapons.rpf";
             }
         
-            // 2. Витягуємо ім'я ЦІЛЬОВОГО архіву (наприклад: dt1_09.rpf або bh1_01.rpf)
             string targetRpfName = "";
             int rpfIndex = normalized.IndexOf(".rpf", StringComparison.OrdinalIgnoreCase);
             
             if (rpfIndex >= 0)
             {
-                // Шукаємо останній .rpf у шляху (бо може бути "x64i.rpf\...\dt1_09.rpf")
                 int lastRpfIndex = normalized.LastIndexOf(".rpf", StringComparison.OrdinalIgnoreCase);
                 int slashBeforeRpf = normalized.LastIndexOf('\\', lastRpfIndex);
                 
                 if (slashBeforeRpf >= 0)
                 {
-                    // Витягуємо від останнього слеша до .rpf
                     targetRpfName = normalized.Substring(slashBeforeRpf + 1, (lastRpfIndex + 4) - (slashBeforeRpf + 1));
                 }
                 else
                 {
-                    // Якщо слешів немає, беремо з початку
                     targetRpfName = normalized.Substring(0, lastRpfIndex + 4);
                 }
             }
         
-            // 3. Формуємо правильний шлях всередині нашого dlc.rpf
-            // Якщо це карта або транспорт (шлях містить levels\gta5)
             if (normalized.IndexOf("levels\\gta5", StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 if (!string.IsNullOrEmpty(targetRpfName))
                 {
-                    // Повертаємо ідеальну структуру: x64\levels\gta5\ім'я_архіву.rpf
                     Console.Error.WriteLine($"[Info] Routing map/level asset to: x64\\levels\\gta5\\{targetRpfName}");
                     return Path.Combine(@"x64\levels\gta5", targetRpfName);
                 }
             }
         
-            // 4. Фолбек (для інших файлів, намагаємось відрізати зайве, як було раніше)
             string cleanPath = normalized;
             int dlcIndex = cleanPath.IndexOf("dlc.rpf", StringComparison.OrdinalIgnoreCase);
             if (dlcIndex >= 0) cleanPath = cleanPath.Substring(dlcIndex + 7).TrimStart('\\');
@@ -228,7 +218,7 @@ namespace Obriy.Core.Services
 
         public async Task<object> UninstallModPackageAsync(InstallModRequest request)
         {
-             if (request == null || string.IsNullOrEmpty(request.GamePath) || string.IsNullOrEmpty(request.Id))
+            if (request == null || string.IsNullOrEmpty(request.GamePath) || string.IsNullOrEmpty(request.Id))
                 return new { status = "error", message = "Invalid uninstall request" };
 
             var registry = await _registryService.LoadRegistryAsync(request.GamePath);
@@ -236,8 +226,8 @@ namespace Obriy.Core.Services
 
             if (mod == null || mod.Files.Count == 0)
             {
-                 await _registryService.UnregisterModAsync(request.GamePath, request.Id);
-                 return new { status = "success", message = "Mod removed from registry" };
+                await _registryService.UnregisterModAsync(request.GamePath, request.Id);
+                return new { status = "success", message = "Mod removed from registry" };
             }
 
             Console.Error.WriteLine($"[Uninstall] Removing {mod.Files.Count} files for mod {request.Id}...");
@@ -249,7 +239,7 @@ namespace Obriy.Core.Services
             {
                 if (fullPath.StartsWith(RegistryBasePath, StringComparison.OrdinalIgnoreCase))
                 {
-                    var relativePath = fullPath.Substring(RegistryBasePath.Length).TrimStart(Path.DirectorySeparatorChar);
+                    var relativePath = fullPath.Substring(RegistryBasePath.Length).TrimStart('\\', '/');
                     filesToDelete.Add(relativePath);
                 }
             }
@@ -258,8 +248,8 @@ namespace Obriy.Core.Services
             {
                 if (path.Contains(".rpf", StringComparison.OrdinalIgnoreCase))
                 {
-                     var index = path.IndexOf(".rpf", StringComparison.OrdinalIgnoreCase);
-                     return path.Substring(0, index + 4); 
+                    var index = path.IndexOf(".rpf", StringComparison.OrdinalIgnoreCase);
+                    return path.Substring(0, index + 4); 
                 }
                 return "ROOT"; 
             });
@@ -291,19 +281,35 @@ namespace Obriy.Core.Services
 
                         foreach (var file in group)
                         {
-                            var innerRelative = file.Substring(containerPath.Length).TrimStart(Path.DirectorySeparatorChar);
+                            var innerRelative = file.Substring(containerPath.Length).TrimStart('\\', '/');
                             if (_rpfService.DeleteInnerFile(innerRpf, innerRelative))
                             {
-                                 Console.Error.WriteLine($"[Uninstall] Deleted from {Path.GetFileName(containerPath)}: {innerRelative}");
-                                 innerChanges = true;
+                                Console.Error.WriteLine($"[Uninstall] Deleted from {Path.GetFileName(containerPath)}: {innerRelative}");
+                                innerChanges = true;
                             }
                         }
 
                         if (innerChanges)
                         {
-                            _rpfService.Defragment(innerRpf);
-                            var newData = await File.ReadAllBytesAsync(tempInnerPath);
-                            _rpfService.ReplaceInnerFile(mainSession.RpfFile, containerPath, newData);
+                            bool isEmpty = innerRpf.Root.Files.Count == 0 && innerRpf.Root.Directories.Count == 0;
+                            
+                            if (isEmpty)
+                            {
+                                Console.Error.WriteLine($"[Uninstall] Archive became empty, clearing: {containerPath}");
+                                string emptyTempPath = Path.GetTempFileName();
+                                try { File.Delete(emptyTempPath); } catch {}
+                                var emptyRpf = _rpfService.CreateNew(emptyTempPath);
+                                _rpfService.Defragment(emptyRpf);
+                                var newData = await File.ReadAllBytesAsync(emptyTempPath);
+                                _rpfService.ReplaceInnerFile(mainSession.RpfFile, containerPath, newData);
+                                try { File.Delete(emptyTempPath); } catch {}
+                            }
+                            else
+                            {
+                                _rpfService.Defragment(innerRpf);
+                                var newData = await File.ReadAllBytesAsync(tempInnerPath);
+                                _rpfService.ReplaceInnerFile(mainSession.RpfFile, containerPath, newData);
+                            }
                             globalChanges = true;
                         }
                         try { innerRpf = null; File.Delete(tempInnerPath); } catch {}
