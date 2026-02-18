@@ -1,85 +1,122 @@
 import path from 'path'
 import fs from 'fs-extra'
-import { app, BrowserWindow } from 'electron'
+import { EventEmitter } from 'events'
 
-export default class ModManagerService {
-  constructor(coreBridge, cloudRepository) {
-    this.core = coreBridge
-    this.cloud = cloudRepository
-    this.userDataPath = app.getPath('userData')
-    this.cachePath = path.join(this.userDataPath, 'ModsCache')
+export default class ModManagerService extends EventEmitter {
+  constructor(coreBridgeInstance, cloudRepositoryInstance, applicationCacheDirectoryPath) {
+    super()
+    this.coreBridge = coreBridgeInstance
+    this.cloudRepository = cloudRepositoryInstance
+    this.applicationCacheDirectory = applicationCacheDirectoryPath
     this.remoteBaseUrl = 'https://obriy-auth.artomk-dev.workers.dev'
     this.activeRegistryWatcher = null
     this.registryWatcherDebounceTimer = null
   }
 
-  async getAllFiles(dir) {
-    let results = []
-    if (!await fs.pathExists(dir)) return []
-    const list = await fs.readdir(dir)
-    for (const file of list) {
-      const filePath = path.join(dir, file)
-      const stat = await fs.stat(filePath)
-      if (stat && stat.isDirectory()) {
-        results = results.concat(await this.getAllFiles(filePath))
+  async retrieveAllFilePaths(directoryPath) {
+    let accumulatedFilePaths = []
+    const directoryExists = await fs.pathExists(directoryPath)
+    
+    if (!directoryExists) {
+      return []
+    }
+    
+    const directoryContents = await fs.readdir(directoryPath)
+    
+    for (const currentItemName of directoryContents) {
+      const currentItemFullPath = path.join(directoryPath, currentItemName)
+      const currentItemStatistics = await fs.stat(currentItemFullPath)
+      
+      if (currentItemStatistics && currentItemStatistics.isDirectory()) {
+        const nestedFilePaths = await this.retrieveAllFilePaths(currentItemFullPath)
+        accumulatedFilePaths = accumulatedFilePaths.concat(nestedFilePaths)
       } else {
-        results.push(filePath)
+        accumulatedFilePaths.push(currentItemFullPath)
       }
     }
-    return results
+    
+    return accumulatedFilePaths
   }
 
-  async findPathRecursive(dir, targetName, targetType = 'any') {
-    if (!await fs.pathExists(dir)) return null
-    const list = await fs.readdir(dir)
-    for (const file of list) {
-      const filePath = path.join(dir, file)
-      const stat = await fs.stat(filePath)
-      if (file.toLowerCase() === targetName.toLowerCase()) {
-        if (targetType === 'any') return filePath
-        if (targetType === 'dir' && stat.isDirectory()) return filePath
-        if (targetType === 'file' && !stat.isDirectory()) return filePath
+  async locatePathRecursively(searchDirectory, targetEntityName, targetEntityType = 'any') {
+    const directoryExists = await fs.pathExists(searchDirectory)
+    
+    if (!directoryExists) {
+      return null
+    }
+    
+    const directoryContents = await fs.readdir(searchDirectory)
+    
+    for (const currentItemName of directoryContents) {
+      const currentItemFullPath = path.join(searchDirectory, currentItemName)
+      const currentItemStatistics = await fs.stat(currentItemFullPath)
+      const isNameMatching = currentItemName.toLowerCase() === targetEntityName.toLowerCase()
+      
+      if (isNameMatching) {
+        if (targetEntityType === 'any') {
+          return currentItemFullPath
+        }
+        if (targetEntityType === 'dir' && currentItemStatistics.isDirectory()) {
+          return currentItemFullPath
+        }
+        if (targetEntityType === 'file' && !currentItemStatistics.isDirectory()) {
+          return currentItemFullPath
+        }
       }
-      if (stat.isDirectory()) {
-        const found = await this.findPathRecursive(filePath, targetName, targetType)
-        if (found) return found
+      
+      if (currentItemStatistics.isDirectory()) {
+        const recursivelyFoundPath = await this.locatePathRecursively(currentItemFullPath, targetEntityName, targetEntityType)
+        
+        if (recursivelyFoundPath) {
+          return recursivelyFoundPath
+        }
       }
     }
+    
     return null
   }
 
   async ensureBackendReady() {
-    return await this.core.executeCommand('ping', {})
+    return await this.coreBridge.executeCommand('ping', {})
   }
 
   async validateGamePath(gameDirectoryPath) {
-    const validationResult = await this.core.executeCommand('validate', gameDirectoryPath)
-    if (validationResult.status === 'success') {
-      console.log('[ModManager] Valid game path. Initializing Setup...')
-      await this.core.executeCommand('setup', gameDirectoryPath)
+    const directoryValidationResult = await this.coreBridge.executeCommand('validate', gameDirectoryPath)
+    
+    if (directoryValidationResult.status === 'success') {
+      await this.coreBridge.executeCommand('setup', gameDirectoryPath)
     }
-    return validationResult
+    
+    return directoryValidationResult
   }
 
   async getActiveMods(gameDirectoryPath) {
-    if (!gameDirectoryPath) return []
-    const registryPath = path.join(gameDirectoryPath, 'obriy_registry.json')
+    if (!gameDirectoryPath) {
+      return []
+    }
+    
+    const registryFilePath = path.join(gameDirectoryPath, 'obriy_registry.json')
+    
     try {
-      if (!await fs.pathExists(registryPath)) return []
+      const registryExists = await fs.pathExists(registryFilePath)
       
-      const registry = await fs.readJson(registryPath)
-      const activeMods = new Set()
+      if (!registryExists) {
+        return []
+      }
+      
+      const parsedRegistryData = await fs.readJson(registryFilePath)
+      const activeModificationIdentifiers = new Set()
 
-      if (registry.Mods && Array.isArray(registry.Mods)) {
-        registry.Mods.forEach(mod => {
-          if (mod.Id) {
-            activeMods.add(String(mod.Id))
+      if (parsedRegistryData.Mods && Array.isArray(parsedRegistryData.Mods)) {
+        parsedRegistryData.Mods.forEach(modificationEntry => {
+          if (modificationEntry.Id) {
+            activeModificationIdentifiers.add(String(modificationEntry.Id))
           }
         })
       }
 
-      return Array.from(activeMods)
-    } catch (error) {
+      return Array.from(activeModificationIdentifiers)
+    } catch (registryReadingError) {
       return []
     }
   }
@@ -89,315 +126,321 @@ export default class ModManagerService {
       this.activeRegistryWatcher.close()
       this.activeRegistryWatcher = null
     }
+    
     const registryFilePath = path.join(gameDirectoryPath, 'obriy_registry.json')
-    if (!fs.existsSync(registryFilePath)) return
+    const registryExists = fs.existsSync(registryFilePath)
+    
+    if (!registryExists) {
+      return
+    }
+    
     try {
       this.activeRegistryWatcher = fs.watch(registryFilePath, { persistent: false }, (fileEventType) => {
         if (fileEventType === 'change') {
-          if (this.registryWatcherDebounceTimer) clearTimeout(this.registryWatcherDebounceTimer)
+          if (this.registryWatcherDebounceTimer) {
+            clearTimeout(this.registryWatcherDebounceTimer)
+          }
+          
           this.registryWatcherDebounceTimer = setTimeout(async () => {
             const updatedActiveModsList = await this.getActiveMods(gameDirectoryPath)
+            
             if (mainWindowInstance && !mainWindowInstance.isDestroyed()) {
               mainWindowInstance.webContents.send('mods-updated', updatedActiveModsList)
             }
           }, 300)
         }
       })
-    } catch (e) { }
+    } catch (watcherInitializationError) {
+    }
   }
 
   async getRemoteCatalog() {
     try {
-      const rawCatalog = await this.cloud.getCatalog()
+      const rawRemoteCatalog = await this.cloudRepository.getCatalog()
       
-      return rawCatalog.map(mod => {
-        let images = []
-        if (Array.isArray(mod.images)) images = [...mod.images]
-        else if (mod.img) images = [mod.img]
+      return rawRemoteCatalog.map(catalogModification => {
+        let extractedImages = []
+        
+        if (Array.isArray(catalogModification.images)) {
+          extractedImages = [...catalogModification.images]
+        } else if (catalogModification.img) {
+          extractedImages = [catalogModification.img]
+        }
 
-        images.sort((a, b) => {
-            const nameA = a.split('.')[0] || '';
-            const nameB = b.split('.')[0] || '';
-            if (nameB.startsWith(nameA + '_')) return -1;
-            if (nameA.startsWith(nameB + '_')) return 1;
-            return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
-        });
+        extractedImages.sort((firstImage, secondImage) => {
+          const firstImagePrefix = firstImage.split('.')[0] || ''
+          const secondImagePrefix = secondImage.split('.')[0] || ''
+          
+          if (secondImagePrefix.startsWith(firstImagePrefix + '_')) {
+            return -1
+          }
+          if (firstImagePrefix.startsWith(secondImagePrefix + '_')) {
+            return 1
+          }
+          
+          return firstImage.localeCompare(secondImage, undefined, { numeric: true, sensitivity: 'base' })
+        })
 
-        const processedImages = images.map(imgName => {
-            if(imgName.startsWith('http')) return imgName;
-            return `${this.remoteBaseUrl}/mods/${mod.id}/assets/${imgName}`
+        const fullyQualifiedImageUrls = extractedImages.map(imageFilename => {
+          if (imageFilename.startsWith('http')) {
+            return imageFilename
+          }
+          return `${this.remoteBaseUrl}/mods/${catalogModification.id}/assets/${imageFilename}`
         })
 
         return {
-          id: mod.id,
-          name: mod.n || mod.name,
-          author: mod.a || mod.author,
-          category: mod.c || mod.category,
-          tags: mod.t || mod.tags,
-          version: mod.v || mod.version,
-          is_premium: mod.p || false,
-          images: processedImages, 
-          releaseDate: mod.d
+          id: catalogModification.id,
+          name: catalogModification.n || catalogModification.name,
+          author: catalogModification.a || catalogModification.author,
+          category: catalogModification.c || catalogModification.category,
+          tags: catalogModification.t || catalogModification.tags,
+          version: catalogModification.v || catalogModification.version,
+          is_premium: catalogModification.p || false,
+          images: fullyQualifiedImageUrls, 
+          releaseDate: catalogModification.d
         }
       })
-    } catch (error) {
-      console.error('Failed to get remote catalog:', error)
+    } catch (catalogFetchingError) {
       return []
     }
   }
 
-  async getModDetails(modificationId) {
-    const data = await this.cloud.getModManifest(modificationId)
+  async getModDetails(targetModificationId) {
+    const modificationManifestData = await this.cloudRepository.getModManifest(targetModificationId)
+    let modificationMediaList = []
     
-    let mediaList = []
-    if (data.media) {
-      if (Array.isArray(data.media)) {
-        mediaList = data.media
+    if (modificationManifestData.media) {
+      if (Array.isArray(modificationManifestData.media)) {
+        modificationMediaList = modificationManifestData.media
       } else {
-        const imgs = data.media.images || []
-        const vids = data.media.videos || []
-        mediaList = [...imgs, ...vids]
+        const extractedImages = modificationManifestData.media.images || []
+        const extractedVideos = modificationManifestData.media.videos || []
+        modificationMediaList = [...extractedImages, ...extractedVideos]
       }
     }
 
-    const fullMedia = mediaList.map(item => {
-      if (item.startsWith('http')) return item
-      return `${this.remoteBaseUrl}/mods/${modificationId}/assets/${item}`
+    const fullyQualifiedMediaUrls = modificationMediaList.map(mediaFilename => {
+      if (mediaFilename.startsWith('http')) {
+        return mediaFilename
+      }
+      return `${this.remoteBaseUrl}/mods/${targetModificationId}/assets/${mediaFilename}`
     })
 
     return { 
-        ...data, 
-        id: modificationId,
-        name: data.name || data.n,
-        author: data.author || data.a,
-        description: data.description || data.d,
-        media: fullMedia
+      ...modificationManifestData, 
+      id: targetModificationId,
+      name: modificationManifestData.name || modificationManifestData.n,
+      author: modificationManifestData.author || modificationManifestData.a,
+      description: modificationManifestData.description || modificationManifestData.d,
+      media: fullyQualifiedMediaUrls
     }
   }
 
-  async installMod(modificationId, gameDirectoryPath, expectedDownloadSize = 0) {
-    const userInterfaceFeedbackChannel = BrowserWindow.getAllWindows()[0]?.webContents
-    const modificationSessionDirectory = path.join(this.cachePath, modificationId.toString())
-    const extractedPath = path.join(modificationSessionDirectory, 'extracted')
-    const payloadArchiveLocalPath = path.join(modificationSessionDirectory, 'payload.zip')
+  async downloadRemoteArchive(remoteFileEndpoint, localDestinationPath, modificationId, processType, expectedDownloadSize) {
+    await this.cloudRepository.downloadFile(
+      remoteFileEndpoint,
+      localDestinationPath,
+      (downloadProgressPercentage) => {
+        this.emit('task-progress', { modId: modificationId, type: processType, percentage: downloadProgressPercentage })
+      },
+      expectedDownloadSize 
+    )
+  }
 
-    await fs.ensureDir(modificationSessionDirectory)
-    await fs.emptyDir(modificationSessionDirectory)
-    await fs.ensureDir(extractedPath)
+  async extractLocalArchive(sourceArchiveLocalPath, targetExtractionDirectory) {
+    const extractionExecutionResult = await this.coreBridge.executeCommand('extract', {
+      Source: sourceArchiveLocalPath,
+      Destination: targetExtractionDirectory
+    })
 
-    const timestamp = Date.now()
+    if (extractionExecutionResult.status !== 'success') {
+      throw new Error(extractionExecutionResult.message)
+    }
+    
+    return extractionExecutionResult
+  }
+
+  async resolveModificationInstructions(extractionDirectoryPath) {
+    let compiledInstructionsList = []
+    let parsedManifestInstructions = null
+
+    const locatedInstructionFilePath = await this.locatePathRecursively(extractionDirectoryPath, 'instruction.json', 'file')
+    
+    if (locatedInstructionFilePath) {
+      try { 
+        parsedManifestInstructions = await fs.readJson(locatedInstructionFilePath) 
+      } catch (manifestParsingError) {
+      }
+    }
+
+    const predefinedFilesBaseDirectory = path.join(extractionDirectoryPath, 'files')
+    const isPredefinedFilesDirectoryPresent = await fs.pathExists(predefinedFilesBaseDirectory)
+    const activeSearchDirectoryPath = isPredefinedFilesDirectoryPresent ? predefinedFilesBaseDirectory : extractionDirectoryPath
+
+    if (parsedManifestInstructions) {
+      for (const currentManifestInstruction of parsedManifestInstructions) {
+        let unparsedInstructionPath = (currentManifestInstruction.path || currentManifestInstruction.Path || '').trim()
+        
+        if (unparsedInstructionPath === '') {
+          const allAvailableFiles = await this.retrieveAllFilePaths(activeSearchDirectoryPath)
+          for (const currentDiscoveredFile of allAvailableFiles) {
+            if (path.basename(currentDiscoveredFile).toLowerCase() === 'instruction.json') {
+              continue
+            }
+            compiledInstructionsList.push({ type: currentManifestInstruction.type, target: currentManifestInstruction.target, path: currentDiscoveredFile })
+          }
+          continue
+        }
+        
+        let absoluteSourcePath = path.join(activeSearchDirectoryPath, unparsedInstructionPath)
+        const isAbsoluteSourcePathValid = await fs.pathExists(absoluteSourcePath)
+        
+        if (!isAbsoluteSourcePathValid) {
+          const targetEntityName = path.basename(unparsedInstructionPath)
+          const dynamicallyFoundPath = await this.locatePathRecursively(activeSearchDirectoryPath, targetEntityName)
+          if (dynamicallyFoundPath) {
+            absoluteSourcePath = dynamicallyFoundPath
+          }
+        }
+        
+        if (absoluteSourcePath && await fs.pathExists(absoluteSourcePath)) {
+          const currentPathStatistics = await fs.stat(absoluteSourcePath)
+          
+          if (currentPathStatistics.isDirectory()) {
+            const nestedDirectoryFiles = await this.retrieveAllFilePaths(absoluteSourcePath)
+            for (const currentNestedFile of nestedDirectoryFiles) {
+              compiledInstructionsList.push({ type: currentManifestInstruction.type, target: currentManifestInstruction.target, path: currentNestedFile })
+            }
+          } else {
+            compiledInstructionsList.push({ type: currentManifestInstruction.type, target: currentManifestInstruction.target, path: absoluteSourcePath })
+          }
+        }
+      }
+    }
+
+    if (compiledInstructionsList.length === 0) {
+      const allAvailableFiles = await this.retrieveAllFilePaths(activeSearchDirectoryPath)
+      
+      for (const currentDiscoveredFile of allAvailableFiles) {
+        const currentFileExtension = path.extname(currentDiscoveredFile).toLowerCase()
+        const currentFileName = path.basename(currentDiscoveredFile).toLowerCase()
+        const supportedRageEngineExtensions = ['.ydr', '.ytd', '.yft', '.ydd']
+        
+        if (supportedRageEngineExtensions.includes(currentFileExtension)) {
+          let calculatedTargetLocation = 'ROOT'
+          
+          if (currentFileName.startsWith('w_') || currentFileName.includes('weapon')) {
+            calculatedTargetLocation = 'WEAPONS'
+          }
+          
+          compiledInstructionsList.push({ type: 'replace', target: calculatedTargetLocation, path: currentDiscoveredFile })
+        } else if (currentFileName === 'minimap.rpf') {
+          compiledInstructionsList.push({ type: 'replace', target: 'GTA5_LEVELS', path: currentDiscoveredFile })
+        }
+      }
+    }
+
+    if (compiledInstructionsList.length === 0) {
+      throw new Error("No valid game files found.")
+    }
+    
+    return compiledInstructionsList
+  }
+
+  async installMod(targetModificationId, targetGameDirectoryPath, expectedDownloadSize = 0) {
+    const modificationSessionDirectoryPath = path.join(this.applicationCacheDirectory, targetModificationId.toString())
+    const targetExtractionDirectoryPath = path.join(modificationSessionDirectoryPath, 'extracted')
+    const targetPayloadArchiveLocalPath = path.join(modificationSessionDirectoryPath, 'payload.zip')
+    const currentTimestamp = Date.now()
+    const remotePayloadEndpoint = `/mods/${targetModificationId}/payload.zip?t=${currentTimestamp}`
+
+    await fs.ensureDir(modificationSessionDirectoryPath)
+    await fs.emptyDir(modificationSessionDirectoryPath)
+    await fs.ensureDir(targetExtractionDirectoryPath)
 
     try {
-      userInterfaceFeedbackChannel?.send('task-progress', { modId: modificationId, type: 'download', percentage: 0 })
+      this.emit('task-progress', { modId: targetModificationId, type: 'download', percentage: 0 })
 
-      await this.cloud.downloadFile(
-        `/mods/${modificationId}/payload.zip?t=${timestamp}`,
-        payloadArchiveLocalPath,
-        (progress) => {
-           userInterfaceFeedbackChannel?.send('task-progress', { modId: modificationId, type: 'download', percentage: progress })
-        },
-        expectedDownloadSize 
-      )
+      await this.downloadRemoteArchive(remotePayloadEndpoint, targetPayloadArchiveLocalPath, targetModificationId, 'download', expectedDownloadSize)
 
-      userInterfaceFeedbackChannel?.send('task-progress', { modId: modificationId, type: 'install', percentage: 10 })
+      this.emit('task-progress', { modId: targetModificationId, type: 'install', percentage: 10 })
 
-      const extractResult = await this.core.executeCommand('extract', {
-        Source: payloadArchiveLocalPath,
-        Destination: extractedPath
-      })
+      await this.extractLocalArchive(targetPayloadArchiveLocalPath, targetExtractionDirectoryPath)
 
-      if (extractResult.status !== 'success') {
-        throw new Error(extractResult.message)
+      this.emit('task-progress', { modId: targetModificationId, type: 'install', percentage: 50 })
+
+      const compiledInstructionsList = await this.resolveModificationInstructions(targetExtractionDirectoryPath)
+
+      const coreInstallationRequest = {
+        GamePath: targetGameDirectoryPath,
+        Id: targetModificationId.toString(),
+        ModName: targetModificationId.toString(),
+        Instructions: compiledInstructionsList
       }
 
-      userInterfaceFeedbackChannel?.send('task-progress', { modId: modificationId, type: 'install', percentage: 50 })
+      const coreInstallationExecutionResult = await this.coreBridge.executeCommand('install', coreInstallationRequest)
 
-      let instructions = []
-      let loadedInstructions = null
-
-      const internalInstrPath = await this.findPathRecursive(extractedPath, 'instruction.json', 'file')
-      if (internalInstrPath) {
-        try { 
-            loadedInstructions = await fs.readJson(internalInstrPath) 
-        } catch (e) { }
+      if (coreInstallationExecutionResult.status === 'success') {
+        const updatedMods = await this.getActiveMods(targetGameDirectoryPath)
+        this.emit('mods-updated', updatedMods)
       }
 
-      const modFilesBaseDir = path.join(extractedPath, 'files')
-      const filesDirExists = await fs.pathExists(modFilesBaseDir)
-      const activeSearchDir = filesDirExists ? modFilesBaseDir : extractedPath
+      await fs.remove(modificationSessionDirectoryPath)
+      this.emit('task-progress', { modId: targetModificationId, type: 'install', percentage: 100 })
 
-      if (loadedInstructions) {
-        for (const instr of loadedInstructions) {
-          let rawPath = (instr.path || instr.Path || '').trim()
-          if (rawPath === '') {
-            const files = await this.getAllFiles(activeSearchDir)
-            for (const file of files) {
-              if (path.basename(file).toLowerCase() === 'instruction.json') continue
-              instructions.push({ type: instr.type, target: instr.target, path: file })
-            }
-            continue
-          }
-          let sourceAbsPath = path.join(activeSearchDir, rawPath)
-          if (!await fs.pathExists(sourceAbsPath)) {
-            const targetName = path.basename(rawPath)
-            const found = await this.findPathRecursive(activeSearchDir, targetName)
-            if (found) sourceAbsPath = found
-          }
-          if (sourceAbsPath && await fs.pathExists(sourceAbsPath)) {
-            const stat = await fs.stat(sourceAbsPath)
-            if (stat.isDirectory()) {
-              const files = await this.getAllFiles(sourceAbsPath)
-              for (const file of files) instructions.push({ type: instr.type, target: instr.target, path: file })
-            } else {
-              instructions.push({ type: instr.type, target: instr.target, path: sourceAbsPath })
-            }
-          }
-        }
-      }
+      return coreInstallationExecutionResult
 
-      if (instructions.length === 0) {
-        const files = await this.getAllFiles(activeSearchDir)
-        for (const filePath of files) {
-          const ext = path.extname(filePath).toLowerCase()
-          const fileName = path.basename(filePath).toLowerCase()
-          if (['.ydr', '.ytd', '.yft', '.ydd'].includes(ext)) {
-            let target = 'ROOT'
-            if (fileName.startsWith('w_') || fileName.includes('weapon')) target = 'WEAPONS'
-            instructions.push({ type: 'replace', target: target, path: filePath })
-          } else if (fileName === 'minimap.rpf') {
-            instructions.push({ type: 'replace', target: 'GTA5_LEVELS', path: filePath })
-          }
-        }
-      }
-
-      if (instructions.length === 0) {
-        throw new Error("No valid game files found.")
-      }
-
-      const installRequest = {
-        GamePath: gameDirectoryPath,
-        Id: modificationId.toString(),
-        ModName: modificationId.toString(),
-        Instructions: instructions
-      }
-
-      const backendExecutionResult = await this.core.executeCommand('install', installRequest)
-
-      if (backendExecutionResult.status === 'success') {
-        const updatedMods = await this.getActiveMods(gameDirectoryPath)
-        userInterfaceFeedbackChannel?.send('mods-updated', updatedMods)
-      }
-
-      await fs.remove(modificationSessionDirectory)
-      userInterfaceFeedbackChannel?.send('task-progress', { modId: modificationId, type: 'install', percentage: 100 })
-
-      return backendExecutionResult
-
-    } catch (error) {
-      userInterfaceFeedbackChannel?.send('installation-error', { message: error.message })
-      return { status: 'error', message: error.message }
+    } catch (installationProcessError) {
+      this.emit('installation-error', { message: installationProcessError.message })
+      return { status: 'error', message: installationProcessError.message }
     }
   }
 
-  async uninstallMod(modificationId, gameDirectoryPath, expectedDownloadSize = 0) {
-    const userInterfaceFeedbackChannel = BrowserWindow.getAllWindows()[0]?.webContents
-    const modificationSessionDirectory = path.join(this.cachePath, `uninstall_${modificationId}`)
-    const extractedPath = path.join(modificationSessionDirectory, 'extracted')
-    const restoreArchiveLocalPath = path.join(modificationSessionDirectory, 'restore.zip')
+  async uninstallMod(targetModificationId, targetGameDirectoryPath, expectedDownloadSize = 0) {
+    const modificationSessionDirectoryPath = path.join(this.applicationCacheDirectory, `uninstall_${targetModificationId}`)
+    const targetExtractionDirectoryPath = path.join(modificationSessionDirectoryPath, 'extracted')
+    const targetRestoreArchiveLocalPath = path.join(modificationSessionDirectoryPath, 'restore.zip')
+    const currentTimestamp = Date.now()
+    const remoteRestoreEndpoint = `/mods/${targetModificationId}/restore.zip?t=${currentTimestamp}`
 
-    await fs.ensureDir(modificationSessionDirectory)
-    await fs.emptyDir(modificationSessionDirectory)
-    await fs.ensureDir(extractedPath)
+    await fs.ensureDir(modificationSessionDirectoryPath)
+    await fs.emptyDir(modificationSessionDirectoryPath)
+    await fs.ensureDir(targetExtractionDirectoryPath)
 
-    const timestamp = Date.now()
-    let instructions = []
+    let compiledInstructionsList = []
 
     try {
-      userInterfaceFeedbackChannel?.send('task-progress', { modId: modificationId, type: 'uninstall', percentage: 10 })
+      this.emit('task-progress', { modId: targetModificationId, type: 'uninstall', percentage: 10 })
 
       try {
-        await this.cloud.downloadFile(
-          `/mods/${modificationId}/restore.zip?t=${timestamp}`,
-          restoreArchiveLocalPath,
-          () => {},
-          expectedDownloadSize
-        )
-
-        const extractResult = await this.core.executeCommand('extract', {
-          Source: restoreArchiveLocalPath,
-          Destination: extractedPath
-        })
-
-        if (extractResult.status === 'success') {
-          const internalInstrPath = await this.findPathRecursive(extractedPath, 'instruction.json', 'file')
-          if (internalInstrPath) {
-            let loadedInstructions = null
-            try { 
-                loadedInstructions = await fs.readJson(internalInstrPath) 
-            } catch (e) { }
-
-            const modFilesBaseDir = path.join(extractedPath, 'files')
-            const filesDirExists = await fs.pathExists(modFilesBaseDir)
-            const activeSearchDir = filesDirExists ? modFilesBaseDir : extractedPath
-
-            if (loadedInstructions) {
-              for (const instr of loadedInstructions) {
-                let rawPath = (instr.path || instr.Path || '').trim()
-                if (rawPath === '') {
-                  const files = await this.getAllFiles(activeSearchDir)
-                  for (const file of files) {
-                    if (path.basename(file).toLowerCase() === 'instruction.json') continue
-                    instructions.push({ type: instr.type, target: instr.target, path: file })
-                  }
-                  continue
-                }
-                let sourceAbsPath = path.join(activeSearchDir, rawPath)
-                if (!await fs.pathExists(sourceAbsPath)) {
-                  const targetName = path.basename(rawPath)
-                  const found = await this.findPathRecursive(activeSearchDir, targetName)
-                  if (found) sourceAbsPath = found
-                }
-                if (sourceAbsPath && await fs.pathExists(sourceAbsPath)) {
-                  const stat = await fs.stat(sourceAbsPath)
-                  if (stat.isDirectory()) {
-                    const files = await this.getAllFiles(sourceAbsPath)
-                    for (const file of files) instructions.push({ type: instr.type, target: instr.target, path: file })
-                  } else {
-                    instructions.push({ type: instr.type, target: instr.target, path: sourceAbsPath })
-                  }
-                }
-              }
-            }
-          }
-        }
-      } catch (cloudError) {
+        await this.downloadRemoteArchive(remoteRestoreEndpoint, targetRestoreArchiveLocalPath, targetModificationId, 'uninstall', expectedDownloadSize)
+        await this.extractLocalArchive(targetRestoreArchiveLocalPath, targetExtractionDirectoryPath)
+        compiledInstructionsList = await this.resolveModificationInstructions(targetExtractionDirectoryPath)
+      } catch (cloudOrExtractionError) {
       }
 
-      userInterfaceFeedbackChannel?.send('task-progress', { modId: modificationId, type: 'uninstall', percentage: 50 })
+      this.emit('task-progress', { modId: targetModificationId, type: 'uninstall', percentage: 50 })
 
-      const uninstallRequest = {
-          GamePath: gameDirectoryPath,
-          Id: modificationId.toString(),
-          Instructions: instructions
+      const coreUninstallationRequest = {
+        GamePath: targetGameDirectoryPath,
+        Id: targetModificationId.toString(),
+        Instructions: compiledInstructionsList
       }
 
-      const backendExecutionResult = await this.core.executeCommand('uninstall', uninstallRequest)
+      const coreUninstallationExecutionResult = await this.coreBridge.executeCommand('uninstall', coreUninstallationRequest)
 
-      if (backendExecutionResult.status === 'success') {
-          const updatedMods = await this.getActiveMods(gameDirectoryPath)
-          userInterfaceFeedbackChannel?.send('mods-updated', updatedMods)
-      } else {
-           console.error('[ModManager] Uninstall failed:', backendExecutionResult.message)
+      if (coreUninstallationExecutionResult.status === 'success') {
+        const updatedMods = await this.getActiveMods(targetGameDirectoryPath)
+        this.emit('mods-updated', updatedMods)
       }
       
-      await fs.remove(modificationSessionDirectory)
-      userInterfaceFeedbackChannel?.send('task-progress', { modId: modificationId, type: 'uninstall', percentage: 100 })
+      await fs.remove(modificationSessionDirectoryPath)
+      this.emit('task-progress', { modId: targetModificationId, type: 'uninstall', percentage: 100 })
       
-      return backendExecutionResult
+      return coreUninstallationExecutionResult
 
-    } catch (error) {
-        console.error(error)
-        return { status: 'error', message: error.message }
+    } catch (uninstallationProcessError) {
+      return { status: 'error', message: uninstallationProcessError.message }
     }
   }
 }

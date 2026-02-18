@@ -1,13 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
-const api = {
-  getStoreValue: (key) => ipcRenderer.invoke('store:get', key),
-  setStoreValue: (key, value) => ipcRenderer.invoke('store:set', key, value),
-  deleteStoreValue: (key) => ipcRenderer.invoke('store:delete', key),
+const applicationApi = {
+  getStoreValue: (configurationKey) => ipcRenderer.invoke('store:get', configurationKey),
+  setStoreValue: (configurationKey, configurationValue) => ipcRenderer.invoke('store:set', configurationKey, configurationValue),
+  deleteStoreValue: (configurationKey) => ipcRenderer.invoke('store:delete', configurationKey),
   
   selectGameDirectory: () => ipcRenderer.invoke('dialog:selectGameDirectory'),
-  validateGamePath: (path) => ipcRenderer.invoke('validate-game-path', path),
+  validateGamePath: (targetDirectoryPath) => ipcRenderer.invoke('validate-game-path', targetDirectoryPath),
   
   startBackend: () => ipcRenderer.invoke('start-backend'),
   
@@ -20,59 +20,59 @@ const api = {
 
   resizeToLoader: () => ipcRenderer.invoke('window:resize-to-loader'),
   resizeToMain: () => ipcRenderer.invoke('window:resize-to-main'),
+  revertToLoader: () => ipcRenderer.invoke('revert-to-loader'),
   
-  invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
-  send: (channel, ...args) => ipcRenderer.send(channel, ...args),
+  invoke: (channelName, ...channelArguments) => ipcRenderer.invoke(channelName, ...channelArguments),
+  send: (channelName, ...channelArguments) => ipcRenderer.send(channelName, ...channelArguments),
 
-  getModStats: (modId) => ipcRenderer.invoke('get-mod-stats', modId),
-  
+  verifySubscription: () => ipcRenderer.invoke('auth:verify-subscription'),
+  getActiveMods: () => ipcRenderer.invoke('get-active-mods'),
+  getModStats: (targetModificationId) => ipcRenderer.invoke('get-mod-stats', targetModificationId),
   getModCatalog: () => ipcRenderer.invoke('get-mod-catalog'),
-  getModDetails: (modId) => ipcRenderer.invoke('get-mod-details', modId),
-  
+  getModDetails: (targetModificationId) => ipcRenderer.invoke('get-mod-details', targetModificationId),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
-  onUpdateStatus: (callback) => {
-    const subscription = (event, value) => callback(value)
-    ipcRenderer.on('update-status', subscription)
-    return () => ipcRenderer.removeListener('update-status', subscription)
+  installMod: (targetModificationId) => ipcRenderer.invoke('install-mod', targetModificationId),
+  uninstallMod: (targetGamePath, modificationInstructions, targetModificationId) => ipcRenderer.invoke('uninstall-mod', targetGamePath, modificationInstructions, targetModificationId),
+
+  onUpdateStatus: (eventCallback) => {
+    const eventSubscription = (_, statusData) => eventCallback(statusData)
+    ipcRenderer.on('update-status', eventSubscription)
+    return () => ipcRenderer.removeListener('update-status', eventSubscription)
   },
 
-  onTaskProgress: (callback) => {
-    const subscription = (event, data) => callback(data)
-    ipcRenderer.on('task-progress', subscription)
-    return () => ipcRenderer.removeListener('task-progress', subscription)
+  onTaskProgress: (eventCallback) => {
+    const eventSubscription = (_, progressData) => eventCallback(progressData)
+    ipcRenderer.on('task-progress', eventSubscription)
+    return () => ipcRenderer.removeListener('task-progress', eventSubscription)
   },
 
-  onAuthSync: (callback) => {
-    const subscription = (event, userData) => callback(userData)
-    ipcRenderer.on('auth:sync-profile', subscription)
-    return () => ipcRenderer.removeListener('auth:sync-profile', subscription)
+  onAuthSync: (eventCallback) => {
+    const eventSubscription = (_, synchronizedProfile) => eventCallback(synchronizedProfile)
+    ipcRenderer.on('auth:sync-profile', eventSubscription)
+    return () => ipcRenderer.removeListener('auth:sync-profile', eventSubscription)
   },
 
-  onPathSync: (callback) => {
-    const subscription = (event, path) => callback(path)
-    ipcRenderer.on('path:sync-directory', subscription)
-    return () => ipcRenderer.removeListener('path:sync-directory', subscription)
+  onPathSync: (eventCallback) => {
+    const eventSubscription = (_, synchronizedPath) => eventCallback(synchronizedPath)
+    ipcRenderer.on('path:sync-directory', eventSubscription)
+    return () => ipcRenderer.removeListener('path:sync-directory', eventSubscription)
   },
 
-  onModsUpdated: (callback) => {
-    const subscription = (event, value) => callback(value)
-    ipcRenderer.on('mods-updated', subscription)
-    return () => ipcRenderer.removeListener('mods-updated', subscription)
-  },
-
-  installMod: (modId) => ipcRenderer.invoke('install-mod', modId),
-  uninstallMod: (gamePath, instructions, modId) => ipcRenderer.invoke('uninstall-mod', gamePath, instructions, modId)
+  onModsUpdated: (eventCallback) => {
+    const eventSubscription = (_, updatedModsList) => eventCallback(updatedModsList)
+    ipcRenderer.on('mods-updated', eventSubscription)
+    return () => ipcRenderer.removeListener('mods-updated', eventSubscription)
+  }
 }
 
 if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('electron', electronAPI)
-    contextBridge.exposeInMainWorld('api', api)
-  } catch (error) {
-    console.error(error)
+    contextBridge.exposeInMainWorld('api', applicationApi)
+  } catch (bridgeExposureError) {
   }
 } else {
   window.electron = electronAPI
-  window.api = api
+  window.api = applicationApi
 }

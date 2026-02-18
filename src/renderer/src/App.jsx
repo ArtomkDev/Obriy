@@ -8,7 +8,7 @@ import ModDetailsPage from './pages/ModDetailsPage'
 import LoaderScreen from './components/LoaderScreen'
 import { InstallerProvider, useInstaller } from './context/InstallerContext'
 
-function MainLayout() {
+function MainApplicationLayout() {
   return (
     <div className="flex h-screen bg-[#09090b] text-white overflow-hidden border border-zinc-800">
       <Sidebar />
@@ -29,45 +29,41 @@ function MainLayout() {
 
 function ApplicationInterfaceSelector() {
   const { gamePath, currentUser, isPathLoaded } = useInstaller()
-  const [currentHash, setCurrentHash] = useState(window.location.hash)
+  const [currentUrlHash, setCurrentUrlHash] = useState(window.location.hash)
 
   useEffect(() => {
-    const syncHash = () => setCurrentHash(window.location.hash)
-    window.addEventListener('hashchange', syncHash)
-    return () => window.removeEventListener('hashchange', syncHash)
+    const synchronizeUrlHash = () => setCurrentUrlHash(window.location.hash)
+    window.addEventListener('hashchange', synchronizeUrlHash)
+    return () => window.removeEventListener('hashchange', synchronizeUrlHash)
   }, [])
 
-  const isAuthorized = useMemo(() => !!gamePath && !!currentUser?.id, [gamePath, currentUser])
-  const shouldShowLoader = useMemo(() => currentHash === '#loader' || !isAuthorized, [currentHash, isAuthorized])
+  const isUserAuthorized = useMemo(() => !!gamePath && !!currentUser?.id, [gamePath, currentUser])
+  const shouldRenderLoader = useMemo(() => currentUrlHash === '#loader' || !isUserAuthorized, [currentUrlHash, isUserAuthorized])
 
   useEffect(() => {
-    console.log('[App][Diagnostic] Auth State Changed:', { 
-      gamePath, 
-      userId: currentUser?.id, 
-      isAuthorized, 
-      currentHash,
-      isPathLoaded 
-    })
-
-    if (!isPathLoaded) return
-
-    if (shouldShowLoader) {
-      window.api?.invoke('window:resize-to-loader')
-    } else {
-      window.api?.invoke('window:resize-to-main')
+    if (!isPathLoaded) {
+        return
     }
-  }, [isAuthorized, currentHash, isPathLoaded, shouldShowLoader])
 
-  if (!isPathLoaded) return null
+    if (shouldRenderLoader) {
+      window.api?.resizeToLoader()
+    } else {
+      window.api?.resizeToMain()
+    }
+  }, [isUserAuthorized, currentUrlHash, isPathLoaded, shouldRenderLoader])
 
-  if (shouldShowLoader) {
+  if (!isPathLoaded) {
+      return null
+  }
+
+  if (shouldRenderLoader) {
     return <LoaderScreen />
   }
 
-  return <MainLayout />
+  return <MainApplicationLayout />
 }
 
-export default function App() {
+export default function ApplicationRoot() {
   return (
     <InstallerProvider>
       <ApplicationInterfaceSelector />
