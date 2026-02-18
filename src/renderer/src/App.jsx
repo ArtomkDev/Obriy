@@ -10,10 +10,10 @@ import { InstallerProvider, useInstaller } from './context/InstallerContext'
 
 function MainApplicationLayout() {
   return (
-    <div className="flex h-screen bg-[#09090b] text-white overflow-hidden border border-zinc-800">
-      <Sidebar />
-      <div className="flex-1 flex flex-col min-w-0 bg-[#09090b]">
-        <WindowControls />
+    <div className="flex flex-col h-screen bg-[#09090b] text-white overflow-hidden border border-zinc-800">
+      <WindowControls />
+      <div className="flex flex-1 min-h-0 bg-[#09090b]">
+        <Sidebar />
         <main className="flex-1 bg-zinc-900/40 rounded-tl-[2rem] border-t border-l border-white/5 overflow-hidden flex flex-col relative shadow-inner">
           <Routes>
             <Route path="/mods" element={<ModsPage />} />
