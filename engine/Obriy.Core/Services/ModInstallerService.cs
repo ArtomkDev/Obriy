@@ -39,120 +39,235 @@ namespace Obriy.Core.Services
             var installedFilePaths = new List<string>();
             var touchedArchives = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             bool globalChanges = false;
-            
-            using var mainSession = _rpfService.OpenPatchday(request.GamePath);
 
-            var groupedInstructions = request.Instructions.GroupBy(i => ExtractInternalPath(i.Target));
+            var dlcInstructions = request.Instructions.Where(i => i.Type != "replace_original").ToList();
+            var originalInstructions = request.Instructions.Where(i => i.Type == "replace_original").ToList();
 
-            foreach (var group in groupedInstructions)
+            if (dlcInstructions.Any())
             {
-                var internalPathInsideDlc = group.Key;
-                RpfFile targetRpf = mainSession.RpfFile;
-                RpfFile innerRpf = null;
-                string tempInnerPath = null;
-                bool isDirectoryTarget = false;
+                using var mainSession = _rpfService.OpenPatchday(request.GamePath);
+                var groupedInstructions = dlcInstructions.GroupBy(i => ExtractInternalPath(i.Target));
 
-                if (string.IsNullOrEmpty(internalPathInsideDlc)) internalPathInsideDlc = "ROOT";
-
-                if (internalPathInsideDlc != "ROOT")
+                foreach (var group in groupedInstructions)
                 {
-                    if (internalPathInsideDlc.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase))
-                    {
-                        touchedArchives.Add(internalPathInsideDlc);
-                        try { tempInnerPath = _rpfService.ExtractInnerRpf(mainSession.RpfFile, internalPathInsideDlc); }
-                        catch (Exception ex) { Console.Error.WriteLine($"[Warning] Failed to extract {internalPathInsideDlc}: {ex.Message}"); }
+                    var internalPathInsideDlc = group.Key;
+                    RpfFile targetRpf = mainSession.RpfFile;
+                    RpfFile innerRpf = null;
+                    string tempInnerPath = null;
+                    bool isDirectoryTarget = false;
 
-                        if (tempInnerPath != null)
+                    if (string.IsNullOrEmpty(internalPathInsideDlc)) internalPathInsideDlc = "ROOT";
+
+                    if (internalPathInsideDlc != "ROOT")
+                    {
+                        if (internalPathInsideDlc.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase))
                         {
-                            innerRpf = new RpfFile(tempInnerPath, Path.GetFileName(tempInnerPath));
-                            innerRpf.ScanStructure(null, null);
-                            targetRpf = innerRpf;
+                            touchedArchives.Add(internalPathInsideDlc);
+                            try { tempInnerPath = _rpfService.ExtractInnerRpf(mainSession.RpfFile, internalPathInsideDlc); }
+                            catch (Exception ex) { Console.Error.WriteLine($"[Warning] Failed to extract {internalPathInsideDlc}: {ex.Message}"); }
+
+                            if (tempInnerPath != null)
+                            {
+                                innerRpf = new RpfFile(tempInnerPath, Path.GetFileName(tempInnerPath));
+                                innerRpf.ScanStructure(null, null);
+                                targetRpf = innerRpf;
+                            }
+                            else
+                            {
+                                Console.Error.WriteLine($"[Installer] Creating new archive: {internalPathInsideDlc}");
+                                tempInnerPath = Path.GetTempFileName();
+                                try { File.Delete(tempInnerPath); } catch {} 
+                                innerRpf = _rpfService.CreateNew(tempInnerPath);
+                                targetRpf = innerRpf;
+                            }
                         }
                         else
                         {
-                            Console.Error.WriteLine($"[Installer] Creating new archive: {internalPathInsideDlc}");
-                            tempInnerPath = Path.GetTempFileName();
-                            try { File.Delete(tempInnerPath); } catch {} 
-                            innerRpf = _rpfService.CreateNew(tempInnerPath);
-                            targetRpf = innerRpf;
+                            isDirectoryTarget = true;
                         }
                     }
-                    else
+
+                    bool groupChanges = false;
+
+                    foreach (var instruction in group)
                     {
-                        isDirectoryTarget = true;
+                        try
+                        {
+                            string fileName = Path.GetFileName(instruction.Path);
+                            string finalInternalPath;
+
+                            if (isDirectoryTarget)
+                            {
+                                var fullInternalPath = Path.Combine(internalPathInsideDlc, fileName);
+                                var fileData = await File.ReadAllBytesAsync(instruction.Path);
+                                _rpfService.ReplaceInnerFile(mainSession.RpfFile, fullInternalPath, fileData);
+                                
+                                finalInternalPath = Path.Combine(RegistryBasePath, fullInternalPath);
+                                groupChanges = true;
+                                Console.Error.WriteLine($"[Success] Installed (Direct): {fileName} -> {fullInternalPath}");
+
+                                if (fileName.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    string archiveRegPath = fullInternalPath;
+                                    if (archiveRegPath.StartsWith("ROOT", StringComparison.OrdinalIgnoreCase)) archiveRegPath = fileName;
+                                    if (NeedsX64Prefix(archiveRegPath)) archiveRegPath = Path.Combine("x64", archiveRegPath);
+                                    touchedArchives.Add(archiveRegPath);
+                                }
+                            }
+                            else
+                            {
+                                if (_handlers.TryGetValue(instruction.Type, out var handler))
+                                {
+                                    handler.Execute(instruction, targetRpf, request.GamePath);
+                                    string containerPath = internalPathInsideDlc == "ROOT" ? "" : internalPathInsideDlc;
+                                    finalInternalPath = Path.Combine(RegistryBasePath, containerPath, fileName);
+                                    groupChanges = true;
+                                    Console.Error.WriteLine($"[Success] Installed: {fileName} -> {internalPathInsideDlc}");
+                                }
+                                else continue;
+                            }
+                            installedFilePaths.Add(finalInternalPath);
+                        }
+                        catch (Exception ex) { Console.Error.WriteLine($"[Error] Failed to install {instruction.Path}: {ex.Message}"); }
                     }
+
+                    if (!isDirectoryTarget && groupChanges && innerRpf != null && tempInnerPath != null)
+                    {
+                        _rpfService.Defragment(innerRpf);
+                        var newData = await File.ReadAllBytesAsync(tempInnerPath);
+                        _rpfService.ReplaceInnerFile(mainSession.RpfFile, internalPathInsideDlc, newData);
+                        globalChanges = true;
+                        try { innerRpf = null; File.Delete(tempInnerPath); } catch { }
+                    }
+                    else if (groupChanges) globalChanges = true;
                 }
 
-                bool groupChanges = false;
-
-                foreach (var instruction in group)
+                if (touchedArchives.Count > 0)
                 {
+                    Console.Error.WriteLine("[Installer] Checking XML configuration...");
+                    _gameConfigService.EnsureArchivesRegistered(mainSession.RpfFile, touchedArchives);
+                    globalChanges = true; 
+                }
+
+                if (globalChanges)
+                {
+                    Console.Error.WriteLine("[Installer] Saving changes to dlc.rpf...");
+                    _rpfService.Defragment(mainSession.RpfFile);
+                }
+            }
+
+            if (originalInstructions.Any())
+            {
+                Console.Error.WriteLine($"[Installer] Processing {originalInstructions.Count} direct original file replacements...");
+
+                var groupedOriginals = originalInstructions.GroupBy(i => GetBaseArchiveAndInnerPath(i.Target));
+
+                foreach (var group in groupedOriginals)
+                {
+                    var baseArchiveName = group.Key.BaseArchive;
+                    var baseArchivePath = Path.Combine(request.GamePath, baseArchiveName);
+
+                    if (!File.Exists(baseArchivePath))
+                    {
+                        Console.Error.WriteLine($"[Error] Original archive not found: {baseArchivePath}");
+                        continue;
+                    }
+
+                    var backupPath = baseArchivePath + ".obriybak";
+                    if (!File.Exists(backupPath)) File.Copy(baseArchivePath, backupPath);
+
+                    var mainRpf = new RpfFile(baseArchivePath, baseArchivePath);
+                    
                     try
                     {
-                        string fileName = Path.GetFileName(instruction.Path);
-                        string finalInternalPath;
-
-                        if (isDirectoryTarget)
-                        {
-                            var fullInternalPath = Path.Combine(internalPathInsideDlc, fileName);
-                            var fileData = await File.ReadAllBytesAsync(instruction.Path);
-                            _rpfService.ReplaceInnerFile(mainSession.RpfFile, fullInternalPath, fileData);
-                            
-                            finalInternalPath = Path.Combine(RegistryBasePath, fullInternalPath);
-                            groupChanges = true;
-                            Console.Error.WriteLine($"[Success] Installed (Direct): {fileName} -> {fullInternalPath}");
-
-                            if (fileName.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase))
-                            {
-                                string archiveRegPath = fullInternalPath;
-                                if (archiveRegPath.StartsWith("ROOT", StringComparison.OrdinalIgnoreCase)) archiveRegPath = fileName;
-                                if (NeedsX64Prefix(archiveRegPath)) archiveRegPath = Path.Combine("x64", archiveRegPath);
-                                touchedArchives.Add(archiveRegPath);
-                            }
-                        }
-                        else
-                        {
-                            if (_handlers.TryGetValue(instruction.Type, out var handler))
-                            {
-                                handler.Execute(instruction, targetRpf, request.GamePath);
-                                string containerPath = internalPathInsideDlc == "ROOT" ? "" : internalPathInsideDlc;
-                                finalInternalPath = Path.Combine(RegistryBasePath, containerPath, fileName);
-                                groupChanges = true;
-                                Console.Error.WriteLine($"[Success] Installed: {fileName} -> {internalPathInsideDlc}");
-                            }
-                            else continue;
-                        }
-                        installedFilePaths.Add(finalInternalPath);
+                        mainRpf.ScanStructure(null, null);
                     }
-                    catch (Exception ex) { Console.Error.WriteLine($"[Error] Failed to install {instruction.Path}: {ex.Message}"); }
+                    catch (Exception scanException)
+                    {
+                        Console.Error.WriteLine($"[Error] Failed to read structure of {baseArchivePath}: {scanException.Message}");
+                        continue;
+                    }
+
+                    bool archiveChanged = false;
+
+                    var innerGroups = group.GroupBy(i => GetBaseArchiveAndInnerPath(i.Target).InnerPath);
+                    foreach (var innerGroup in innerGroups)
+                    {
+                        var innerPath = innerGroup.Key;
+                        RpfFile targetRpf = mainRpf;
+                        string tempInnerPath = null;
+
+                        if (!string.IsNullOrEmpty(innerPath) && innerPath.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase))
+                        {
+                            try { tempInnerPath = _rpfService.ExtractInnerRpf(mainRpf, innerPath); }
+                            catch (Exception ex) { Console.Error.WriteLine($"[Warning] Failed to extract {innerPath}: {ex.Message}"); }
+
+                            if (tempInnerPath != null)
+                            {
+                                targetRpf = new RpfFile(tempInnerPath, Path.GetFileName(tempInnerPath));
+                                targetRpf.ScanStructure(null, null);
+                            }
+                        }
+
+                        bool innerChanged = false;
+                        foreach (var instruction in innerGroup)
+                        {
+                            try
+                            {
+                                if (_handlers.TryGetValue(instruction.Type, out var handler))
+                                {
+                                    handler.Execute(instruction, targetRpf, request.GamePath);
+                                    installedFilePaths.Add($"ORIGINAL|{baseArchiveName}|{innerPath}|{Path.GetFileName(instruction.Path)}");
+                                    innerChanged = true;
+                                    Console.Error.WriteLine($"[Success] Replaced Original: {Path.GetFileName(instruction.Path)} in {instruction.Target}");
+                                }
+                            }
+                            catch (Exception ex) { Console.Error.WriteLine($"[Error] Failed to install original file {instruction.Path}: {ex.Message}"); }
+                        }
+
+                        if (innerChanged && tempInnerPath != null)
+                        {
+                            _rpfService.Defragment(targetRpf);
+                            var newData = await File.ReadAllBytesAsync(tempInnerPath);
+                            _rpfService.ReplaceInnerFile(mainRpf, innerPath, newData);
+                            archiveChanged = true;
+                            try { File.Delete(tempInnerPath); } catch {}
+                        }
+                        else if (innerChanged)
+                        {
+                            archiveChanged = true;
+                        }
+                    }
+
+                    if (archiveChanged)
+                    {
+                        Console.Error.WriteLine($"[Installer] Saving changes to original archive: {baseArchiveName}...");
+                        _rpfService.Defragment(mainRpf);
+                    }
                 }
-
-                if (!isDirectoryTarget && groupChanges && innerRpf != null && tempInnerPath != null)
-                {
-                    _rpfService.Defragment(innerRpf);
-                    var newData = await File.ReadAllBytesAsync(tempInnerPath);
-                    _rpfService.ReplaceInnerFile(mainSession.RpfFile, internalPathInsideDlc, newData);
-                    globalChanges = true;
-                    try { innerRpf = null; File.Delete(tempInnerPath); } catch { }
-                }
-                else if (groupChanges) globalChanges = true;
-            }
-
-            if (touchedArchives.Count > 0)
-            {
-                Console.Error.WriteLine("[Installer] Checking XML configuration...");
-                _gameConfigService.EnsureArchivesRegistered(mainSession.RpfFile, touchedArchives);
-                globalChanges = true; 
-            }
-
-            if (globalChanges)
-            {
-                Console.Error.WriteLine("[Installer] Saving changes to dlc.rpf...");
-                _rpfService.Defragment(mainSession.RpfFile);
             }
 
             await _registryService.RegisterModAsync(request.GamePath, targetModId, installedFilePaths);
             return new { status = "success", message = "Mod installed successfully", installedFiles = installedFilePaths };
+        }
+
+        private (string BaseArchive, string InnerPath) GetBaseArchiveAndInnerPath(string target)
+        {
+            var normalized = target.Replace("/", "\\").TrimEnd('\\');
+            int firstRpfIndex = normalized.IndexOf(".rpf", StringComparison.OrdinalIgnoreCase);
+            
+            if (firstRpfIndex == -1) 
+                return (normalized, "");
+
+            string baseArchive = normalized.Substring(0, firstRpfIndex + 4);
+            string innerPath = "";
+
+            if (normalized.Length > firstRpfIndex + 4)
+            {
+                innerPath = normalized.Substring(firstRpfIndex + 5).TrimStart('\\');
+            }
+
+            return (baseArchive, innerPath);
         }
 
         private string ExtractInternalPath(string rawTarget)
@@ -237,6 +352,12 @@ namespace Obriy.Core.Services
             var filesToDelete = new List<string>();
             foreach(var fullPath in mod.Files)
             {
+                if (fullPath.StartsWith("ORIGINAL|", StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.Error.WriteLine($"[Uninstall] Skipped direct restore for: {fullPath}");
+                    continue;
+                }
+                
                 if (fullPath.StartsWith(RegistryBasePath, StringComparison.OrdinalIgnoreCase))
                 {
                     var relativePath = fullPath.Substring(RegistryBasePath.Length).TrimStart('\\', '/');

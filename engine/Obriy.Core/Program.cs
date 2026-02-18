@@ -130,6 +130,7 @@ namespace Obriy.Core
             
             // Хендлери (Strategy Pattern)
             services.AddSingleton<IInstructionHandler, ReplaceHandler>();
+            services.AddSingleton<IInstructionHandler, ReplaceOriginalHandler>();
         }
     }
 
