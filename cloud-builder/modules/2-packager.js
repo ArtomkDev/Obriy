@@ -3,63 +3,88 @@ const path = require('path');
 const archiver = require('archiver');
 const config = require('../config');
 
-module.exports = async function packageMod(modId, onProgress = () => {}) {
-    const sourceDir = path.join(config.paths.modsSource, modId, 'mod');
-    const outputDir = path.join(config.paths.modsDist, modId);
-    const outputPath = path.join(outputDir, 'payload.zip');
-    const instructionPath = path.join(outputDir, 'instruction.json');
-
-    await fs.ensureDir(outputDir);
-
-    if (await fs.pathExists(outputPath)) {
-        await fs.remove(outputPath);
+async function createArchive(sourceDirectory, outputArchiveFilePath, instructionFilePath, onProgressCallback, currentArchiveName) {
+    if (await fs.pathExists(outputArchiveFilePath)) {
+        await fs.remove(outputArchiveFilePath);
     }
 
-    const isModFolderExisting = await fs.pathExists(sourceDir);
-    const isInstructionExisting = await fs.pathExists(instructionPath);
+    const isSourceDirectoryPresent = await fs.pathExists(sourceDirectory);
+    const isInstructionFilePresent = await fs.pathExists(instructionFilePath);
 
-    let validFiles = [];
-    if (isModFolderExisting) {
-        const files = await fs.readdir(sourceDir);
-        validFiles = files.filter(file => file !== '.DS_Store' && file !== 'Thumbs.db');
+    let archiveFilesToProcess = [];
+    if (isSourceDirectoryPresent) {
+        const directoryContents = await fs.readdir(sourceDirectory);
+        archiveFilesToProcess = directoryContents.filter(item => item !== '.DS_Store' && item !== 'Thumbs.db');
     }
 
-    onProgress('Building zip archive...');
+    onProgressCallback(`Building ${currentArchiveName}...`);
 
-    return new Promise((resolve, reject) => {
-        const outputStream = fs.createWriteStream(outputPath);
-        const archive = archiver('zip', { zlib: { level: 1 } });
+    return new Promise((resolvePromise, rejectPromise) => {
+        const fileWriteStream = fs.createWriteStream(outputArchiveFilePath);
+        const zipArchiveInstance = archiver('zip', { zlib: { level: 1 } });
 
-        outputStream.on('close', async () => {
-            const archiveSize = archive.pointer();
-            
-            if (isInstructionExisting) {
-                await fs.remove(instructionPath);
-            }
-            
-            resolve(archiveSize);
+        fileWriteStream.on('close', () => {
+            const finalArchiveSizeInBytes = zipArchiveInstance.pointer();
+            resolvePromise(finalArchiveSizeInBytes);
         });
 
-        archive.on('warning', (warning) => {
-            if (warning.code !== 'ENOENT') {
-                reject(warning);
+        zipArchiveInstance.on('warning', (archiveWarning) => {
+            if (archiveWarning.code !== 'ENOENT') {
+                rejectPromise(archiveWarning);
             }
         });
 
-        archive.on('error', (error) => {
-            reject(error);
+        zipArchiveInstance.on('error', (archiveError) => {
+            rejectPromise(archiveError);
         });
 
-        archive.pipe(outputStream);
+        zipArchiveInstance.pipe(fileWriteStream);
 
-        if (isInstructionExisting) {
-            archive.file(instructionPath, { name: 'instruction.json' });
+        if (isInstructionFilePresent) {
+            zipArchiveInstance.file(instructionFilePath, { name: 'instruction.json' });
         }
 
-        if (validFiles.length > 0) {
-            archive.directory(sourceDir, 'files');
+        if (archiveFilesToProcess.length > 0) {
+            zipArchiveInstance.directory(sourceDirectory, 'files');
         }
 
-        archive.finalize();
+        zipArchiveInstance.finalize();
     });
+}
+
+module.exports = async function packageMod(modIdentificationString, onProgressCallback = () => {}) {
+    const modSourceRootDirectory = path.join(config.paths.modsSource, modIdentificationString);
+    const modDistributionDirectory = path.join(config.paths.modsDist, modIdentificationString);
+    const modInstructionFilePath = path.join(modDistributionDirectory, 'instruction.json');
+
+    await fs.ensureDir(modDistributionDirectory);
+
+    const modifiedFilesDirectory = path.join(modSourceRootDirectory, 'mod');
+    const payloadArchiveFilePath = path.join(modDistributionDirectory, 'payload.zip');
+    const payloadArchiveSize = await createArchive(
+        modifiedFilesDirectory, 
+        payloadArchiveFilePath, 
+        modInstructionFilePath, 
+        onProgressCallback, 
+        'payload.zip'
+    );
+
+    const vanillaFilesDirectory = path.join(modSourceRootDirectory, 'vanilla');
+    const restoreArchiveFilePath = path.join(modDistributionDirectory, 'restore.zip');
+    const restoreArchiveSize = await createArchive(
+        vanillaFilesDirectory, 
+        restoreArchiveFilePath, 
+        modInstructionFilePath, 
+        onProgressCallback, 
+        'restore.zip'
+    );
+
+    if (await fs.pathExists(modInstructionFilePath)) {
+        await fs.remove(modInstructionFilePath);
+    }
+
+    return {
+        payloadArchiveSize,
+        restoreArchiveSize
+    };
 };

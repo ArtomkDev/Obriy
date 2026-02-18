@@ -299,28 +299,101 @@ export default class ModManagerService {
     }
   }
 
-  async uninstallMod(modificationId, gameDirectoryPath) {
+  async uninstallMod(modificationId, gameDirectoryPath, expectedDownloadSize = 0) {
     const userInterfaceFeedbackChannel = BrowserWindow.getAllWindows()[0]?.webContents
+    const modificationSessionDirectory = path.join(this.cachePath, `uninstall_${modificationId}`)
+    const extractedPath = path.join(modificationSessionDirectory, 'extracted')
+    const restoreArchiveLocalPath = path.join(modificationSessionDirectory, 'restore.zip')
+
+    await fs.ensureDir(modificationSessionDirectory)
+    await fs.emptyDir(modificationSessionDirectory)
+    await fs.ensureDir(extractedPath)
+
+    const timestamp = Date.now()
+    let instructions = []
 
     try {
-        userInterfaceFeedbackChannel?.send('task-progress', { modId: modificationId, type: 'uninstall', percentage: 10 })
+      userInterfaceFeedbackChannel?.send('task-progress', { modId: modificationId, type: 'uninstall', percentage: 10 })
 
-        const uninstallRequest = {
-            GamePath: gameDirectoryPath,
-            Id: modificationId.toString()
+      try {
+        await this.cloud.downloadFile(
+          `/mods/${modificationId}/restore.zip?t=${timestamp}`,
+          restoreArchiveLocalPath,
+          () => {},
+          expectedDownloadSize
+        )
+
+        const extractResult = await this.core.executeCommand('extract', {
+          Source: restoreArchiveLocalPath,
+          Destination: extractedPath
+        })
+
+        if (extractResult.status === 'success') {
+          const internalInstrPath = await this.findPathRecursive(extractedPath, 'instruction.json', 'file')
+          if (internalInstrPath) {
+            let loadedInstructions = null
+            try { 
+                loadedInstructions = await fs.readJson(internalInstrPath) 
+            } catch (e) { }
+
+            const modFilesBaseDir = path.join(extractedPath, 'files')
+            const filesDirExists = await fs.pathExists(modFilesBaseDir)
+            const activeSearchDir = filesDirExists ? modFilesBaseDir : extractedPath
+
+            if (loadedInstructions) {
+              for (const instr of loadedInstructions) {
+                let rawPath = (instr.path || instr.Path || '').trim()
+                if (rawPath === '') {
+                  const files = await this.getAllFiles(activeSearchDir)
+                  for (const file of files) {
+                    if (path.basename(file).toLowerCase() === 'instruction.json') continue
+                    instructions.push({ type: instr.type, target: instr.target, path: file })
+                  }
+                  continue
+                }
+                let sourceAbsPath = path.join(activeSearchDir, rawPath)
+                if (!await fs.pathExists(sourceAbsPath)) {
+                  const targetName = path.basename(rawPath)
+                  const found = await this.findPathRecursive(activeSearchDir, targetName)
+                  if (found) sourceAbsPath = found
+                }
+                if (sourceAbsPath && await fs.pathExists(sourceAbsPath)) {
+                  const stat = await fs.stat(sourceAbsPath)
+                  if (stat.isDirectory()) {
+                    const files = await this.getAllFiles(sourceAbsPath)
+                    for (const file of files) instructions.push({ type: instr.type, target: instr.target, path: file })
+                  } else {
+                    instructions.push({ type: instr.type, target: instr.target, path: sourceAbsPath })
+                  }
+                }
+              }
+            }
+          }
         }
+      } catch (cloudError) {
+      }
 
-        const backendExecutionResult = await this.core.executeCommand('uninstall', uninstallRequest)
+      userInterfaceFeedbackChannel?.send('task-progress', { modId: modificationId, type: 'uninstall', percentage: 50 })
 
-        if (backendExecutionResult.status === 'success') {
-            const updatedMods = await this.getActiveMods(gameDirectoryPath)
-            userInterfaceFeedbackChannel?.send('mods-updated', updatedMods)
-        } else {
-             console.error('[ModManager] Uninstall failed:', backendExecutionResult.message)
-        }
-        
-        userInterfaceFeedbackChannel?.send('task-progress', { modId: modificationId, type: 'uninstall', percentage: 100 })
-        return backendExecutionResult
+      const uninstallRequest = {
+          GamePath: gameDirectoryPath,
+          Id: modificationId.toString(),
+          Instructions: instructions
+      }
+
+      const backendExecutionResult = await this.core.executeCommand('uninstall', uninstallRequest)
+
+      if (backendExecutionResult.status === 'success') {
+          const updatedMods = await this.getActiveMods(gameDirectoryPath)
+          userInterfaceFeedbackChannel?.send('mods-updated', updatedMods)
+      } else {
+           console.error('[ModManager] Uninstall failed:', backendExecutionResult.message)
+      }
+      
+      await fs.remove(modificationSessionDirectory)
+      userInterfaceFeedbackChannel?.send('task-progress', { modId: modificationId, type: 'uninstall', percentage: 100 })
+      
+      return backendExecutionResult
 
     } catch (error) {
         console.error(error)

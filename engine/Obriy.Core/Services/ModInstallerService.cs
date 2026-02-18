@@ -69,7 +69,7 @@ namespace Obriy.Core.Services
                             if (tempInnerPath != null)
                             {
                                 innerRpf = new RpfFile(tempInnerPath, Path.GetFileName(tempInnerPath));
-                                innerRpf.ScanStructure(null, null);
+                                try { innerRpf.ScanStructure(null, null); } catch { }
                                 targetRpf = innerRpf;
                             }
                             else
@@ -173,9 +173,6 @@ namespace Obriy.Core.Services
                         continue;
                     }
 
-                    var backupPath = baseArchivePath + ".obriybak";
-                    if (!File.Exists(backupPath)) File.Copy(baseArchivePath, backupPath);
-
                     var mainRpf = new RpfFile(baseArchivePath, baseArchivePath);
                     
                     try
@@ -205,7 +202,7 @@ namespace Obriy.Core.Services
                             if (tempInnerPath != null)
                             {
                                 targetRpf = new RpfFile(tempInnerPath, Path.GetFileName(tempInnerPath));
-                                targetRpf.ScanStructure(null, null);
+                                try { targetRpf.ScanStructure(null, null); } catch { }
                             }
                         }
 
@@ -303,7 +300,6 @@ namespace Obriy.Core.Services
             {
                 if (!string.IsNullOrEmpty(targetRpfName))
                 {
-                    Console.Error.WriteLine($"[Info] Routing map/level asset to: x64\\levels\\gta5\\{targetRpfName}");
                     return Path.Combine(@"x64\levels\gta5", targetRpfName);
                 }
             }
@@ -345,19 +341,13 @@ namespace Obriy.Core.Services
                 return new { status = "success", message = "Mod removed from registry" };
             }
 
-            Console.Error.WriteLine($"[Uninstall] Removing {mod.Files.Count} files for mod {request.Id}...");
+            Console.Error.WriteLine($"[Uninstall] Removing files for mod {request.Id}...");
             bool globalChanges = false;
             using var mainSession = _rpfService.OpenPatchday(request.GamePath);
 
             var filesToDelete = new List<string>();
             foreach(var fullPath in mod.Files)
             {
-                if (fullPath.StartsWith("ORIGINAL|", StringComparison.OrdinalIgnoreCase))
-                {
-                    Console.Error.WriteLine($"[Uninstall] Skipped direct restore for: {fullPath}");
-                    continue;
-                }
-                
                 if (fullPath.StartsWith(RegistryBasePath, StringComparison.OrdinalIgnoreCase))
                 {
                     var relativePath = fullPath.Substring(RegistryBasePath.Length).TrimStart('\\', '/');
@@ -397,7 +387,7 @@ namespace Obriy.Core.Services
                     if (tempInnerPath != null)
                     {
                         var innerRpf = new RpfFile(tempInnerPath, Path.GetFileName(tempInnerPath));
-                        innerRpf.ScanStructure(null, null);
+                        try { innerRpf.ScanStructure(null, null); } catch { }
                         bool innerChanges = false;
 
                         foreach (var file in group)
@@ -443,9 +433,95 @@ namespace Obriy.Core.Services
                 Console.Error.WriteLine("[Uninstall] Saving changes to dlc.rpf...");
                 _rpfService.Defragment(mainSession.RpfFile);
             }
-            
+
+            if (request.Instructions != null)
+            {
+                var originalInstructions = request.Instructions.Where(i => i.Type == "replace_original").ToList();
+
+                if (originalInstructions.Any())
+                {
+                    Console.Error.WriteLine($"[Uninstall] Restoring {originalInstructions.Count} original files...");
+
+                    var groupedOriginals = originalInstructions.GroupBy(i => GetBaseArchiveAndInnerPath(i.Target));
+
+                    foreach (var group in groupedOriginals)
+                    {
+                        var baseArchiveName = group.Key.BaseArchive;
+                        var baseArchivePath = Path.Combine(request.GamePath, baseArchiveName);
+
+                        if (!File.Exists(baseArchivePath)) continue;
+
+                        var mainRpf = new RpfFile(baseArchivePath, baseArchivePath);
+                        
+                        try { mainRpf.ScanStructure(null, null); } catch { continue; }
+
+                        bool archiveChanged = false;
+
+                        var innerGroups = group.GroupBy(i => GetBaseArchiveAndInnerPath(i.Target).InnerPath);
+                        foreach (var innerGroup in innerGroups)
+                        {
+                            var innerPath = innerGroup.Key;
+                            RpfFile targetRpf = mainRpf;
+                            string tempInnerPath = null;
+
+                            if (!string.IsNullOrEmpty(innerPath) && innerPath.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase))
+                            {
+                                try { tempInnerPath = _rpfService.ExtractInnerRpf(mainRpf, innerPath); } catch {}
+                                if (tempInnerPath != null)
+                                {
+                                    targetRpf = new RpfFile(tempInnerPath, Path.GetFileName(tempInnerPath));
+                                    try { targetRpf.ScanStructure(null, null); } catch { }
+                                }
+                            }
+
+                            bool innerChanged = false;
+                            foreach (var instruction in innerGroup)
+                            {
+                                string expectedRegString = $"ORIGINAL|{baseArchiveName}|{innerPath}|{Path.GetFileName(instruction.Path)}";
+
+                                if (!mod.Files.Contains(expectedRegString, StringComparer.OrdinalIgnoreCase))
+                                {
+                                    Console.Error.WriteLine($"[Uninstall] Skipped restore (No Ownership): {expectedRegString}");
+                                    continue;
+                                }
+
+                                try
+                                {
+                                    if (_handlers.TryGetValue(instruction.Type, out var handler))
+                                    {
+                                        handler.Execute(instruction, targetRpf, request.GamePath);
+                                        innerChanged = true;
+                                        Console.Error.WriteLine($"[Success] Restored Original: {Path.GetFileName(instruction.Path)} in {instruction.Target}");
+                                    }
+                                }
+                                catch (Exception ex) { Console.Error.WriteLine($"[Error] Failed to restore original file {instruction.Path}: {ex.Message}"); }
+                            }
+
+                            if (innerChanged && tempInnerPath != null)
+                            {
+                                _rpfService.Defragment(targetRpf);
+                                var newData = await File.ReadAllBytesAsync(tempInnerPath);
+                                _rpfService.ReplaceInnerFile(mainRpf, innerPath, newData);
+                                archiveChanged = true;
+                                try { File.Delete(tempInnerPath); } catch {}
+                            }
+                            else if (innerChanged)
+                            {
+                                archiveChanged = true;
+                            }
+                        }
+
+                        if (archiveChanged)
+                        {
+                            Console.Error.WriteLine($"[Uninstall] Saving restored original archive: {baseArchiveName}...");
+                            _rpfService.Defragment(mainRpf);
+                        }
+                    }
+                }
+            }
+
             await _registryService.UnregisterModAsync(request.GamePath, request.Id);
-            return new { status = "success", message = "Mod uninstalled" };
+            return new { status = "success", message = "Mod uninstalled successfully" };
         }
     }
 }
