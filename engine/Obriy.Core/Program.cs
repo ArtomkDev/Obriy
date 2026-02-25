@@ -18,7 +18,6 @@ namespace Obriy.Core
             ConfigureServices(services);
             var provider = services.BuildServiceProvider();
 
-            // Ініціалізація ключів шифрування при старті
             try
             {
                 provider.GetRequiredService<RpfService>().InitializeGameKeys();
@@ -36,7 +35,6 @@ namespace Obriy.Core
 
             try
             {
-                // Читаємо вхідний JSON зі stdin
                 var input = await Console.In.ReadToEndAsync();
                 if (string.IsNullOrWhiteSpace(input)) return;
 
@@ -45,7 +43,6 @@ namespace Obriy.Core
 
                 object response = null;
 
-                // Payload приходить як JsonElement (об'єкт), тому перетворюємо його назад у рядок для специфічної десеріалізації
                 string payloadJson = request.Payload?.ToString() ?? "{}";
 
                 switch (request.Command.ToLowerInvariant())
@@ -55,12 +52,10 @@ namespace Obriy.Core
                         break;
                     
                     case "validate":
-                        // Тут payload очікується як рядок шляху
                         response = ValidateGamePath(request.Payload?.ToString());
                         break;
 
                     case "extract":
-                        // Тут payload - шлях до архіву
                         response = provider.GetRequiredService<ArchiveService>().Extract(request.Payload?.ToString());
                         break;
 
@@ -75,7 +70,6 @@ namespace Obriy.Core
                         break;
 
                     case "setup":
-                        // Payload - шлях до гри
                         response = provider.GetRequiredService<GameSetupService>().EnsurePatchdayReady(request.Payload?.ToString());
                         break;
 
@@ -84,15 +78,12 @@ namespace Obriy.Core
                         break;
                 }
 
-                // Відправляємо відповідь у stdout
                 Console.WriteLine(JsonSerializer.Serialize(response));
             }
             catch (Exception ex)
             {
-                // Логування помилки у stderr (щоб не ламати JSON у stdout)
                 Console.Error.WriteLine(ex);
                 
-                // Відповідь з помилкою у stdout
                 Console.WriteLine(JsonSerializer.Serialize(new 
                 { 
                     status = "error", 
@@ -106,13 +97,11 @@ namespace Obriy.Core
         {
             if (string.IsNullOrWhiteSpace(path)) return new { status = "error", message = "Path is empty" };
             
-            // Якщо передано файл (наприклад GTA5.exe), беремо папку
             if (File.Exists(path) && !File.GetAttributes(path).HasFlag(FileAttributes.Directory))
             {
                 path = Path.GetDirectoryName(path);
             }
 
-            // Перевіряємо наявність головного файлу
             var exePath = Path.Combine(path.Trim('"'), "GTA5.exe");
             var exists = File.Exists(exePath);
             return new { status = exists ? "success" : "error", isValid = exists };
@@ -120,17 +109,16 @@ namespace Obriy.Core
 
         private static void ConfigureServices(IServiceCollection services)
         {
-            // Сервіси
             services.AddSingleton<RpfService>();
             services.AddSingleton<RegistryService>();
             services.AddSingleton<GameSetupService>();
-            services.AddSingleton<GameConfigService>(); // <--- ДОДАНО: Критично для роботи ModInstallerService
+            services.AddSingleton<GameConfigService>();
             services.AddSingleton<ModInstallerService>();
             services.AddSingleton<ArchiveService>();
             
-            // Хендлери (Strategy Pattern)
             services.AddSingleton<IInstructionHandler, ReplaceHandler>();
             services.AddSingleton<IInstructionHandler, ReplaceOriginalHandler>();
+            services.AddSingleton<IInstructionHandler, ReplaceTextureOriginalHandler>();
         }
     }
 

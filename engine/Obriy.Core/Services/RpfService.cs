@@ -26,7 +26,6 @@ namespace Obriy.Core.Services
         public RpfSessionWrapper OpenPatchday(string gamePath)
         {
             var fullPath = Path.Combine(gamePath, TargetRpfPath);
-            // Якщо файлу немає, кидаємо помилку, бо ми очікуємо оригінальний файл гри
             if (!File.Exists(fullPath)) 
             {
                  throw new FileNotFoundException($"Critical file missing: {fullPath}");
@@ -46,7 +45,6 @@ namespace Obriy.Core.Services
                 Directory.CreateDirectory(dir);
             }
 
-            // Використовуємо статичний метод CreateNew з шифруванням OPEN (без шифрування)
             return RpfFile.CreateNew(dir, Path.GetFileName(fullPath), RpfEncryption.OPEN);
         }
 
@@ -57,13 +55,17 @@ namespace Obriy.Core.Services
 
             if (fileEntry != null)
             {
-                // ExtractFile автоматично розшифровує дані, якщо ключі завантажені
                 var data = rootRpf.ExtractFile(fileEntry);
                 
                 if (data == null) return null;
 
-                var tempFile = Path.GetTempFileName();
+                var originalFileName = Path.GetFileName(internalPath);
+                var tempDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(tempDirectory);
+                
+                var tempFile = Path.Combine(tempDirectory, originalFileName);
                 File.WriteAllBytes(tempFile, data);
+                
                 return tempFile;
             }
             return null;
@@ -78,16 +80,12 @@ namespace Obriy.Core.Services
             
             if (parentDir != null)
             {
-                // 1. Спочатку видаляємо старий файл, якщо він існує
                 var existingFile = parentDir.Files.FirstOrDefault(x => x.Name.Equals(fileName, StringComparison.OrdinalIgnoreCase));
                 if (existingFile != null)
                 {
                     parentDir.Files.Remove(existingFile);
                 }
 
-                // 2. Створюємо новий файл через стандартний метод CodeWalker
-                // Параметр 'false' означає "не стискати" (compress = false).
-                // Це важливо для XML, щоб уникнути проблем із читанням.
                 RpfFile.CreateFile(parentDir, fileName, newData, false);
             }
         }
@@ -127,7 +125,6 @@ namespace Obriy.Core.Services
                 }
                 else
                 {
-                    // Створюємо директорію через статичний метод
                     currentDir = RpfFile.CreateDirectory(currentDir, part);
                 }
             }
@@ -163,7 +160,6 @@ namespace Obriy.Core.Services
 
         public void Defragment(RpfFile rpf)
         {
-            // Цей метод зберігає зміни на диск
             RpfFile.Defragment(rpf);
         }
     }
