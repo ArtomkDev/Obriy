@@ -59,24 +59,8 @@ export function registerModController(windowManager, applicationStore, modManage
     }
   })
 
-  ipcMain.handle('install-mod', async (eventContext, targetModificationId) => {
+  ipcMain.handle('download-mod', async (eventContext, targetModificationId) => {
     try {
-      const configuredGameDirectory = applicationStore.get('gta_path')
-
-      if (!configuredGameDirectory || !fs.existsSync(configuredGameDirectory)) {
-        applicationStore.delete('gta_path')
-        eventContext.sender.send('path:sync-directory', null)
-        throw new Error('Папка з грою не знайдена. Оберіть шлях заново.')
-      }
-
-      const directoryValidationResult = await modManagerService.validateGamePath(configuredGameDirectory)
-      
-      if (directoryValidationResult.status !== 'success') {
-        applicationStore.delete('gta_path')
-        eventContext.sender.send('path:sync-directory', null)
-        throw new Error('У цій папці немає файлу GTA5.exe або вона пошкоджена. Оберіть шлях заново.')
-      }
-
       const activeAuthorizedUser = applicationStore.get('auth_user')
       
       if (activeAuthorizedUser && !validateAuthenticationData(activeAuthorizedUser)) {
@@ -96,7 +80,33 @@ export function registerModController(windowManager, applicationStore, modManage
       }
 
       const expectedPayloadDownloadSize = targetModificationDetails.downloadSize || 0
-      const installationExecutionResult = await modManagerService.installMod(targetModificationId, configuredGameDirectory, expectedPayloadDownloadSize)
+      
+      await modManagerService.downloadMod(targetModificationId, expectedPayloadDownloadSize)
+      return { success: true }
+    } catch (downloadProcessError) {
+      return { success: false, error: downloadProcessError.message }
+    }
+  })
+
+  ipcMain.handle('install-mod', async (eventContext, targetModificationId) => {
+    try {
+      const configuredGameDirectory = applicationStore.get('gta_path')
+
+      if (!configuredGameDirectory || !fs.existsSync(configuredGameDirectory)) {
+        applicationStore.delete('gta_path')
+        eventContext.sender.send('path:sync-directory', null)
+        throw new Error('Папка з грою не знайдена. Оберіть шлях заново.')
+      }
+
+      const directoryValidationResult = await modManagerService.validateGamePath(configuredGameDirectory)
+      
+      if (directoryValidationResult.status !== 'success') {
+        applicationStore.delete('gta_path')
+        eventContext.sender.send('path:sync-directory', null)
+        throw new Error('У цій папці немає файлу GTA5.exe або вона пошкоджена. Оберіть шлях заново.')
+      }
+
+      const installationExecutionResult = await modManagerService.installMod(targetModificationId, configuredGameDirectory)
       
       if (installationExecutionResult.status === 'error') {
          throw new Error(installationExecutionResult.message || 'Unknown installation error')

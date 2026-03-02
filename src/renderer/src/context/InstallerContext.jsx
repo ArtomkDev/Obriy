@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react'
 
 const ApplicationInstallerContext = createContext()
 
@@ -7,15 +7,27 @@ export function InstallerProvider({ children }) {
   const [isGamePathLoaded, setIsGamePathLoaded] = useState(false)
   const [applicationUpdateStatus, setApplicationUpdateStatus] = useState('idle')
   const [activeInstalledModIds, setActiveInstalledModIds] = useState([])
-
   const [authorizedUser, setAuthorizedUser] = useState(null)
-
   const [activeTasks, setActiveTasks] = useState({})
-  const [pendingDownloadQueue, setPendingDownloadQueue] = useState([])
-  const [pendingProcessingQueue, setPendingProcessingQueue] = useState([])
-  const [isDownloadOperationActive, setIsDownloadOperationActive] = useState(false)
-  const [isProcessingOperationActive, setIsProcessingOperationActive] = useState(false)
   const [isManagerInterfaceVisible, setIsManagerInterfaceVisible] = useState(false)
+
+  const processingLocks = useRef({
+    download: false,
+    engine: false
+  })
+
+  const refreshInstalledModificationsList = useCallback(async () => {
+    if (!window.api || !targetGamePath) {
+        return
+    }
+    try {
+      const activeModifications = await window.api.getActiveMods()
+      if (Array.isArray(activeModifications)) {
+        setActiveInstalledModIds(activeModifications)
+      }
+    } catch (refreshOperationError) {
+    }
+  }, [targetGamePath])
 
   useEffect(() => {
     if (window.api) {
@@ -103,23 +115,31 @@ export function InstallerProvider({ children }) {
 
     const removeTaskProgressListener = window.api.onTaskProgress((progressData) => {
       setActiveTasks(previousTasks => {
-        const existingTask = previousTasks[progressData.modId]
-        if (!existingTask) {
+        const stringifiedModId = progressData.modId.toString()
+        const existingTask = previousTasks[stringifiedModId]
+        
+        if (!existingTask || 
+            existingTask.status === 'error' ||
+            existingTask.status === 'success' ||
+            existingTask.status === 'queued_download' ||
+            existingTask.status === 'queued_install' ||
+            existingTask.status === 'queued_uninstall') {
             return previousTasks
         }
         
         let calculatedStatus = existingTask.status
+        
         if (progressData.type === 'download') calculatedStatus = 'downloading'
         else if (progressData.type === 'install') calculatedStatus = 'installing'
         else if (progressData.type === 'uninstall') calculatedStatus = 'uninstalling'
         
         return {
           ...previousTasks,
-          [progressData.modId]: { 
+          [stringifiedModId]: { 
             ...existingTask, 
             status: calculatedStatus, 
             downloadProgress: progressData.type === 'download' ? progressData.percentage : (progressData.type === 'install' ? 100 : existingTask.downloadProgress),
-            installProgress: progressData.type === 'install' ? progressData.percentage : existingTask.installProgress
+            installProgress: (progressData.type === 'install' || progressData.type === 'uninstall') ? progressData.percentage : existingTask.installProgress
           }
         }
       })
@@ -130,66 +150,50 @@ export function InstallerProvider({ children }) {
     }
   }, [])
 
-  useEffect(() => {
-    if (!isDownloadOperationActive && pendingDownloadQueue.length > 0) {
-      const nextModificationToDownload = pendingDownloadQueue[0]
-      processDownloadTask(nextModificationToDownload)
-    }
-  }, [isDownloadOperationActive, pendingDownloadQueue])
-
-  useEffect(() => {
-    if (!isProcessingOperationActive && pendingProcessingQueue.length > 0) {
-      const nextTaskToProcess = pendingProcessingQueue[0]
-      executeEngineTask(nextTaskToProcess)
-    }
-  }, [isProcessingOperationActive, pendingProcessingQueue])
-
-  const extractInstallationInstructions = (modificationDetails) => {
-    if (modificationDetails.instructionSet && modificationDetails.instructionSet.length > 0) {
-      return modificationDetails.instructionSet
-    }
-    return []
-  }
-
-  const processDownloadTask = async (modificationDetails) => {
-    setIsDownloadOperationActive(true)
-    const activeTaskId = modificationDetails.id
+  const processDownloadOperation = async (taskDetails) => {
+    processingLocks.current.download = true
+    const activeTaskId = taskDetails.mod.id.toString()
 
     setActiveTasks(previousTasks => ({
       ...previousTasks,
-      [activeTaskId]: { ...previousTasks[activeTaskId], status: 'queued', downloadProgress: 0 }
+      [activeTaskId]: { ...previousTasks[activeTaskId], status: 'downloading', isBackendActive: true }
     }))
 
-    setPendingDownloadQueue(previousQueue => previousQueue.filter(queueItem => queueItem.id !== modificationDetails.id))
-    setPendingProcessingQueue(previousQueue => [...previousQueue, { ...modificationDetails, actionType: 'install' }])
-    setIsDownloadOperationActive(false)
+    try {
+      if (window.api && window.api.downloadMod) {
+         await window.api.downloadMod(activeTaskId)
+      }
+      
+      setActiveTasks(previousTasks => {
+        if (!previousTasks[activeTaskId]) return previousTasks
+        return {
+          ...previousTasks,
+          [activeTaskId]: { ...previousTasks[activeTaskId], status: 'queued_install', isBackendActive: false }
+        }
+      })
+    } catch (downloadOperationError) {
+      setActiveTasks(previousTasks => {
+        if (!previousTasks[activeTaskId]) return previousTasks
+        return {
+          ...previousTasks,
+          [activeTaskId]: { ...previousTasks[activeTaskId], status: 'error', error: downloadOperationError.message, isBackendActive: false }
+        }
+      })
+    } finally {
+      processingLocks.current.download = false
+    }
   }
 
-  const executeEngineTask = async (engineTaskDetails) => {
-    setIsProcessingOperationActive(true)
-    const activeTaskId = engineTaskDetails.id
-    const isUninstallOperationRequested = engineTaskDetails.actionType === 'uninstall'
+  const processEngineOperation = async (taskDetails) => {
+    processingLocks.current.engine = true
+    const activeTaskId = taskDetails.mod.id.toString()
+    const isUninstallOperationRequested = taskDetails.actionType === 'uninstall'
 
-    if (!window.api) {
-      setActiveTasks((previousTasks) => ({
-        ...previousTasks,
-        [activeTaskId]: {
-          ...previousTasks[activeTaskId],
-          status: 'error',
-          error: 'API not available'
-        }
-      }))
-      setPendingProcessingQueue((previousQueue) => previousQueue.filter((queueItem) => queueItem.id !== engineTaskDetails.id))
-      setIsProcessingOperationActive(false)
-      return
-    }
-
-    setActiveTasks((previousTasks) => ({
+    setActiveTasks(previousTasks => ({
       ...previousTasks,
       [activeTaskId]: {
         ...previousTasks[activeTaskId],
-        status: isUninstallOperationRequested ? 'uninstalling' : 'downloading',
-        downloadProgress: 0,
+        status: isUninstallOperationRequested ? 'uninstalling' : 'installing',
         installProgress: 0
       }
     }))
@@ -201,21 +205,29 @@ export function InstallerProvider({ children }) {
         if (!targetGamePath) {
           throw new Error('Game path not selected')
         }
-        taskExecutionResult = await window.api.uninstallMod(targetGamePath, engineTaskDetails.instructions, engineTaskDetails.id)
+        taskExecutionResult = await window.api.uninstallMod(targetGamePath, taskDetails.instructions || [], activeTaskId)
       } else {
-        taskExecutionResult = await window.api.installMod(engineTaskDetails.id)
+        taskExecutionResult = await window.api.installMod(activeTaskId)
       }
 
       if (taskExecutionResult && (taskExecutionResult.success === true || taskExecutionResult.status === 'success')) {
-        setActiveTasks((previousTasks) => {
+        setActiveTasks(previousTasks => {
           const updatedTasksState = { ...previousTasks }
-          delete updatedTasksState[activeTaskId]
+          if (isUninstallOperationRequested) {
+            delete updatedTasksState[activeTaskId]
+          } else {
+            updatedTasksState[activeTaskId] = {
+              ...updatedTasksState[activeTaskId],
+              status: 'success',
+              installProgress: 100,
+              downloadProgress: 100
+            }
+          }
           return updatedTasksState
         })
 
         if (targetGamePath) {
-          const refreshedActiveMods = await window.api.getActiveMods()
-          setActiveInstalledModIds(refreshedActiveMods)
+          refreshInstalledModificationsList()
         }
       } else {
         throw new Error(taskExecutionResult?.error || 'Operation failed')
@@ -233,23 +245,51 @@ export function InstallerProvider({ children }) {
         setTargetGamePath(verifiedPathData || '')
       }
 
-      setActiveTasks((previousTasks) => ({
-        ...previousTasks,
-        [activeTaskId]: {
-          ...previousTasks[activeTaskId],
-          status: 'error',
-          error: taskErrorMessage
+      setActiveTasks(previousTasks => {
+        if (!previousTasks[activeTaskId]) return previousTasks
+        return {
+          ...previousTasks,
+          [activeTaskId]: {
+            ...previousTasks[activeTaskId],
+            status: 'error',
+            error: taskErrorMessage
+          }
         }
-      }))
+      })
     } finally {
-      setPendingProcessingQueue((previousQueue) => previousQueue.filter((queueItem) => queueItem.id !== engineTaskDetails.id))
-      setIsProcessingOperationActive(false)
+      processingLocks.current.engine = false
     }
   }
 
-  const initiateInstallation = useCallback((modificationDetails) => {
-    const activeTaskId = modificationDetails.id
+  useEffect(() => {
+    const activeTasksList = Object.values(activeTasks)
     
+    if (!processingLocks.current.download) {
+      const isAnyTaskDownloading = activeTasksList.some(taskEntry => taskEntry.status === 'downloading')
+      if (!isAnyTaskDownloading) {
+        const pendingDownloadTasks = activeTasksList.filter(taskEntry => 
+            taskEntry.status === 'queued_download' && !taskEntry.isBackendActive
+        )
+        if (pendingDownloadTasks.length > 0) {
+          const nextTaskToDownload = pendingDownloadTasks.sort((firstTask, secondTask) => firstTask.addedAt - secondTask.addedAt)[0]
+          processDownloadOperation(nextTaskToDownload)
+        }
+      }
+    }
+
+    if (!processingLocks.current.engine) {
+      const isAnyTaskProcessingEngine = activeTasksList.some(taskEntry => taskEntry.status === 'installing' || taskEntry.status === 'uninstalling')
+      if (!isAnyTaskProcessingEngine) {
+        const pendingEngineTasks = activeTasksList.filter(taskEntry => taskEntry.status === 'queued_install' || taskEntry.status === 'queued_uninstall')
+        if (pendingEngineTasks.length > 0) {
+          const nextTaskToProcess = pendingEngineTasks.sort((firstTask, secondTask) => firstTask.addedAt - secondTask.addedAt)[0]
+          processEngineOperation(nextTaskToProcess)
+        }
+      }
+    }
+  }, [activeTasks])
+
+  const initiateInstallation = useCallback((modificationDetails) => {
     if (!authorizedUser) {
       return 
     }
@@ -258,71 +298,87 @@ export function InstallerProvider({ children }) {
       return 
     }
 
-    if (activeTasks[activeTaskId] && ['downloading', 'installing', 'queued', 'queued_download', 'uninstalling'].includes(activeTasks[activeTaskId].status)) {
-        return
+    const activeTaskId = modificationDetails.id.toString()
+    let resolvedInstructionsList = []
+    
+    if (modificationDetails.instructionSet && modificationDetails.instructionSet.length > 0) {
+        resolvedInstructionsList = modificationDetails.instructionSet
     }
 
-    const resolvedInstallationInstructions = extractInstallationInstructions(modificationDetails)
-    const taskConfigurationObject = { ...modificationDetails, instructions: resolvedInstallationInstructions }
-
-    setActiveTasks(previousTasks => ({
-      ...previousTasks,
-      [activeTaskId]: { 
-        mod: modificationDetails, 
-        status: 'queued_download', 
-        downloadProgress: 0, 
-        installProgress: 0, 
-        error: null,
-        addedAt: Date.now()
+    setActiveTasks(previousTasks => {
+      if (previousTasks[activeTaskId] && ['downloading', 'installing', 'queued_download', 'queued_install', 'uninstalling', 'queued_uninstall'].includes(previousTasks[activeTaskId].status)) {
+          return previousTasks
       }
-    }))
-
-    setPendingDownloadQueue(previousQueue => [...previousQueue, taskConfigurationObject])
-  }, [activeTasks, authorizedUser])
+      
+      return {
+        ...previousTasks,
+        [activeTaskId]: { 
+          mod: modificationDetails, 
+          status: 'queued_download', 
+          downloadProgress: 0, 
+          installProgress: 0, 
+          error: null,
+          addedAt: Date.now(),
+          actionType: 'install',
+          instructions: resolvedInstructionsList,
+          isBackendActive: false
+        }
+      }
+    })
+  }, [authorizedUser])
 
   const initiateUninstallation = useCallback((modificationDetails) => {
-    const activeTaskId = modificationDetails.id
-    if (activeTasks[activeTaskId] && ['downloading', 'installing', 'uninstalling', 'queued_uninstall'].includes(activeTasks[activeTaskId].status)) {
-        return
+    const activeTaskId = modificationDetails.id.toString()
+    let resolvedInstructionsList = []
+    
+    if (modificationDetails.instructionSet && modificationDetails.instructionSet.length > 0) {
+        resolvedInstructionsList = modificationDetails.instructionSet
     }
 
-    const resolvedUninstallationInstructions = extractInstallationInstructions(modificationDetails)
-    const taskConfigurationObject = {
-      ...modificationDetails,
-      instructions: resolvedUninstallationInstructions,
-      actionType: 'uninstall'
-    }
-
-    setActiveTasks(previousTasks => ({
-      ...previousTasks,
-      [activeTaskId]: {
-        mod: modificationDetails,
-        status: 'queued_uninstall',
-        installProgress: 0, 
-        error: null
+    setActiveTasks(previousTasks => {
+      if (previousTasks[activeTaskId] && ['downloading', 'installing', 'uninstalling', 'queued_uninstall'].includes(previousTasks[activeTaskId].status)) {
+          return previousTasks
       }
-    }))
 
-    setPendingProcessingQueue(previousQueue => [...previousQueue, taskConfigurationObject])
-  }, [activeTasks])
+      return {
+        ...previousTasks,
+        [activeTaskId]: {
+          mod: modificationDetails,
+          status: 'queued_uninstall',
+          installProgress: 0, 
+          error: null,
+          addedAt: Date.now(),
+          actionType: 'uninstall',
+          instructions: resolvedInstructionsList
+        }
+      }
+    })
+  }, [])
 
   const cancelActiveTask = useCallback((targetTaskId) => {
-    setPendingDownloadQueue(previousQueue => previousQueue.filter(queueItem => queueItem.id !== targetTaskId))
-    setPendingProcessingQueue(previousQueue => previousQueue.filter(queueItem => queueItem.id !== targetTaskId))
+    const stringifiedTaskId = targetTaskId.toString()
     
-    const activeTaskStatus = activeTasks[targetTaskId]?.status
     setActiveTasks(previousTasks => {
       const updatedTasksState = { ...previousTasks }
-      delete updatedTasksState[targetTaskId]
+      const taskToCancel = updatedTasksState[stringifiedTaskId]
+      
+      if (taskToCancel) {
+        if (taskToCancel.status === 'downloading' || taskToCancel.status === 'queued_download') {
+          if (window.api && window.api.cancelDownload) {
+             window.api.cancelDownload(stringifiedTaskId)
+          }
+        }
+        
+        delete updatedTasksState[stringifiedTaskId]
+      }
+      
       return updatedTasksState
     })
-
-    if (activeTaskStatus === 'downloading') setIsDownloadOperationActive(false)
-    if (activeTaskStatus === 'installing' || activeTaskStatus === 'uninstalling') setIsProcessingOperationActive(false)
-  }, [activeTasks])
+  }, [])
 
   const retryFailedTask = useCallback((modificationDetails) => initiateInstallation(modificationDetails), [initiateInstallation])
   const toggleManagerInterface = () => setIsManagerInterfaceVisible(!isManagerInterfaceVisible)
+  const closeManagerInterface = () => setIsManagerInterfaceVisible(false)
   
   const getModificationStatus = useCallback((targetModificationIdentifier) => {
     const stringifiedIdentifier = targetModificationIdentifier?.toString()
@@ -347,20 +403,6 @@ export function InstallerProvider({ children }) {
       : { download: 0, install: 0 }
   }, [activeTasks])
 
-  const refreshInstalledModificationsList = useCallback(async () => {
-    if (!window.api || !targetGamePath) {
-        return
-    }
-    
-    try {
-      const activeModifications = await window.api.getActiveMods()
-      if (Array.isArray(activeModifications)) {
-        setActiveInstalledModIds(activeModifications)
-      }
-    } catch (refreshOperationError) {
-    }
-  }, [targetGamePath])
-
   const checkIsModificationInstalled = (targetModificationId) => activeInstalledModIds.includes(targetModificationId)
 
   const isApplicationSetupComplete = isGamePathLoaded && !!targetGamePath && !!authorizedUser
@@ -383,6 +425,7 @@ export function InstallerProvider({ children }) {
       retryTask: retryFailedTask, 
       isManagerOpen: isManagerInterfaceVisible, 
       toggleManager: toggleManagerInterface, 
+      closeManager: closeManagerInterface,
       getModStatus: getModificationStatus, 
       getModProgress: getModificationProgress,
       isModInstalled: checkIsModificationInstalled,

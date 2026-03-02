@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
+import { motion, AnimatePresence } from 'framer-motion'
 import Sidebar from './components/Sidebar'
 import WindowControls from './components/WindowControls'
 import ModsPage from './pages/ModsPage'
@@ -9,6 +10,8 @@ import LoaderScreen from './components/LoaderScreen'
 import { InstallerProvider, useInstaller } from './context/InstallerContext'
 
 function MainApplicationLayout() {
+  const { isManagerOpen, toggleManager } = useInstaller()
+
   return (
     <div className="flex flex-col h-screen bg-[#09090b] text-white overflow-hidden border border-zinc-800">
       <WindowControls />
@@ -21,6 +24,18 @@ function MainApplicationLayout() {
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/mods" replace />} />
           </Routes>
+          
+          <AnimatePresence>
+            {isManagerOpen && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={toggleManager}
+                className="absolute inset-0 z-40 bg-black/40 backdrop-blur-[2px]"
+              />
+            )}
+          </AnimatePresence>
         </main>
       </div>
     </div>

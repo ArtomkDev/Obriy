@@ -32,6 +32,7 @@ const applicationApi = {
   getModDetails: (targetModificationId) => ipcRenderer.invoke('get-mod-details', targetModificationId),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
+  downloadMod: (targetModificationId) => ipcRenderer.invoke('download-mod', targetModificationId),
   installMod: (targetModificationId) => ipcRenderer.invoke('install-mod', targetModificationId),
   uninstallMod: (targetGamePath, modificationInstructions, targetModificationId) => ipcRenderer.invoke('uninstall-mod', targetGamePath, modificationInstructions, targetModificationId),
 

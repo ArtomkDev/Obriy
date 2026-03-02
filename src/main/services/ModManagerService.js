@@ -347,28 +347,37 @@ export default class ModManagerService extends EventEmitter {
     return compiledInstructionsList
   }
 
-  async installMod(targetModificationId, targetGameDirectoryPath, expectedDownloadSize = 0) {
+  async downloadMod(targetModificationId, expectedDownloadSize = 0) {
     const modificationSessionDirectoryPath = path.join(this.applicationCacheDirectory, targetModificationId.toString())
-    const targetExtractionDirectoryPath = path.join(modificationSessionDirectoryPath, 'extracted')
     const targetPayloadArchiveLocalPath = path.join(modificationSessionDirectoryPath, 'payload.zip')
     const currentTimestamp = Date.now()
     const remotePayloadEndpoint = `/mods/${targetModificationId}/payload.zip?t=${currentTimestamp}`
 
     await fs.ensureDir(modificationSessionDirectoryPath)
     await fs.emptyDir(modificationSessionDirectoryPath)
-    await fs.ensureDir(targetExtractionDirectoryPath)
 
     try {
       this.emit('task-progress', { modId: targetModificationId, type: 'download', percentage: 0 })
-
       await this.downloadRemoteArchive(remotePayloadEndpoint, targetPayloadArchiveLocalPath, targetModificationId, 'download', expectedDownloadSize)
+      return { status: 'success' }
+    } catch (downloadProcessError) {
+      this.emit('installation-error', { message: downloadProcessError.message })
+      throw downloadProcessError
+    }
+  }
 
+  async installMod(targetModificationId, targetGameDirectoryPath) {
+    const modificationSessionDirectoryPath = path.join(this.applicationCacheDirectory, targetModificationId.toString())
+    const targetExtractionDirectoryPath = path.join(modificationSessionDirectoryPath, 'extracted')
+    const targetPayloadArchiveLocalPath = path.join(modificationSessionDirectoryPath, 'payload.zip')
+
+    await fs.ensureDir(targetExtractionDirectoryPath)
+
+    try {
       this.emit('task-progress', { modId: targetModificationId, type: 'install', percentage: 10 })
-
       await this.extractLocalArchive(targetPayloadArchiveLocalPath, targetExtractionDirectoryPath)
 
       this.emit('task-progress', { modId: targetModificationId, type: 'install', percentage: 50 })
-
       const compiledInstructionsList = await this.resolveModificationInstructions(targetExtractionDirectoryPath)
 
       const coreInstallationRequest = {

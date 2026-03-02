@@ -1,13 +1,17 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import electronLogo from '../assets/electron.svg'
 import { useInstaller } from '../context/InstallerContext'
 import DownloadsManager from './DownloadsManager'
 
 export default function Sidebar() {
-  const { toggleManager, tasks } = useInstaller()
+  const { toggleManager, closeManager, tasks } = useInstaller()
   const location = useLocation()
   
+  useEffect(() => {
+    closeManager()
+  }, [location.pathname])
+
   const activeTasksCount = Object.values(tasks).filter(
     (task) => task.status === 'downloading' || task.status === 'installing'
   ).length
